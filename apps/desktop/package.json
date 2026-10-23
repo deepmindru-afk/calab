@@ -12,7 +12,7 @@
     "build": "pnpm build:app && node -e \"require('fs').copyFileSync('../../LICENSE','build/license_en.txt')\" && electron-builder --publish never && electron-rebuild -f -o uiohook-napi",
     "rebuild:native": "electron-rebuild -f -o uiohook-napi",
     "postinstall": "electron-rebuild -f -o uiohook-napi",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.worklet.json",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.web.test.json && tsc --noEmit -p tsconfig.worklet.json",
     "lint": "eslint .",
     "test": "vitest run",
     "bench:feed": "vitest run --config vitest.bench.config.ts",

@@ -7,11 +7,8 @@
       "DOM",
       "DOM.Iterable"
     ],
-    // "node" only for *.test.ts (process, Buffer, node:fs): vitest <5 pulled @types/node into the
-    // program transitively, vitest 5 does not. Renderer sources stay Node-free by review (ADR: no Node in renderer).
     "types": [
-      "vite/client",
-      "node"
+      "vite/client"
     ],
     "jsx": "react-jsx",
     "noEmit": true,
@@ -23,6 +20,8 @@
     "src/preload/api.d.ts"
   ],
   "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
     "src/renderer/lib/media/worklets/**/*"
   ]
 }
