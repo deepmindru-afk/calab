@@ -33,7 +33,7 @@ services:
     restart: unless-stopped
     <<: *hardening
     #cap_add: [NET_BIND_SERVICE]    # 80/443 as root without other capabilities
-    #tmpfs: [/tmp]
+    tmpfs: [/tmp]
     #deploy:
     #  resources:
     #    limits: { memory: 512m }
