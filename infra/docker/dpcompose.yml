@@ -237,7 +237,7 @@ services:
       - PUBLIC_APP_URLS=https://${APP_HOST:-${DOMAIN}}${DOMAIN_ALT:+,https://${DOMAIN_ALT}}${DOMAIN_LEGACY:+,https://${DOMAIN_LEGACY}}
       # landing origin: may read GET /api/billing/public/offers cross-origin (no credentials); empty = none
       - PUBLIC_LANDING_URLS=${LANDING_HOST:+https://${LANDING_HOST}}
-      - DATABASE_URL=postgres://calaba:${POSTGRES_PASSWORD}@127.0.0.1:5432/calaba
+      - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD}@127.0.0.1:5432/postgres
       - REDIS_URL=redis://:${REDIS_PASSWORD}@127.0.0.1:6379
       - REDIS_KEY_PREFIX=${REDIS_KEY_PREFIX:-}   # key/channel namespace for a shared Valkey (docs/06); empty = none
       - JWT_SECRET=${JWT_SECRET}
@@ -328,15 +328,15 @@ services:
     env_file:
       .env
     environment:
-      - POSTGRES_USER=calaba
+      - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=calaba
+      - POSTGRES_DB=postgres
     #ports:
     #  - "127.0.0.1:5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql   # PG 18 images keep PGDATA in a versioned subdir here
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U calaba"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 3s
       retries: 10
