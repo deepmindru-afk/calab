@@ -28,7 +28,7 @@ services:
   caddy:
     build: #./caddy
       context: ./caddy
-      dockerfile: ./caddy/Caddyfile.behind-proxy
+      dockerfile: Caddyfile.behind-proxy
     #network_mode: host
     restart: unless-stopped
     <<: *hardening
