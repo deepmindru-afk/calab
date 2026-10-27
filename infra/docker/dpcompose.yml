@@ -162,7 +162,8 @@ services:
     environment:
       - API_URL=${IVR_API_URL:-https://${APP_HOST:-${DOMAIN}}}
       - IVR_AGENT_TOKEN=${IVR_AGENT_TOKEN:-}
-      - LIVEKIT_URL=ws://127.0.0.1:7880
+      - LIVEKIT_URL=${LIVEKIT_URL}
+      #ws://127.0.0.1:7880
     deploy:
       resources:
         limits: { cpus: "1", memory: 256m }
@@ -259,8 +260,10 @@ services:
       - GUEST_INACTIVITY=${GUEST_INACTIVITY:-48h}  # guests leave after this long without activity (ADR-0098)
       # the rtc. host clients get; after a domain move keep the old one while older desktop builds are in use
       # (their CSP allows only the old family — docs/06 «Домены»)
-      - LIVEKIT_URL=wss://${RTC_PUBLIC_HOST:-rtc.${DOMAIN}}
-      - LIVEKIT_INTERNAL_URL=http://127.0.0.1:7880
+      - LIVEKIT_URL=${LIVEKIT_URL}
+      #wss://${RTC_PUBLIC_HOST:-rtc.${DOMAIN}}
+      - LIVEKIT_INTERNAL_URL=${LIVEKIT_URL}
+      #http://127.0.0.1:7880
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
       - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
       - STORAGE_DRIVER=fs
