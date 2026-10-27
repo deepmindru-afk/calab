@@ -412,11 +412,11 @@ func (q *Queries) LockSipCallJournal(ctx context.Context, id uuid.UUID) (LockSip
 const markSipCallMissed = `-- name: MarkSipCallMissed :execrows
 UPDATE sip_calls c SET missed = true
 WHERE c.id = $1 AND c.direction = 'in' AND c.status = 'ended' AND c.answered_at IS NULL AND NOT c.missed
-  AND (c.reason IN ('no_input', 'hangup_menu') OR EXISTS (SELECT 1 FROM sip_call_parties p WHERE p.call_id = c.id AND p.rang))
+  AND (c.reason IN ('no_input', 'hangup_menu', 'off_hours') OR EXISTS (SELECT 1 FROM sip_call_parties p WHERE p.call_id = c.id AND p.rang))
 `
 
 // An inbound call ended without an answer after it rang somebody, or in a menu (no input, a
-// route to «hang up»).
+// route to «hang up»), or by the schedule's off-hours «hang up» (ADR-0138).
 func (q *Queries) MarkSipCallMissed(ctx context.Context, id uuid.UUID) (int64, error) {
 	result, err := q.db.Exec(ctx, markSipCallMissed, id)
 	if err != nil {
@@ -430,7 +430,7 @@ UPDATE sip_accounts
 SET retention_months = $1, out_per_hour = $2,
     out_per_user_hour = $3
 WHERE workspace_id = $4
-RETURNING workspace_id, provider, host, transport, username, auth_username, port, password_enc, caller_id, outbound_prefix, allowed_prefixes, trunk_id, enabled, last_error, updated_at, updated_by, inbound_enabled, inbound_kind, inbound_menu_id, inbound_extension_id, inbound_group_id, inbound_allowed_cidrs, inbound_trunk_id, inbound_rule_id, inbound_mode, reg_registrar, reg_domain, reg_expires, reg_keepalive_sec, reg_contact_user, reg_auth_username, reg_password_enc, reg_trunk_password_enc, reg_status, reg_error, reg_registered_at, reg_expires_at, reg_contact, reg_status_at, record_inbound, record_outbound, retention_months, out_per_hour, out_per_user_hour
+RETURNING workspace_id, provider, host, transport, username, auth_username, port, password_enc, caller_id, outbound_prefix, allowed_prefixes, trunk_id, enabled, last_error, updated_at, updated_by, inbound_enabled, inbound_kind, inbound_menu_id, inbound_extension_id, inbound_group_id, inbound_allowed_cidrs, inbound_trunk_id, inbound_rule_id, inbound_mode, reg_registrar, reg_domain, reg_expires, reg_keepalive_sec, reg_contact_user, reg_auth_username, reg_password_enc, reg_trunk_password_enc, reg_status, reg_error, reg_registered_at, reg_expires_at, reg_contact, reg_status_at, record_inbound, record_outbound, retention_months, out_per_hour, out_per_user_hour, schedule_enabled, schedule_tz, schedule_hours, schedule_holidays, off_hours_kind, off_hours_menu_id, off_hours_extension_id, off_hours_group_id, off_hours_notice_file_id, off_hours_notice_ms
 `
 
 type SetSipPolicyParams struct {
@@ -494,6 +494,16 @@ func (q *Queries) SetSipPolicy(ctx context.Context, arg SetSipPolicyParams) (Sip
 		&i.RetentionMonths,
 		&i.OutPerHour,
 		&i.OutPerUserHour,
+		&i.ScheduleEnabled,
+		&i.ScheduleTz,
+		&i.ScheduleHours,
+		&i.ScheduleHolidays,
+		&i.OffHoursKind,
+		&i.OffHoursMenuID,
+		&i.OffHoursExtensionID,
+		&i.OffHoursGroupID,
+		&i.OffHoursNoticeFileID,
+		&i.OffHoursNoticeMs,
 	)
 	return i, err
 }

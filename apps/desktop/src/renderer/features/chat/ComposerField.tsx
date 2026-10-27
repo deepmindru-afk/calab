@@ -4,9 +4,9 @@
  * and the @ autocomplete state. The chat's Composer and the comments' CommentComposer (canvas,
  * meetings — owner 23.10: «как в чате») are both built from these, so the two cannot drift apart.
  */
-import { ArrowUp, Check, Smile } from 'lucide-react';
+import { ArrowUp, Check, Maximize2, Smile } from 'lucide-react';
 import { useId, useLayoutEffect, useState, type KeyboardEvent, type ReactNode, type RefObject, type TextareaHTMLAttributes } from 'react';
-import { CloseButton, IconButton, Tip, cx } from '../../components/ui';
+import { CloseButton, IconButton, MOD, Tip, cx } from '../../components/ui';
 import { t } from '../../i18n';
 import { mentionQuery } from '../../lib/mentions';
 import { useMobile } from '../../lib/mobile';
@@ -161,6 +161,7 @@ export function ComposerField({
   strip,
   action,
   hidden = false,
+  onExpand,
 }: {
   fieldRef: RefObject<HTMLTextAreaElement | null>;
   text: string;
@@ -182,6 +183,8 @@ export function ComposerField({
   action?: ReactNode;
   /** The box is hidden (a voice recording takes its place). */
   hidden?: boolean;
+  /** The «expand» corner button (the long-text editor, #97); absent while the text is short. */
+  onExpand?: (() => void) | undefined;
 }): ReactNode {
   return (
     <>
@@ -191,7 +194,7 @@ export function ComposerField({
         <div
           data-focus-box
           className={cx(
-            'flex min-h-10 min-w-0 flex-1 items-end rounded-[20px] border border-line bg-elev px-1 mobile:rounded-[22px] shadow-[var(--shadow-card)] focus-within:border-focus',
+            'relative flex min-h-10 min-w-0 flex-1 items-end rounded-[20px] border border-line bg-elev px-1 mobile:rounded-[22px] shadow-[var(--shadow-card)] focus-within:border-focus',
             // Phone: one grid, [attach | text | sticker emoji]; a second line puts the text on its own row above them.
             'mobile:grid mobile:min-h-11 mobile:grid-cols-[auto_minmax(0,1fr)_auto] mobile:items-center mobile:px-0',
             // Phone, two lines and more: a large radius that still reads as round (no corners).
@@ -218,6 +221,8 @@ export function ComposerField({
                 'selectable min-h-[38px] min-w-0 flex-1 resize-none bg-transparent px-1.5 py-[9px] text-list leading-5 placeholder:text-transparent',
                 'mobile:min-h-11 mobile:py-3 mobile:row-start-1',
                 multi ? 'mobile:col-span-3 mobile:col-start-1 mobile:px-3 mobile:pb-1' : 'mobile:col-start-2',
+                // The corner button sits over the first line of a phone's full-width text.
+                onExpand && multi && 'mobile:pr-11',
               )}
               style={{ maxHeight: MAX_FIELD_H }}
             />
@@ -237,6 +242,19 @@ export function ComposerField({
               </IconButton>
             </EmojiPicker>
           </div>
+          {onExpand ? (
+            <Tip label={t('chat.editor.expand')} shortcut={`${MOD}⇧E`}>
+              <button
+                type="button"
+                onClick={onExpand}
+                aria-label={t('chat.editor.expand')}
+                data-testid="composer-expand"
+                className="absolute right-1.5 top-1.5 grid size-7 place-items-center rounded-full text-muted hover:bg-hover hover:text-fg mobile:right-0 mobile:top-0 mobile:size-11"
+              >
+                <Maximize2 className="size-4" aria-hidden />
+              </button>
+            </Tip>
+          ) : null}
         </div>
         {action}
       </div>

@@ -667,6 +667,11 @@ const MailRow = memo(function MailRow({ k }: { k: string }): ReactNode {
   const userId = useMailUser(row?.from.address ?? '');
   // «Все входящие» with several accounts: the account under the sender (where the reply goes from).
   const account = useMail((s) => (s.box.scope === 'all' && s.accountIds.length > 1 && row ? (s.accounts[row.accountId]?.email ?? '') : ''));
+  // A search runs over all folders of the account: each row says where the message lives.
+  const where = useMail((s) => {
+    const f = s.query && row ? s.folderById[row.folderId] : undefined;
+    return f ? folderLabel(f) : '';
+  });
   if (!row) return null;
   const subject = row.subject.trim() || t('mbox.noSubject');
   const sender = addressLabel(row.from);
@@ -708,7 +713,11 @@ const MailRow = memo(function MailRow({ k }: { k: string }): ReactNode {
           ) : null}
         </div>
         <p className="line-clamp-2 text-[13px] leading-[18px] text-muted">{row.snippet}</p>
-        {account ? <span className="truncate text-micro text-faint">{account}</span> : null}
+        {account || where ? (
+          <span className="truncate text-micro text-faint" data-testid={where ? 'mail-row-folder' : undefined}>
+            {where && account ? `${where} · ${account}` : where || account}
+          </span>
+        ) : null}
       </div>
     </div>
   );

@@ -1539,50 +1539,60 @@ type SessionWorkspaceAssurance struct {
 }
 
 type SipAccount struct {
-	WorkspaceID         uuid.UUID
-	Provider            string
-	Host                string
-	Transport           string
-	Username            string
-	AuthUsername        string
-	Port                int32
-	PasswordEnc         []byte
-	CallerID            string
-	OutboundPrefix      string
-	AllowedPrefixes     []string
-	TrunkID             string
-	Enabled             bool
-	LastError           string
-	UpdatedAt           time.Time
-	UpdatedBy           *uuid.UUID
-	InboundEnabled      bool
-	InboundKind         string
-	InboundMenuID       *uuid.UUID
-	InboundExtensionID  *uuid.UUID
-	InboundGroupID      *uuid.UUID
-	InboundAllowedCidrs []string
-	InboundTrunkID      string
-	InboundRuleID       string
-	InboundMode         string
-	RegRegistrar        string
-	RegDomain           string
-	RegExpires          int32
-	RegKeepaliveSec     int32
-	RegContactUser      string
-	RegAuthUsername     string
-	RegPasswordEnc      []byte
-	RegTrunkPasswordEnc []byte
-	RegStatus           string
-	RegError            string
-	RegRegisteredAt     *time.Time
-	RegExpiresAt        *time.Time
-	RegContact          string
-	RegStatusAt         *time.Time
-	RecordInbound       bool
-	RecordOutbound      bool
-	RetentionMonths     int16
-	OutPerHour          int32
-	OutPerUserHour      int32
+	WorkspaceID          uuid.UUID
+	Provider             string
+	Host                 string
+	Transport            string
+	Username             string
+	AuthUsername         string
+	Port                 int32
+	PasswordEnc          []byte
+	CallerID             string
+	OutboundPrefix       string
+	AllowedPrefixes      []string
+	TrunkID              string
+	Enabled              bool
+	LastError            string
+	UpdatedAt            time.Time
+	UpdatedBy            *uuid.UUID
+	InboundEnabled       bool
+	InboundKind          string
+	InboundMenuID        *uuid.UUID
+	InboundExtensionID   *uuid.UUID
+	InboundGroupID       *uuid.UUID
+	InboundAllowedCidrs  []string
+	InboundTrunkID       string
+	InboundRuleID        string
+	InboundMode          string
+	RegRegistrar         string
+	RegDomain            string
+	RegExpires           int32
+	RegKeepaliveSec      int32
+	RegContactUser       string
+	RegAuthUsername      string
+	RegPasswordEnc       []byte
+	RegTrunkPasswordEnc  []byte
+	RegStatus            string
+	RegError             string
+	RegRegisteredAt      *time.Time
+	RegExpiresAt         *time.Time
+	RegContact           string
+	RegStatusAt          *time.Time
+	RecordInbound        bool
+	RecordOutbound       bool
+	RetentionMonths      int16
+	OutPerHour           int32
+	OutPerUserHour       int32
+	ScheduleEnabled      bool
+	ScheduleTz           string
+	ScheduleHours        []byte
+	ScheduleHolidays     string
+	OffHoursKind         string
+	OffHoursMenuID       *uuid.UUID
+	OffHoursExtensionID  *uuid.UUID
+	OffHoursGroupID      *uuid.UUID
+	OffHoursNoticeFileID *uuid.UUID
+	OffHoursNoticeMs     int32
 }
 
 type SipCall struct {
@@ -1653,6 +1663,29 @@ type SipCallRecording struct {
 	SizeBytes   int64
 	FileID      *uuid.UUID
 	DiskItemID  *uuid.UUID
+}
+
+type SipContact struct {
+	ID          uuid.UUID
+	WorkspaceID uuid.UUID
+	Name        string
+	Company     string
+	Note        string
+	CreatedBy   *uuid.UUID
+	UpdatedBy   *uuid.UUID
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	SortKey     *string
+	SearchKey   *string
+	SortGroup   *int16
+}
+
+type SipContactPhone struct {
+	ContactID   uuid.UUID
+	WorkspaceID uuid.UUID
+	Number      string
+	Label       string
+	Position    int16
 }
 
 type SipExtension struct {

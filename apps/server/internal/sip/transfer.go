@@ -111,6 +111,7 @@ func (c *InCall) Transfer(e Env, to TransferTo, fx *Effects) error {
 	}
 	c.log(e, ev, fx)
 	c.Xfer = &Xfer{From: from, Hops: hops}
+	c.ViaFallback = false
 	c.Phase, c.Ring, c.Sequential, c.Group, c.Pos, c.Rang = PhaseRing, ring, d.Sequential, d.Group, 0, nil
 	c.OnFail, c.Declined = Target{Kind: RouteHangup}, nil
 	if d.Group != nil {

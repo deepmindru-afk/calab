@@ -2673,3 +2673,144 @@ describe('mic state convergence on a flaky link (ADR-0134)', () => {
     expect(useVoice.getState().micSyncLag).toBe(false);
   });
 });
+
+describe('one mic view for the panel, my row and the island (#96)', () => {
+  const ptt = { micMode: 'ptt' as const, pttReleaseMs: 0, pttBinding: { kind: 'key' as const, code: 66, label: 'F8', mode: 'hold' as const } };
+  const view = async () => {
+    const { selfMicNow } = await import('../features/voice/selfMic');
+    const { selfMicGlyph } = await import('../lib/voiceLogic');
+    const m = selfMicNow();
+    return { ...m, glyph: selfMicGlyph(m, useVoice.getState().pttDown) };
+  };
+  /** My server copy (VOICE_STATE_UPDATE) as the room list reads it. */
+  const seat = async (s: { roomId: string; muted: boolean; deafened?: boolean; serverMuted?: boolean; ptt?: boolean } | null): Promise<void> => {
+    const { useWorkspaces } = await import('../stores/workspaces');
+    useWorkspaces.setState({ byId: { ws: { ws: {}, voice: s ? { u1: { userId: 'u1', deafened: false, ...s } } : {} } } } as never);
+  };
+  const track = () => FakeRoom.all.at(-1)?.published[0];
+  const hold = (down: boolean) => (voice as unknown as { onPtt(ev: { down: boolean }): void }).onPtt({ down });
+  beforeEach(async () => {
+    const { useSession } = await import('../stores/session');
+    useSession.setState({ me: { user: { id: 'u1' } } } as never);
+  });
+  afterEach(() => {
+    usePrefs.getState().setPrefs({ micMode: 'voice', musicianMode: false, micDeviceId: null });
+  });
+
+  it('the reported case: this device idle, my seat muted on another device — panel and row both crossed', async () => {
+    // Before #96 the panel drew this device's pre-join intent (mic on) and the row the server copy (off).
+    await seat({ roomId: 'A', muted: true });
+    expect(useVoice.getState().muted).toBe(false);
+    expect(await view()).toMatchObject({ elsewhere: true, muted: true, glyph: 'muted' });
+    // The other device unmutes / turns PTT on: both follow the server at once.
+    await seat({ roomId: 'A', muted: false, ptt: true });
+    expect(await view()).toMatchObject({ muted: false, glyph: 'ptt-idle' });
+    await seat({ roomId: 'A', muted: false });
+    expect(await view()).toMatchObject({ muted: false, glyph: 'live' });
+    await seat(null);
+    expect(await view()).toMatchObject({ elsewhere: false, here: false, muted: false });
+  });
+
+  it('a click / hotkey while another device holds the seat changes nothing and says where to switch', async () => {
+    const { toast } = await import('../stores/toasts');
+    await seat({ roomId: 'A', muted: true });
+    voice.toggleMute();
+    voice.toggleDeafen();
+    expect(useVoice.getState()).toMatchObject({ muted: false, deafened: false });
+    expect(vi.mocked(toast.info).mock.calls.map((c) => c[0])).toEqual([
+      'Голос подключён на другом устройстве — переключайте там',
+      'Голос подключён на другом устройстве — переключайте там',
+    ]);
+    expect(updateSelf).not.toHaveBeenCalled();
+  });
+
+  it('in the call: the intent wins over a lagging server copy, on every click', async () => {
+    await voice.join('A', 'ws');
+    await settle();
+    await seat({ roomId: 'A', muted: false });
+    let release!: () => void;
+    updateSelf.mockImplementationOnce(() => new Promise<void>((r) => (release = r)));
+    voice.toggleMute(); // the PATCH hangs: the server still says «on»
+    expect(await view()).toMatchObject({ here: true, muted: true, glyph: 'muted' });
+    await settle();
+    expect(track()?.isMuted).toBe(true);
+    voice.toggleMute();
+    expect(await view()).toMatchObject({ muted: false, glyph: 'live' });
+    release();
+    await settle();
+  });
+
+  it('a moderator mute from the server: crossed everywhere, with the server-mute flag', async () => {
+    await voice.join('A', 'ws');
+    voice.reconcileSelfState({ roomId: 'A', muted: true, deafened: false, serverMuted: true });
+    expect(await view()).toMatchObject({ muted: true, serverMuted: true, glyph: 'muted' });
+    voice.reconcileSelfState({ roomId: 'A', muted: true, deafened: false, serverMuted: false });
+    expect(await view()).toMatchObject({ muted: true, serverMuted: false });
+  });
+
+  it('deafen implies the crossed mic in both places', async () => {
+    await voice.join('A', 'ws');
+    voice.toggleDeafen();
+    expect(await view()).toMatchObject({ muted: true, deafened: true, glyph: 'muted' });
+  });
+
+  it('PTT: pale in the list while the key is up, live (green dot) while held, off when muted', async () => {
+    usePrefs.getState().setPrefs(ptt);
+    await voice.join('A', 'ws');
+    await settle();
+    expect(await view()).toMatchObject({ ptt: true, muted: false, glyph: 'ptt-idle' });
+    hold(true);
+    expect(await view()).toMatchObject({ glyph: 'live' });
+    hold(false);
+    await settle();
+    expect(await view()).toMatchObject({ glyph: 'ptt-idle' });
+    voice.toggleMute();
+    expect(await view()).toMatchObject({ glyph: 'muted' });
+  });
+
+  it('a one-to-one call is voice activation only: no PTT wait in the view', async () => {
+    usePrefs.getState().setPrefs(ptt);
+    await voice.join('A', 'ws');
+    useVoice.setState({ call: true });
+    expect(await view()).toMatchObject({ ptt: false, glyph: 'live' });
+  });
+
+  it('device switch / loss, musician mode and a reconnect keep the view and the track on the intent', async () => {
+    usePrefs.getState().setPrefs(ptt);
+    await voice.join('A', 'ws');
+    await vi.waitFor(() => expect(track()).toBeDefined());
+    voice.toggleMute();
+    await settle();
+    expect(await view()).toMatchObject({ muted: true, glyph: 'muted' });
+    // Input device switch: the capture is swapped in place.
+    usePrefs.getState().setPrefs({ micDeviceId: 'd1' });
+    await vi.waitFor(() => expect(pipelines.length).toBe(2));
+    await settle();
+    expect(await view()).toMatchObject({ muted: true, glyph: 'muted' });
+    expect(track()?.isMuted).toBe(true);
+    // Musician mode on.
+    usePrefs.getState().setPrefs({ musicianMode: true });
+    await vi.waitFor(() => expect(pipelines.length).toBe(3));
+    await settle();
+    expect(await view()).toMatchObject({ muted: true, glyph: 'muted' });
+    expect(track()?.isMuted).toBe(true);
+    // The device lost (capture ended by the OS): rebuilt.
+    pipelines.at(-1)?.onEnded?.();
+    await vi.waitFor(() => expect(pipelines.length).toBe(4));
+    await settle();
+    expect(await view()).toMatchObject({ muted: true });
+    expect(track()?.isMuted).toBe(true);
+    // A full reconnect: the new room publishes the mic muted, as the view says.
+    FakeRoom.all[0]?.emit('Disconnected', 'SIGNAL_CLOSE');
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(FakeRoom.all).toHaveLength(2);
+    expect(await view()).toMatchObject({ here: true, muted: true, glyph: 'muted' });
+    expect(track()?.isMuted).toBe(true);
+    // And back on: the view and the track agree again.
+    voice.toggleMute();
+    await settle();
+    expect(await view()).toMatchObject({ muted: false, glyph: 'ptt-idle' });
+    expect(track()?.isMuted).toBe(false);
+    await voice.leave();
+  });
+});

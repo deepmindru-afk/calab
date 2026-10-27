@@ -7,6 +7,7 @@ import { takePlanAfterCreate } from '../lib/billing/planLink';
 import { forSale } from '../lib/billing/plans';
 import type { FixPlace } from '../lib/billing/violations';
 import { openSection } from '../features/shell/sectionNav';
+import { openTelephonySettings } from '../features/telephony/settings/pages';
 import { openTab } from './phoneNav';
 import { log } from '../lib/log';
 import { queryClient } from '../lib/queryClient';
@@ -139,8 +140,8 @@ export function openPlanSettings(workspaceId: string): void {
 }
 
 /**
- * Where a plan violation is fixed (ADR-0086, lib/billing/violations): a workspace settings tab, or
- * the boards section of the workspace (the open dialogs close first).
+ * Where a plan violation is fixed (ADR-0086, lib/billing/violations): a workspace settings tab, the
+ * boards section or the telephony settings of the workspace (the open dialogs close first).
  */
 export function openFixPlace(workspaceId: string, place: Exclude<FixPlace, null>): void {
   const ui = useUi.getState();
@@ -150,6 +151,10 @@ export function openFixPlace(workspaceId: string, place: Exclude<FixPlace, null>
   }
   ui.openDialog(null);
   if (ui.activeWorkspaceId !== workspaceId) ui.setWorkspace(workspaceId);
+  if (place.kind === 'telephony') {
+    openTelephonySettings('connection');
+    return;
+  }
   if (ui.phone.on) openTab('boards');
   else openSection('boards');
 }

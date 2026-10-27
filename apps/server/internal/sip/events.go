@@ -34,6 +34,7 @@ const (
 	EvProviderRinging EventKind = "provider_ringing"
 	EvRecording       EventKind = "recording"
 	EvEnded           EventKind = "ended"
+	EvSchedule        EventKind = "schedule"
 )
 
 // TargetKind is sip_call_events.target_kind (SipCallTargetKind); "" = none.

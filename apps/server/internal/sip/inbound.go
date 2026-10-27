@@ -17,6 +17,7 @@ import (
 	"github.com/redis/rueidis"
 
 	v1 "github.com/calaba/calaba/server/gen/calaba/v1"
+	"github.com/calaba/calaba/server/internal/auth"
 	"github.com/calaba/calaba/server/internal/blob"
 	"github.com/calaba/calaba/server/internal/calls"
 	"github.com/calaba/calaba/server/internal/db"
@@ -83,6 +84,7 @@ func (s *Service) SetInbound(agent rtc.IVRAgent, cfg InboundConfig) {
 
 func (s *Service) inboundRoutes(mux httpx.Router, wrap func(http.Handler) http.Handler) {
 	mux.Handle("PUT /api/workspaces/{id}/sip/inbound", wrap(httpx.HandlerFunc(s.putInbound)))
+	mux.Handle("PUT /api/workspaces/{id}/sip/schedule", wrap(httpx.HandlerFunc(s.putSchedule)))
 	mux.Handle("POST /api/sip/inbound/{cid}/accept", wrap(httpx.HandlerFunc(s.acceptInbound)))
 	mux.Handle("POST /api/sip/inbound/{cid}/join", wrap(httpx.HandlerFunc(s.joinInbound)))
 	mux.Handle("POST /api/sip/inbound/{cid}/decline", wrap(httpx.HandlerFunc(s.declineInbound)))
@@ -96,8 +98,10 @@ func (s *Service) inboundReady() bool {
 
 // ---------------------------------------------------------------- settings
 
-// fillInbound adds the inbound part of the settings (the entry point resolved against ex).
+// fillInbound adds the inbound part of the settings (the entry point and its schedule resolved
+// against ex).
 func fillInbound(out *v1.SipSettings, a sqlc.SipAccount, ex *exchange) {
+	fillSchedule(out, a, ex)
 	out.InboundEnabled = a.InboundEnabled
 	out.InboundAllowedCidrs = a.InboundAllowedCidrs
 	if out.InboundAllowedCidrs == nil {
@@ -467,7 +471,7 @@ type inRec struct {
 
 func inKey(id uuid.UUID) string     { return redisx.Key("sipin:" + id.String()) }
 func inDueKey() string              { return redisx.Key("sipin:due") }
-func inUserKey(u uuid.UUID) string  { return redisx.Key("sipin:user:" + u.String()) }
+func inUserKey(u uuid.UUID) string  { return calls.PhoneBusyKey(u) }
 func inLockKey(id uuid.UUID) string { return redisx.Key("sipin:lock:" + id.String()) }
 
 // presenceKey is the gateway's per-user presence hash (gateway/presence.go presKey): one field
@@ -731,14 +735,9 @@ func nonNil(u []uuid.UUID) []uuid.UUID {
 // announce: SIP_INBOUND_RING to who started ringing, SIP_CALL_UPDATE to everybody else the call
 // concerns (stopped ringing, still ringing, answered) on their user channels.
 func (s *Service) announce(ctx context.Context, row sqlc.SipCall, r *inRec, fx *Effects) {
-	pb := pbconv.SipCall(row)
-	for _, u := range fx.Rings {
-		s.events.User(ctx, u, &v1.DispatchEvent{Event: &v1.DispatchEvent_SipInboundRing{SipInboundRing: &v1.SipInboundRing{Call: pb}}})
-	}
-	seen := map[uuid.UUID]bool{}
-	for _, u := range fx.Rings {
-		seen[u] = true
-	}
+	// Caller ID (ADR-0137 §2): the contact or the employee the number is, as of now.
+	pb := FillCaller(pbconv.SipCall(row), s.callerOf(ctx, row.WorkspaceID, row.PeerE164))
+	pb.OffHours, pb.ViaFallback = r.OffHours, r.ViaFallback // why it rings who it rings (ADR-0138)
 	to := append(append([]uuid.UUID{}, fx.Stopped...), r.Ringing...)
 	if r.Answered != nil {
 		to = append(to, *r.Answered)
@@ -748,12 +747,26 @@ func (s *Service) announce(ctx context.Context, row sqlc.SipCall, r *inRec, fx *
 	if fx.Hangup != "" && r.Handover != nil {
 		to = append(to, *r.Handover)
 	}
+	bots := s.botsAmong(ctx, pb, append(append([]uuid.UUID{}, fx.Rings...), to...))
+	callFor := func(u uuid.UUID) *v1.SipCall {
+		if bots[u] {
+			return forBot(pb)
+		}
+		return pb
+	}
+	for _, u := range fx.Rings {
+		s.events.User(ctx, u, &v1.DispatchEvent{Event: &v1.DispatchEvent_SipInboundRing{SipInboundRing: &v1.SipInboundRing{Call: callFor(u)}}})
+	}
+	seen := map[uuid.UUID]bool{}
+	for _, u := range fx.Rings {
+		seen[u] = true
+	}
 	for _, u := range to {
 		if seen[u] {
 			continue
 		}
 		seen[u] = true
-		s.events.User(ctx, u, &v1.DispatchEvent{Event: &v1.DispatchEvent_SipCallUpdate{SipCallUpdate: &v1.SipCallUpdate{Call: pb}}})
+		s.events.User(ctx, u, &v1.DispatchEvent{Event: &v1.DispatchEvent_SipCallUpdate{SipCallUpdate: &v1.SipCallUpdate{Call: callFor(u)}}})
 	}
 }
 
@@ -989,10 +1002,11 @@ func (s *Service) inboundJoined(ctx context.Context, wid uuid.UUID, room string,
 		return nil
 	}
 	entry := routeTarget(a.InboundKind, a.InboundMenuID, a.InboundExtensionID, a.InboundGroupID)
-	var pause int64 // digits pressed before the entry point began a number (ADR-0129)
+	sched := scheduleOf(a) // ADR-0138: checked once, now
+	var pause int64        // digits pressed before the entry point began a number (ADR-0129)
 	if err := s.withCall(ctx, id, func(r *inRec, e Env, fx *Effects) error {
 		r.log(e, started, fx)
-		r.Enter(e, entry, fx)
+		r.EnterEntry(e, entry, sched, fx)
 		if r.Phase == PhaseMenu && r.Digits != "" {
 			pause = r.Deadline
 		}
@@ -1265,7 +1279,11 @@ func (s *Service) acceptInbound(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	httpx.Write(w, http.StatusOK, &v1.SipInboundAcceptResponse{Call: pbconv.SipCall(row), Join: join})
+	pb := FillCaller(pbconv.SipCall(row), s.callerOf(ctx, row.WorkspaceID, row.PeerE164))
+	if auth.MustFromContext(ctx).IsBot {
+		pb = forBot(pb)
+	}
+	httpx.Write(w, http.StatusOK, &v1.SipInboundAcceptResponse{Call: pb, Join: join})
 	return nil
 }
 

@@ -7,6 +7,7 @@ import { isMobileNow } from '../../lib/mobile';
 import { openTaskAnywhere } from '../../services/boards';
 import { useBoards } from '../../stores/boards';
 import { useBoardsUi } from '../../stores/boardsUi';
+import { useUi } from '../../stores/ui';
 import { useTaskTabs, type TaskTab } from '../../stores/taskTabs';
 
 /** A tab entry for a task: the store's task when loaded, else only where it lives. */
@@ -37,21 +38,23 @@ export function tabClick(id: string, e: Pick<MouseEvent, 'metaKey' | 'ctrlKey' |
 }
 
 /**
- * The open tasks as browser tabs, above the boards area (desktop only). Follows the open task:
- * a plain open replaces the current tab (stores/taskTabs.ts). Rendered only with tabs, so a
- * workspace that never used them pays nothing. Each tab is a leaf with its own subscriptions.
+ * The open tasks as browser tabs in the title bar (desktop only; #93 follow-up): they stay in
+ * every section (Disk, Calendar, chats…), so a task is one click away for a demo. Follows the open
+ * task: a plain open replaces the current tab (stores/taskTabs.ts). Renders nothing without tabs —
+ * no empty bar. Each tab is a leaf with its own subscriptions; no timers.
  */
-export const TaskTabs = memo(function TaskTabs({ workspaceId, boardId }: { workspaceId: string; boardId: string }): ReactNode {
+export const TaskTabs = memo(function TaskTabs(): ReactNode {
   const taskId = useBoardsUi((s) => s.taskId);
   useEffect(() => {
-    if (taskId) useTaskTabs.getState().activate(entryOf(taskId, workspaceId, boardId));
-    // A new open task only: the workspace and board are its fallback place, not triggers.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!taskId) return;
+    const ws = useUi.getState().activeWorkspaceId ?? '';
+    useTaskTabs.getState().activate(entryOf(taskId, ws, useBoardsUi.getState().boardOf[ws] ?? ''));
+    // A new open task only: the current workspace and board are its fallback place, not triggers.
   }, [taskId]);
-  const ids = useTaskTabs(useShallow((s) => s.tabs.filter((x) => x.ws === workspaceId).map((x) => x.id)));
-  if (ids.length === 0) return null;
+  const ids = useTaskTabs(useShallow((s) => s.tabs.map((x) => x.id)));
+  if (ids.length === 0 || isMobileNow()) return null;
   return (
-    <nav aria-label={t('boards.tabs')} className="scrollbar-thin flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-line px-2" data-testid="task-tabs">
+    <nav aria-label={t('boards.tabs')} className="scrollbar-none mx-1 flex h-full min-w-0 flex-1 items-center gap-1 overflow-x-auto" data-testid="task-tabs">
       {ids.map((id) => (
         <TabItem key={id} id={id} />
       ))}
@@ -60,7 +63,10 @@ export const TaskTabs = memo(function TaskTabs({ workspaceId, boardId }: { works
 });
 
 const TabItem = memo(function TabItem({ id }: { id: string }): ReactNode {
-  const active = useBoardsUi((s) => s.taskId === id);
+  // Highlighted only while the card is actually on screen (the boards section is the one shown).
+  const open = useBoardsUi((s) => s.taskId === id);
+  const shown = useTaskTabs((s) => s.shown);
+  const active = open && shown;
   const stored = useTaskTabs((s) => s.tabs.find((x) => x.id === id));
   const key = useBoards((s) => s.tasks[id]?.key ?? '') || stored?.key || '';
   const title = useBoards((s) => s.tasks[id]?.title ?? '') || stored?.title || '';
@@ -68,7 +74,7 @@ const TabItem = memo(function TabItem({ id }: { id: string }): ReactNode {
   useEffect(() => {
     if (key || title) useTaskTabs.getState().sync(id, key, title);
   }, [id, key, title]);
-  const open = useCallback(() => {
+  const go = useCallback(() => {
     const tab = useTaskTabs.getState().tabs.find((x) => x.id === id);
     if (tab) openTaskAnywhere({ id, workspaceId: tab.ws, boardId: tab.board });
   }, [id]);
@@ -82,13 +88,13 @@ const TabItem = memo(function TabItem({ id }: { id: string }): ReactNode {
   }, [id]);
   return (
     <div
-      className={cx('group flex h-7 min-w-0 max-w-[200px] shrink-0 items-center rounded-[var(--radius-row)] text-control', active ? 'bg-active text-fg' : 'text-muted hover:bg-hover hover:text-fg')}
+      className={cx('group flex h-7 min-w-[120px] max-w-[200px] shrink items-center rounded-[var(--radius-row)] text-control', active ? 'bg-active text-fg' : 'text-muted hover:bg-hover hover:text-fg')}
       onAuxClick={(e) => e.button === 1 && close()}
       data-testid="task-tab"
       data-task-tab={id}
       data-active={active || undefined}
     >
-      <button type="button" onClick={open} aria-current={active ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-1.5 rounded-[var(--radius-row)] py-1 pl-2 pr-1 text-left" title={`${key} ${title}`.trim()}>
+      <button type="button" onClick={go} aria-current={active ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-1.5 rounded-[var(--radius-row)] py-1 pl-2 pr-1 text-left" title={`${key} ${title}`.trim()}>
         <span className="shrink-0 font-medium tabular-nums">{key}</span>
         <span className="min-w-0 truncate">{title}</span>
       </button>

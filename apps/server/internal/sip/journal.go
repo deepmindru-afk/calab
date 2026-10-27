@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v1 "github.com/calaba/calaba/server/gen/calaba/v1"
+	"github.com/calaba/calaba/server/internal/auth"
 	"github.com/calaba/calaba/server/internal/db"
 	"github.com/calaba/calaba/server/internal/db/sqlc"
 	"github.com/calaba/calaba/server/internal/diskacl"
@@ -209,6 +210,7 @@ var eventKindPB = map[EventKind]v1.SipCallEventKind{
 	EvTransferEnd: v1.SipCallEventKind_SIP_CALL_EVENT_KIND_TRANSFER_END, EvDialing: v1.SipCallEventKind_SIP_CALL_EVENT_KIND_DIALING,
 	EvProviderRinging: v1.SipCallEventKind_SIP_CALL_EVENT_KIND_PROVIDER_RINGING,
 	EvRecording:       v1.SipCallEventKind_SIP_CALL_EVENT_KIND_RECORDING, EvEnded: v1.SipCallEventKind_SIP_CALL_EVENT_KIND_ENDED,
+	EvSchedule: v1.SipCallEventKind_SIP_CALL_EVENT_KIND_SCHEDULE,
 }
 
 var targetKindPB = map[TargetKind]v1.SipCallTargetKind{
@@ -268,11 +270,40 @@ func (s *Service) entries(ctx context.Context, calls []sqlc.SipCall) ([]*v1.SipJ
 	for _, p := range parties {
 		byCall[p.CallID] = append(byCall[p.CallID], p)
 	}
+	// Names as of now (ADR-0137 §2): one lookup for the page's numbers.
+	numbers := make([]string, 0, len(calls))
+	for _, c := range calls {
+		if c.PeerE164 != "" && c.Origin != OriginTest {
+			numbers = append(numbers, c.PeerE164)
+		}
+	}
+	callers := map[string]Caller{}
+	if len(numbers) > 0 && len(calls) > 0 {
+		if callers, err = Callers(ctx, s.db.Q, calls[0].WorkspaceID, numbers); err != nil {
+			return nil, err
+		}
+	}
 	out := make([]*v1.SipJournalEntry, len(calls))
 	for i, c := range calls {
 		out[i] = entryPB(c, byCall[c.ID], slices.Contains(withEvents, c.ID))
+		if c.Origin == OriginTest {
+			continue
+		}
+		if who := callers[c.PeerE164]; who.ContactID != nil {
+			out[i].Contact = &v1.SipContactRef{Id: who.ContactID.String(), Name: who.Name, Company: who.Company}
+		} else if who.UserID != nil {
+			out[i].MemberUserId = who.UserID.String()
+		}
 	}
 	return out, nil
+}
+
+// hideMembers drops the employee caller ID of entries a bot reads: a bot never learns whose
+// phone a number is (ADR-0077).
+func hideMembers(entries []*v1.SipJournalEntry) {
+	for _, e := range entries {
+		e.MemberUserId = ""
+	}
 }
 
 func eventPB(ev Event) *v1.SipCallEvent {
@@ -363,6 +394,7 @@ type journalQuery struct {
 	direction string
 	missed    bool
 	digits    string
+	text      string
 	byPeers   bool
 	from, to  *time.Time
 	cursorAt  *time.Time
@@ -410,9 +442,11 @@ func parseJournalQuery(r *http.Request, bits perm.Bits) (journalQuery, error) {
 			}
 		}
 		out.digits = b.String()
-		// A text without digits looks contacts up by name or company (T2); until there are
-		// contacts it matches no number.
-		out.byPeers = out.digits == ""
+		// A text without digits looks contacts up by name or company (ADR-0137 §2): their
+		// numbers are the peers.
+		if out.byPeers = out.digits == ""; out.byPeers {
+			out.text = clip(q, 64)
+		}
 	}
 	for _, f := range []struct {
 		name string
@@ -459,13 +493,19 @@ func (s *Service) listJournal(w http.ResponseWriter, r *http.Request) error {
 	if jq.all {
 		user = jq.user
 	}
+	peers := []string{}
+	if jq.byPeers {
+		if peers, err = s.db.Q.SipContactNumbersByText(ctx, sqlc.SipContactNumbersByTextParams{WorkspaceID: wsID, Text: jq.text}); err != nil {
+			return err
+		}
+	}
 	if user != nil {
 		rows, err = s.db.Q.ListSipJournalForUser(ctx, sqlc.ListSipJournalForUserParams{WorkspaceID: wsID, UserID: *user,
-			Direction: jq.direction, Missed: jq.missed, Digits: jq.digits, ByPeers: jq.byPeers, Peers: []string{},
+			Direction: jq.direction, Missed: jq.missed, Digits: jq.digits, ByPeers: jq.byPeers, Peers: peers,
 			From: jq.from, To: jq.to, CursorAt: jq.cursorAt, CursorID: jq.cursorID, Lim: lim})
 	} else {
 		rows, err = s.db.Q.ListSipJournal(ctx, sqlc.ListSipJournalParams{WorkspaceID: wsID,
-			Direction: jq.direction, Missed: jq.missed, Digits: jq.digits, ByPeers: jq.byPeers, Peers: []string{},
+			Direction: jq.direction, Missed: jq.missed, Digits: jq.digits, ByPeers: jq.byPeers, Peers: peers,
 			From: jq.from, To: jq.to, CursorAt: jq.cursorAt, CursorID: jq.cursorID, Lim: lim})
 	}
 	if err != nil {
@@ -495,6 +535,9 @@ func (s *Service) listJournal(w http.ResponseWriter, r *http.Request) error {
 		if out.Entries, err = s.entries(ctx, visible); err != nil {
 			return err
 		}
+		if auth.MustFromContext(ctx).IsBot {
+			hideMembers(out.Entries)
+		}
 	}
 	httpx.Write(w, http.StatusOK, out)
 	return nil
@@ -523,6 +566,9 @@ func (s *Service) journalEntry(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	entry := entries[0]
+	if auth.MustFromContext(ctx).IsBot {
+		hideMembers(entries)
+	}
 	party := slices.ContainsFunc(entry.GetParties(), func(p *v1.SipCallParty) bool { return p.GetUserId() == me.String() })
 	if !party {
 		ok := bits.Has(perm.ViewJournals)

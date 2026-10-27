@@ -2322,3 +2322,14 @@ are not current phone evidence. Visual suites remain disabled.
 5. Call the Caller ID from a phone: the menu / group rings as in direct mode; the journal row has `provider_call_id`. Hang up on either side — the other side ends.
 6. Switch back to «На адрес сервера»: the agent unregisters (Expires: 0); the line disappears.
 7. `docker compose stop sipreg`: within 30 s the line reads «Регистратор недоступен»; start it — «Зарегистрировано» again.
+
+## Telephony: contacts, dial pad, the personal call, tones (ADR-0137 T4)
+
+Stand with a real provider (telephony on, a Caller ID), member A with `PLACE_CALLS`, a second phone.
+
+1. «Телефония» → «Контакты» → «+»: name, company, the second phone's number as «8 916 …» → save. The card shows it as «+7 916 …»; the same number on another contact → «Номер уже у «…»» under the numbers (tap opens that contact).
+2. Admin (`MANAGE_INTEGRATIONS`): «…» → «Импорт CSV» with a `;` file (one new row, one with that number, one without a name) → preview «Будет добавлено: 1 · пропущено: 2» with reasons → «Импортировать»; «Экспорт CSV» downloads the book.
+3. Call the Caller ID from the second phone: the incoming sheet (and the system notification with the window hidden) shows the contact's name, company and number; decline.
+4. «Недавние»: the missed row shows the name; on a phone a tap calls back (desktop: 📞 on hover). With A in a voice room: «Вызов…» (phone) / «Набираем…» in the island, ring-back plays, the room is paused; answer on the second phone → the call band; hang up → back in the room.
+5. Answered call: «Клавиатура» → press 1 2 #; the second phone (or an IVR you call) hears / receives the tones. If not — record it in docs/12 (DTMF line).
+6. «Набор»: type «101» → «Имя · вн. 101», call → internal call; long press «0» → «+»; paste «Тел.: 8 (916) 123-45-67» → «8 916 123-45-67». Member without `PLACE_CALLS`: the note, the call button only for internal numbers.

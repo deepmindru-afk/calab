@@ -1,4 +1,4 @@
-import { SipCallDirection, SipCallStatus, type SipCall, type WorkspaceSnapshot } from '@calaba/protocol';
+import { SipCallDirection, SipCallOrigin, SipCallStatus, type SipCall, type WorkspaceSnapshot } from '@calaba/protocol';
 import { t } from '../i18n';
 import { ApiError } from '../lib/api/client';
 import { describeError } from '../lib/api/errors';
@@ -22,6 +22,7 @@ import { useSipCalls } from '../stores/sipCalls';
 import { toast } from '../stores/toasts';
 import { useVoice } from '../stores/voice';
 import { applySnapshotInbound, onInboundCallUpdate, resetInbound } from './sipInbound';
+import { onPersonalCallUpdate, resetOutbound } from './sipOutbound';
 
 /**
  * Telephony on the client (ADR-0046): the server's phone lines (READY / WORKSPACE_CREATE
@@ -36,6 +37,7 @@ export function resetSipCalls(snaps: readonly WorkspaceSnapshot[]): void {
   for (const s of snaps) if (s.workspace) map = withSnapshot(map, s.workspace.id, s.sipCalls);
   commit(map);
   resetInbound(snaps); // inbound calls that ring me / I took (ADR-0117)
+  resetOutbound(snaps); // the personal call placed here (ADR-0137 §3)
 }
 
 /** WORKSPACE_CREATE (joined a workspace): its live lines. */
@@ -50,6 +52,11 @@ export function onSipCallUpdate(call: SipCall | undefined): void {
   if (!call) return;
   if (call.direction === SipCallDirection.IN) {
     onInboundCallUpdate(call);
+    return;
+  }
+  // A personal call from «Телефония» (ADR-0137 §3): no room, followed by its own service.
+  if (call.origin === SipCallOrigin.PERSONAL) {
+    onPersonalCallUpdate(call);
     return;
   }
   commit(withEvent(useSipCalls.getState().byRoom, call));

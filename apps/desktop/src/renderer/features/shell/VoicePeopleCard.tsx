@@ -17,7 +17,7 @@ import { useConnectingRing, useVoiceStateOf } from '../../stores/voicePending';
 import { memberName, useRoleLook, useWorkspaces } from '../../stores/workspaces';
 import { roleTextClass, roleTextStyle } from '../people/MemberBits';
 import { MemberContextMenu } from '../people/MemberContextMenu';
-import { MusicianIcon, VoiceStateIcons } from '../voice/VoiceStateIcons';
+import { MusicianIcon, SelfVoiceStateIcons, VoiceStateIcons } from '../voice/VoiceStateIcons';
 import { CallTimer } from './Sidebar';
 import { cardOrder, firstNames, stackOrder, stackSlice } from './voicePeople';
 
@@ -313,7 +313,12 @@ const VoicePersonRow = memo(function VoicePersonRow({ workspaceId, userId, self 
             {v?.streaming ? <MonitorUp className="size-4 shrink-0 text-danger" aria-label={t('people.streaming')} role="img" /> : null}
             {v?.camera ? <Video className="size-4 shrink-0 text-muted" aria-label={t('video.stateOn')} role="img" /> : null}
             {v?.musician ? <MusicianIcon /> : null}
-            {v ? <VoiceStateIcons muted={v.muted} deafened={v.deafened} serverMuted={v.serverMuted} pttIdle={v.ptt && !talking} onPhone={onPhone} /> : null}
+            {/* #96: my row draws the self panel's view, not the server copy. */}
+            {!v ? null : self ? (
+              <SelfVoiceStateIcons onPhone={onPhone} />
+            ) : (
+              <VoiceStateIcons muted={v.muted} deafened={v.deafened} serverMuted={v.serverMuted} pttIdle={v.ptt && !talking} onPhone={onPhone} />
+            )}
           </span>
         </button>
       </MemberContextMenu>

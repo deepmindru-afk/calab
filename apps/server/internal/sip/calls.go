@@ -43,10 +43,16 @@ const (
 	reasonError       = "error"
 )
 
-// publish sends SIP_CALL_UPDATE to the viewers of the call's room (calls without a room — the
-// connection tests — are not published).
+// publish sends SIP_CALL_UPDATE to the viewers of the call's room, a personal call's to its
+// caller's devices with caller ID (other calls without a room — the connection tests — are
+// not published).
 func (s *Service) publish(ctx context.Context, c sqlc.SipCall) {
 	s.callsChanged(ctx, c.WorkspaceID)
+	if c.Origin == OriginPersonal && c.StartedBy != nil {
+		pb := FillCaller(pbconv.SipCall(c), s.callerOf(ctx, c.WorkspaceID, c.PeerE164))
+		s.events.User(ctx, *c.StartedBy, &v1.DispatchEvent{Event: &v1.DispatchEvent_SipCallUpdate{SipCallUpdate: &v1.SipCallUpdate{Call: pb}}})
+		return
+	}
 	if c.RoomID == nil {
 		return
 	}
@@ -254,6 +260,9 @@ func (s *Service) finish(ctx context.Context, id uuid.UUID, status, reason strin
 	}
 	s.publish(ctx, row)
 	s.recEnded(ctx, row.ID)
+	if row.Origin == OriginPersonal {
+		s.personalEnded(ctx, row) // ADR-0137 §3: the member is free, the room goes
+	}
 	return row, true
 }
 
@@ -329,6 +338,13 @@ func (s *Service) hangupWorkspace(ctx context.Context, wsID uuid.UUID) {
 	for _, c := range live {
 		s.removeLine(ctx, voice.RoomName(wsID, *c.RoomID), c.ParticipantIdentity)
 		s.finish(ctx, c.ID, pbconv.SipEnded, reasonDisabled, nil)
+	}
+	personal, err := s.db.Q.ListLivePersonalCallsByWorkspace(ctx, wsID)
+	if err != nil {
+		slog.WarnContext(ctx, "sip: list live personal calls", "workspace", wsID, "err", err)
+	}
+	for _, c := range personal {
+		s.finish(ctx, c.ID, pbconv.SipEnded, reasonDisabled, nil) // the line and the room go with it
 	}
 	s.hangupInboundWorkspace(ctx, wsID, reasonDisabled)
 }
@@ -663,6 +679,10 @@ func (s *Service) Sweep(ctx context.Context) {
 	s.sweepRegistrations(ctx, now)
 	ringDeadline := now.Add(-(s.opts.RingingTimeout + 90*time.Second))
 	for _, c := range live {
+		if c.Origin == OriginPersonal { // ADR-0137 §3: its own room, its own rules
+			s.sweepPersonal(ctx, c, now, ringDeadline)
+			continue
+		}
 		if c.RoomID == nil { // a deleted room or an interrupted connection test
 			s.finish(ctx, c.ID, pbconv.SipEnded, reasonLost, nil)
 			continue

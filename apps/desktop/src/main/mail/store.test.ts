@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ftsQuery, migrate, MailStore, normalizeSubject, type NewMessage } from './store';
+import { ftsQuery, MIGRATIONS, migrate, MailStore, normalizeSubject, type NewMessage, type Scope } from './store';
 
 const ACC = 'a0123456789abcdef';
 const DAY = 24 * 3600_000;
@@ -69,7 +69,8 @@ describe('migrations', () => {
     const again = new MailStore(dir, ACC);
     const snippets = (): string[] => again.listThreads({ kind: 'all', exclude: [] }, { limit: 10 }).map((r) => `${r.subject}:${r.snippet}`).sort();
     expect(snippets()).toEqual(['Invoice:Счет на оплату HOSTKEY', 'Real:Счёт на оплату']);
-    expect(again.listThreads({ kind: 'all', exclude: [] }, { limit: 10, match: ftsQuery('счет на') ?? '' }).map((r) => r.subject)).toEqual(['Invoice']);
+    expect(again.listThreads({ kind: 'all', exclude: [] }, { limit: 10, match: ftsQuery('счет на') ?? '' }).map((r) => r.subject).sort()).toEqual(['Invoice', 'Real']); // ё folds to е
+    expect(again.listThreads({ kind: 'all', exclude: [] }, { limit: 10, match: ftsQuery('hostkey') ?? '' }).map((r) => r.subject)).toEqual(['Invoice']);
     expect(again.getMeta('snippet_version')).toBe('3');
     again.close();
   });
@@ -208,6 +209,41 @@ describe('search (FTS5)', () => {
     expect(q('утвержд')).toEqual(['Квартальный отчёт']);
     expect(q('pizza')).toEqual(['Lunch']);
     expect(q('nothing')).toEqual([]);
+  });
+  it('finds messages by sender / To / Cc / Bcc: full or partial address, domain, name, case and ё/е, across folders', () => {
+    const s = store();
+    const inbox = s.upsertFolder({ path: 'INBOX', name: 'INBOX', delimiter: '/', parentPath: '', role: 'inbox', specialUse: null });
+    const sent = s.upsertFolder({ path: 'Sent', name: 'Sent', delimiter: '/', parentPath: '', role: 'sent', specialUse: null });
+    s.insertMessage(msg(inbox, { subject: 'In', from: { name: 'Пётр Иванов', address: 'Ivanov@Romashka.ru' } }));
+    s.insertMessage(msg(sent, { subject: 'Out', to: [{ name: 'Olga', address: 'olga@acme.com' }] }));
+    s.insertMessage(msg(sent, { subject: 'Copy', cc: [{ name: '', address: 'boss@corp.ru' }], bcc: [{ name: 'Тихон', address: 'hidden@x.io' }] }));
+    const all: Scope = { kind: 'all', exclude: [] };
+    const q = (t: string, scope: Scope = all): string[] => s.listThreads(scope, { limit: 10, match: ftsQuery(t) ?? '' }).map((r) => r.subject).sort();
+    expect(q('ivanov@romashka.ru')).toEqual(['In']);
+    expect(q('IVANOV@')).toEqual(['In']);
+    expect(q('@romashka.ru')).toEqual(['In']);
+    expect(q('петр иванов')).toEqual(['In']);
+    expect(q('olga@acme.com')).toEqual(['Out']);
+    expect(q('acme')).toEqual(['Out']);
+    expect(q('boss@')).toEqual(['Copy']);
+    expect(q('hidden@x.io')).toEqual(['Copy']);
+    expect(q('тихон')).toEqual(['Copy']);
+    expect(q('ivanov')).toEqual(['In']);
+    expect(q('example.org')).toEqual(['Copy', 'Out']);
+    expect(q('olga@acme.com', { kind: 'folder', row: inbox })).toEqual([]);
+    expect(q('olga@acme.com', { kind: 'folder', row: sent })).toEqual(['Out']);
+  });
+  it('backfills recipients into the index of a database created before (migration 2)', () => {
+    const db = new DatabaseSync(':memory:');
+    migrate(db, MIGRATIONS.slice(0, 1));
+    db.prepare("INSERT INTO messages (rid, id, folder_row, uid, thread_id, from_name, from_addr, to_json, cc_json, subject, date) VALUES (1, 'm1', 1, 1, 't', 'Ivan', 'ivan@x.org', ?, ?, 'Old', 1)").run('[{"name":"Olga","address":"olga@acme.com"}]', '[{"name":"","address":"boss@corp.ru"}]');
+    db.prepare("INSERT INTO fts (rowid, subject, sender, snippet, body) VALUES (1, 'Old', 'Ivan ivan@x.org', '', '')").run();
+    const hits = (m: string): number => db.prepare('SELECT COUNT(*) AS c FROM fts WHERE fts MATCH ?').get(m)?.['c'] as number;
+    expect(hits('"boss"*')).toBe(0);
+    migrate(db, MIGRATIONS);
+    expect(hits('"boss"* "corp"*')).toBe(1);
+    expect(hits('"olga"*')).toBe(1);
+    expect(hits('"ivan"*')).toBe(1);
   });
   it('turns user text into safe quoted prefix terms', () => {
     expect(ftsQuery('hello "world" OR x*')).toBe('"hello"* "world"* "OR"* "x"*');

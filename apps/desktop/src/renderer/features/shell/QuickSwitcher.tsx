@@ -39,6 +39,10 @@ import { useSearchSummary } from '../search/useSearch';
 import { HitIcon, HitTitle, hitPlace, sectionTitle, totalText } from '../search/hitParts';
 import { openHit } from '../../services/searchNav';
 import { useSearchPanel } from '../../stores/searchPanel';
+import { telephonyVisibleNow } from '../telephony/access';
+import { openSection } from './sectionNav';
+import { openTab } from '../../services/phoneNav';
+import { PhoneIdleIcon } from '../../assets/nav/icons';
 
 type Item =
   | { kind: 'notes'; id: string; roomId: string; name: string; emoji: string }
@@ -46,6 +50,8 @@ type Item =
   | { kind: 'room'; id: string; room: Room }
   | { kind: 'member'; id: string; member: WorkspaceMember }
   | { kind: 'message'; id: string; msg: Message }
+  /** A section of the app found by its name («Телефония», ADR-0137 §5). */
+  | { kind: 'section'; id: string; section: 'telephony'; name: string }
   /** Unified search (ADR-0062): a hit, «Все: N →», a timed-out section (lib/search/summary.ts). */
   | SummaryRow;
 
@@ -119,6 +125,14 @@ export function QuickSwitcher({ onClose, initialQuery = '' }: { onClose: () => v
     return list.slice(0, needle ? MAX_ROOMS_QUERY : 50);
   }, [needle, rooms, workspaces, activeWs, author]);
 
+  // Sections by name (ADR-0137 §5 «⌘K: Телефония»): «телеф…», «звон…», «sip» / «phone», «calls».
+  const sectionItems = useMemo((): Item[] => {
+    if (!needle || author || !activeWs || !telephonyVisibleNow(activeWs)) return [];
+    const name = t('tel.section');
+    const words = [name.toLowerCase(), ...t('tel.qsWords').toLowerCase().split(',')];
+    return words.some((w) => w.trim().startsWith(needle) || (needle.length >= 3 && w.includes(needle))) ? [{ kind: 'section', id: 's-telephony', section: 'telephony', name }] : [];
+  }, [needle, author, activeWs]);
+
   const memberItems = useMemo(() => {
     if (!needle || author || !activeWs) return [];
     const ms = Object.values(workspaces[activeWs]?.members ?? {});
@@ -158,6 +172,7 @@ export function QuickSwitcher({ onClose, initialQuery = '' }: { onClose: () => v
   const items: Item[] = useMemo(
     () => [
       ...serverItems.byKey,
+      ...sectionItems,
       ...shelfItems.map((e): Item => ({ kind: 'notes', id: `n-${e.roomId}`, roomId: e.roomId, name: e.name, emoji: e.emoji })),
       ...dmItems.map((e): Item => ({ kind: 'dm', id: `d-${e.roomId}`, roomId: e.roomId, peerId: e.peerId, name: e.name })),
       ...roomItems.map((room): Item => ({ kind: 'room', id: `r-${room.id}`, room })),
@@ -165,7 +180,7 @@ export function QuickSwitcher({ onClose, initialQuery = '' }: { onClose: () => v
       ...(messages ?? []).map((msg): Item => ({ kind: 'message', id: `m-${msg.id}`, msg })),
       ...serverItems.rows,
     ],
-    [serverItems, shelfItems, dmItems, roomItems, memberItems, messages],
+    [serverItems, sectionItems, shelfItems, dmItems, roomItems, memberItems, messages],
   );
   const groups = useMemo(() => items.map(groupOf), [items]);
   const cur = Math.min(sel, Math.max(0, items.length - 1));
@@ -195,6 +210,12 @@ export function QuickSwitcher({ onClose, initialQuery = '' }: { onClose: () => v
     if (it.kind === 'hit') {
       onClose();
       openHit(it.hit);
+      return;
+    }
+    if (it.kind === 'section') {
+      onClose();
+      if (useUi.getState().phone.on) openTab(it.section);
+      else openSection(it.section);
       return;
     }
     const act = action ?? rowActions(rowKindNow(it))[0];
@@ -262,6 +283,7 @@ export function QuickSwitcher({ onClose, initialQuery = '' }: { onClose: () => v
   const header = (it: Item): string => {
     if (it.kind === 'hit' && it.byKey) return t('search.byKey');
     if (it.kind === 'hit' || it.kind === 'more' || it.kind === 'timeout') return sectionTitle(it.section);
+    if (it.kind === 'section') return t('search.sections');
     return it.kind === 'notes' ? t('search.notes') : it.kind === 'dm' ? t('search.dms') : it.kind === 'room' ? t('search.rooms') : it.kind === 'member' ? t('search.members') : t('search.messages');
   };
 
@@ -385,6 +407,7 @@ function rowKind(it: Item, canConnect: boolean, canDm: boolean, canCall: boolean
   if (it.kind === 'member') return { kind: 'member', canDm, canCall };
   if (it.kind === 'dm') return { kind: 'dm', canCall };
   if (it.kind === 'notes') return { kind: 'room' };
+  if (it.kind === 'section') return { kind: 'section' };
   return { kind: 'message' };
 }
 
@@ -538,7 +561,7 @@ function useCanConnect(room: Room | null): boolean {
 
 /** The row's subject for the buttons' names («Подключиться: Созвон»). */
 function rowName(it: Item): string {
-  if (it.kind === 'dm' || it.kind === 'notes') return it.name;
+  if (it.kind === 'dm' || it.kind === 'notes' || it.kind === 'section') return it.name;
   if (it.kind === 'room') return it.room.name;
   if (it.kind === 'member') return it.member.nickname || it.member.user?.displayName || '';
   if (it.kind === 'hit') return it.hit.title || sectionTitle(it.section);
@@ -572,6 +595,17 @@ function RowBody({ it, q, workspaceName, activeWs, rooms }: { it: Item; q: strin
   }
   if (it.kind === 'timeout') {
     return <span className="min-w-0 flex-1 truncate pl-6 text-caption text-muted">{t('search.timedOut')}</span>;
+  }
+  if (it.kind === 'section') {
+    return (
+      <>
+        <PhoneIdleIcon className="size-4 shrink-0 text-muted" />
+        <span className="min-w-0 flex-1 truncate">
+          <Highlight text={it.name} q={q} />
+        </span>
+        <span className={sub}>{t('search.sections')}</span>
+      </>
+    );
   }
   if (it.kind === 'notes') {
     return (

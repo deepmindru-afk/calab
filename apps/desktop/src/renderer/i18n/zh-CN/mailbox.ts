@@ -19,7 +19,7 @@ export const zhMailbox: DictShape<typeof ruMailbox> = {
   'mbox.switcher': '选择邮箱',
   'mbox.addAccount': '添加邮箱',
   'mbox.compose': '新邮件',
-  'mbox.search': '搜索',
+  'mbox.search': '搜索文本、姓名、地址',
   'mbox.clearSearch': '清除搜索',
   'mbox.unreadOnly': '仅未读',
   'mbox.searchResults': '搜索结果',

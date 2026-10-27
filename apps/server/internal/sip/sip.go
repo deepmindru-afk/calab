@@ -75,6 +75,9 @@ type Options struct {
 	SweepInterval time.Duration
 	// InboundTick: how often inbound deadlines are looked at (0 = 5 s).
 	InboundTick time.Duration
+	// PersonalJoinWait / PersonalGrace: how long a personal call waits for its caller to get
+	// into the room (0 = 15 s), and for a caller who left it to come back (0 = 30 s).
+	PersonalJoinWait, PersonalGrace time.Duration
 }
 
 // Service is telephony.
@@ -96,6 +99,12 @@ type Service struct {
 	CallLimit, UserCallLimit, TestLimit, InboundLimit *redisx.RateLimiter
 	// RegLimit: mode / registration credential changes per workspace (RegChangesPerHour).
 	RegLimit *redisx.RateLimiter
+	// The phone book (ADR-0137 §2): contact writes per member, CSV imports and exports per
+	// workspace.
+	ContactWriteLimit, ImportLimit, ExportLimit *redisx.RateLimiter
+	// media: the LiveKit URL and key for the personal call's tokens (SetMedia; empty = no
+	// personal calls).
+	media InboundConfig
 	// Inbound calls (ADR-0117 step 2): the IVR worker and the token config (SetInbound).
 	agent rtc.IVRAgent
 	inCfg InboundConfig
@@ -128,15 +137,30 @@ func New(d *db.DB, r rueidis.Client, lk rtc.LiveKit, s rtc.SIP, pub events.Publi
 	if o.SweepInterval <= 0 {
 		o.SweepInterval = 30 * time.Second
 	}
+	if o.PersonalJoinWait <= 0 {
+		o.PersonalJoinWait = callerJoinWait
+	}
+	if o.PersonalGrace <= 0 {
+		o.PersonalGrace = answerGrace
+	}
 	return &Service{
 		db: d, redis: r, voice: voice.Store{C: r}, lk: lk, sip: s, events: pub, plans: pl,
 		box: sealbox.New("calaba/sip-password/v1", secret), regBox: sealbox.New(regPurpose, secret), opts: o,
-		CallLimit:     redisx.NewRateLimiter(r, "rl:sip-call:", DefaultOutPerHour, float64(DefaultOutPerHour)/60),
-		UserCallLimit: redisx.NewRateLimiter(r, "rl:sip-call-u:", DefaultOutPerUserHour, float64(DefaultOutPerUserHour)/60),
-		TestLimit:     redisx.NewRateLimiter(r, "rl:sip-test:", TestsPerHour, float64(TestsPerHour)/60),
-		InboundLimit:  redisx.NewRateLimiter(r, "rl:sip-in:", InboundPerHour, float64(InboundPerHour)/60),
-		RegLimit:      redisx.NewRateLimiter(r, "rl:sip-reg:", RegChangesPerHour, float64(RegChangesPerHour)/60),
+		CallLimit:         redisx.NewRateLimiter(r, "rl:sip-call:", DefaultOutPerHour, float64(DefaultOutPerHour)/60),
+		UserCallLimit:     redisx.NewRateLimiter(r, "rl:sip-call-u:", DefaultOutPerUserHour, float64(DefaultOutPerUserHour)/60),
+		TestLimit:         redisx.NewRateLimiter(r, "rl:sip-test:", TestsPerHour, float64(TestsPerHour)/60),
+		InboundLimit:      redisx.NewRateLimiter(r, "rl:sip-in:", InboundPerHour, float64(InboundPerHour)/60),
+		RegLimit:          redisx.NewRateLimiter(r, "rl:sip-reg:", RegChangesPerHour, float64(RegChangesPerHour)/60),
+		ContactWriteLimit: redisx.NewRateLimiter(r, "rl:sip-contact:", contactWritesHour, float64(contactWritesHour)/60),
+		ImportLimit:       redisx.NewRateLimiter(r, "rl:sip-import:", contactImportsHour, float64(contactImportsHour)/60),
+		ExportLimit:       redisx.NewRateLimiter(r, "rl:sip-export:", contactExportsHour, float64(contactExportsHour)/60),
 	}
+}
+
+// SetMedia gives the service what the personal call's tokens need (ADR-0137 §3): the LiveKit
+// URL clients connect to and the key that signs room tokens.
+func (s *Service) SetMedia(publicURL, apiKey, secret string) {
+	s.media = InboundConfig{PublicURL: publicURL, APIKey: apiKey, Secret: secret}
 }
 
 // publicAddr is unfurl.PublicAddr without the import cycle risk: loopback, private, link-local,
@@ -163,6 +187,8 @@ func (s *Service) Routes(mux httpx.Router, wrap func(http.Handler) http.Handler)
 	mux.Handle("PUT /api/workspaces/{id}/sip/recording", wrap(httpx.HandlerFunc(s.putRecording)))
 	mux.Handle("PUT /api/workspaces/{id}/sip/policy", wrap(httpx.HandlerFunc(s.putPolicy)))
 	s.journalRoutes(mux, wrap)
+	s.contactRoutes(mux, wrap)
+	s.personalRoutes(mux, wrap)
 	s.pbxRoutes(mux, wrap)
 	s.inboundRoutes(mux, wrap)
 	s.transferRoutes(mux, wrap)

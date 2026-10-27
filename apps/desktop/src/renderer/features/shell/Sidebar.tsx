@@ -1641,8 +1641,6 @@ function VoiceMember({
 }): ReactNode {
   const speaking = useVoice((s) => s.speaking[state.userId] ?? false);
   const inSameRoom = useVoice((s) => s.roomId === room.id);
-  // Only our own moderator mute is known (VoiceState has no server-mute flag yet).
-  const serverMuted = useVoice((s) => s.serverMuted);
   const stream = useVoice((s) => s.streams.find((x) => x.userId === state.userId));
   const user = useWorkspaces((s) => s.users[state.userId]);
   const name = useWorkspaces(() => memberName(workspaceId, state.userId));
@@ -1727,7 +1725,8 @@ function VoiceMember({
       ) : null}
       {state.musician ? <MusicianIcon /> : null}
       {isMe ? (
-        <SelfVoiceStateIcons muted={state.muted} deafened={state.deafened} serverMuted={state.serverMuted || serverMuted} onPhone={onPhone} />
+        // #96: my row draws the self panel's view (useSelfMic), not this server copy.
+        <SelfVoiceStateIcons onPhone={onPhone} />
       ) : (
         // CBF-82: someone else in push-to-talk mode: the pale crossed mic until they speak.
         <VoiceStateIcons muted={state.muted} deafened={state.deafened} serverMuted={state.serverMuted} pttIdle={state.ptt && !talking} onPhone={onPhone} />

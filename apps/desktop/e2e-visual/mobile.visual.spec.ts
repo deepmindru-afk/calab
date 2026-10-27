@@ -79,7 +79,7 @@ async function toRoot(page: Page): Promise<void> {
 }
 
 /** A tab of the bottom tab bar (its root). */
-async function tab(page: Page, name: 'chats' | 'dms' | 'boards' | 'calendar' | 'disk' | 'wiki' | 'canvas' | 'profile'): Promise<void> {
+async function tab(page: Page, name: 'chats' | 'dms' | 'boards' | 'calendar' | 'disk' | 'wiki' | 'canvas' | 'telephony' | 'profile'): Promise<void> {
   await toRoot(page);
   const pinned = page.getByTestId(`phone-tab-${name}`);
   if ((await pinned.count()) > 0) {
@@ -291,7 +291,9 @@ async function checkpoint(page: Page, name: string, opts: { main?: boolean; snap
 async function expectNoFieldFocus(page: Page, where: string): Promise<void> {
   const active = await page.evaluate(() => {
     const a = document.activeElement;
-    return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || (a as HTMLElement).isContentEditable) ? `${a.tagName} ${a.getAttribute('aria-label') ?? a.getAttribute('placeholder') ?? ''}` : null;
+    // A checkbox (the haptics switch, lib/haptics) raises no keyboard: only text fields count.
+    const text = a?.tagName === 'INPUT' && !['checkbox', 'radio'].includes((a as HTMLInputElement).type);
+    return a && (text || a.tagName === 'TEXTAREA' || (a as HTMLElement).isContentEditable) ? `${a.tagName} ${a.getAttribute('aria-label') ?? a.getAttribute('placeholder') ?? ''}` : null;
   });
   expect.soft(active, `no field focused programmatically: ${where}`).toBeNull();
 }
@@ -560,6 +562,7 @@ test('m-chat-audio', async ({ page }) => {
 // Code blocks on a phone (docs/08 «Код в сообщениях»): the same block — language label, copy
 // always visible (no hover on touch), horizontal scroll inside the block, not the page.
 test('m-chat-code', async ({ page }) => {
+  await page.addInitScript(KEYBOARD_STUB);
   await signedInRoom(page);
   await expect(page.getByTestId('composer')).toBeVisible();
   mock.injectMessage({ roomId: IDS.rooms.general, authorId: IDS.users.vera, content: CODE_FIXTURE.long });
@@ -574,6 +577,24 @@ test('m-chat-code', async ({ page }) => {
   await expect(js.getByTestId('code-copy')).toHaveCSS('opacity', '1');
   await expect(page.locator('[data-virtuoso-scroller][data-scrolling]')).toHaveCount(0);
   await checkpoint(page, 'm-chat-code', { main: true });
+
+  // Expanded editor on a phone (#97): the whole screen, the keyboard frame shrinks it from below.
+  const field = page.getByTestId('composer').locator('textarea');
+  const draft = Array.from({ length: 30 }, (_, i) => `Строка ${i + 1}: черновик длинного сообщения для проверки редактора`).join('\n');
+  await field.fill(draft);
+  await expect(page.getByTestId('composer-expand')).toBeVisible();
+  await checkpoint(page, 'm-chat-expand-button', { main: true });
+  await page.getByTestId('composer-expand').tap();
+  const editor = page.getByRole('dialog', { name: /Сообщение в/ });
+  await expect(editor.getByTestId('editor-field')).toBeFocused();
+  await checkpoint(page, 'm-chat-expanded-editor');
+  await page.evaluate(() => (window as unknown as KeyboardStub).__keyboard(336));
+  await expect(page.locator('html.kb-open')).toHaveCount(1);
+  await checkpoint(page, 'm-chat-expanded-editor-keyboard', { keyboard: true });
+  await page.evaluate(() => (window as unknown as KeyboardStub).__keyboard(null));
+  await editor.getByTestId('editor-collapse').tap();
+  await expect(editor).toHaveCount(0);
+  await expect(field).toHaveValue(draft);
 });
 
 // Voice message on a phone (docs/08 «Голосовые сообщения»): the bubble with 44 px targets and
@@ -1652,63 +1673,486 @@ test('m-settings-bots', async ({ page }) => {
   await expect(dialog).toHaveCount(0);
 });
 
-// ADR-0117, CBF-77: «Телефония» on a phone — the tabs as a picker button (five tabs, docs/08
-// «Choice»), the live calls, the numbers, a group form, a menu form.
-test('m-telephony', async ({ page }) => {
+/**
+ * ADR-0137 «Телефония» (T3) on a phone: the section's row in «Ещё» with my missed calls; «Недавние»
+ * (a call ringing now, a missed one, an outbound one, a long name with a long company, a number
+ * without a contact, a hidden number), the loading and empty states, «Пропущенные», the filter card
+ * and its chips, a row's swipe and long-press menu, the detail of a transfer (route unfolded), of a
+ * missed call, of an outbound call and of a call from before the journal; the tab pinned to the bar.
+ */
+async function phoneRecents(page: Page): Promise<void> {
+  await toRoot(page);
+  await page.getByTestId('phone-tab-more').tap();
+  const more = page.getByTestId('more-row-telephony');
+  await expect(more).toContainText('2');
+  await checkpoint(page, 'm-tel-more');
+  await more.tap();
+  const root = page.getByTestId('phone-telephony');
+  await expect(root.getByTestId('tel-group').first()).toHaveText('Сейчас');
+  await expectNoFieldFocus(page, 'telephony recents');
+  await checkpoint(page, 'm-tel-recents');
+  const segment = (name: string): Locator => root.getByTestId('tel-segment').getByRole('radio', { name });
+
+  // «Пропущенные»: the six static rows while the page loads, then the two missed calls.
+  const release = mock.holdSipJournal();
+  await segment('Пропущенные').tap();
+  await expect(root.getByTestId('tel-skeleton')).toBeVisible();
+  await checkpoint(page, 'm-tel-recents-loading');
+  release();
+  await expect(root.getByTestId('tel-row')).toHaveCount(2);
+  await checkpoint(page, 'm-tel-missed');
+  await segment('Недавние').tap();
+  await expect(root.getByTestId('tel-group').first()).toHaveText('Сейчас');
+
+  // The funnel → the centred card; the set filters as chips under the search.
+  await root.getByTestId('tel-filter-open').tap();
+  const card = page.getByTestId('tel-filter-card');
+  await expect(card).toBeVisible();
+  await checkpoint(page, 'm-tel-filter-card');
+  await card.getByRole('radio', { name: 'Входящие' }).tap();
+  await card.getByRole('radio', { name: '7 дней' }).tap();
+  await page.getByTestId('tel-filter-done').tap();
+  await expect(card).toHaveCount(0);
+  await expect(root.getByTestId('tel-chips')).toBeVisible();
+  await checkpoint(page, 'm-tel-filter-chips');
+  await root.getByTestId('tel-chip-direction').tap();
+  await root.getByTestId('tel-chip-period').tap();
+  await expect(root.getByTestId('tel-chips')).toHaveCount(0);
+
+  // A row: the left swipe («Подробнее» · «Копировать»), the long-press menu.
+  const lutik = root.getByTestId('tel-row').filter({ hasText: 'ООО Лютик' });
+  await swipeLeft(lutik);
+  await expect(root.getByTestId('tel-swipe')).toBeVisible();
+  await checkpoint(page, 'm-tel-row-swipe');
+  await lutik.getByTestId('tel-row-tap').tap();
+  await expect(root.getByTestId('tel-swipe')).toHaveCount(0);
+  await longPress(lutik.getByTestId('tel-row-tap'));
+  await expectMenuCard(page, 'm-tel-row-menu', true);
+
+  // The details (pushed screens, «‹» back to the list).
+  const detail = page.getByTestId('tel-detail');
+  const openDetail = async (text: string): Promise<void> => {
+    await root.getByTestId('tel-row').filter({ hasText: text }).getByTestId('tel-row-info').tap();
+    await expect(detail.getByTestId('tel-step').first()).toBeVisible();
+  };
+  await openDetail('Анна Петрова');
+  await expect(detail.getByTestId('tel-detail-name')).toHaveText('Анна Петрова');
+  await expect(detail.getByTestId('tel-recording')).toContainText('6:20');
+  await expect(detail.getByTestId('tel-detail-recording')).toBeVisible();
+  await checkpoint(page, 'm-tel-detail-recording');
+  await detail.getByTestId('tel-step-rings').first().tap();
+  await expect(detail.getByTestId('tel-step-attempts')).toContainText('Вера Ким');
+  await detail.getByTestId('tel-step').filter({ hasText: 'переводит' }).scrollIntoViewIfNeeded();
+  await checkpoint(page, 'm-tel-detail-transfer');
+  await page.getByTestId('phone-back').tap();
+  await openDetail('+7 495 765-43-21');
+  await checkpoint(page, 'm-tel-detail-missed');
+  await page.getByTestId('phone-back').tap();
+  await openDetail('ООО Лютик');
+  await checkpoint(page, 'm-tel-detail-outbound');
+  await page.getByTestId('phone-back').tap();
+  // A call from before the journal: the route parsed, no times (the end of the list).
+  await root.locator('[data-virtuoso-scroller]').evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+  await openDetail('+7 495 111-22-33');
+  await detail.getByTestId('tel-route-legacy').scrollIntoViewIfNeeded();
+  await expect(detail.getByTestId('tel-route-legacy')).toBeVisible();
+  await checkpoint(page, 'm-tel-detail-legacy');
+  await page.getByTestId('phone-back').tap();
+
+  // Nothing yet / nothing missed.
+  mock.seedSipJournal({ empty: true });
+  await segment('Пропущенные').tap();
+  await expect(root.getByTestId('tel-empty')).toContainText('Пропущенных нет');
+  await checkpoint(page, 'm-tel-missed-empty');
+  await segment('Недавние').tap();
+  await expect(root.getByTestId('tel-empty')).toContainText('Звонков пока нет');
+  await checkpoint(page, 'm-tel-recents-empty');
+
+}
+
+/** «Телефония» from «Ещё» (the section is not pinned in the fixture): its root. */
+async function openTelephony(page: Page): Promise<Locator> {
+  await toRoot(page);
+  await page.getByTestId('phone-tab-more').tap();
+  await page.getByTestId('more-row-telephony').tap();
+  const root = page.getByTestId('phone-telephony');
+  await expect(root).toBeVisible();
+  return root;
+}
+
+/** A CSV the import previews: one new contact, a number another contact has, a row with no name. */
+const CONTACTS_CSV = 'Имя;Компания;Телефон;Заметка\nИрина Белова;ООО Лютик;8 916 000-11-22;\nДубль Анны;;+7 916 123-45-67;\n;;+7 916 000-99-88;\nПётр;;доб. 12;\n';
+
+/**
+ * ADR-0137 T4 on a phone: «Контакты» — the third segment (letters, Cyrillic then Latin then «#»,
+ * a company without a person, a very long name and company), the FAB over the list's end, a row's
+ * swipe and long-press menu, the card (three numbers, a note, the calls), the number choice, the
+ * form (with the keyboard up: «Сохранить» above it), a number another contact has, the empty
+ * book with «Импорт CSV», its loading, the import preview.
+ */
+test('m-telephony-contacts', async ({ page }) => {
+  test.setTimeout(300_000);
+  await page.addInitScript(KEYBOARD_STUB);
   await signedIn(page);
   mock.seedSipExchange();
-  mock.seedSipActiveCalls();
-  await page.getByTestId('phone-ws-switcher').tap();
-  await page.getByRole('menuitem', { name: 'Настройки', exact: true }).tap();
-  const dialog = page.getByTestId('settings-page');
-  await dialog.getByRole('tab', { name: 'Телефония' }).tap();
-  const pick = async (tab: string): Promise<void> => {
-    await dialog.getByTestId('sip-tab').tap();
-    await page.getByTestId(`sip-tab-${tab}`).tap();
+  mock.seedSipJournal();
+  mock.seedSipContacts();
+  const root = await openTelephony(page);
+  const segment = (name: string): Locator => root.getByTestId('tel-segment').getByRole('radio', { name });
+  // The six static rows while the first page loads.
+  const release = mock.holdSipContacts();
+  await segment('Контакты').tap();
+  await expect(root.getByTestId('telc-skeleton')).toBeVisible();
+  await checkpoint(page, 'm-tel-contacts-loading');
+  release();
+  const list = root.getByTestId('telc-list');
+  await expect(list.getByTestId('telc-letter').first()).toHaveText('А');
+  await expect(list.getByTestId('telc-row').filter({ hasText: 'ООО Лютик' })).toBeVisible();
+  await expectNoFieldFocus(page, 'telephony contacts');
+  await checkpoint(page, 'm-tel-contacts');
+  // The FAB over the end of the list: the last row stays above it.
+  await root.locator('[data-virtuoso-scroller]').evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+  await expect(list.getByTestId('telc-letter').filter({ hasText: '#' })).toBeVisible();
+  await expect(root.getByTestId('tel-fab')).toBeVisible();
+  await checkpoint(page, 'm-tel-fab');
+  await root.locator('[data-virtuoso-scroller]').evaluate((el) => el.scrollTo({ top: 0 }));
+
+  // A row: the left swipe («Позвонить» · «Изменить»), the long-press menu.
+  const orlov = list.getByTestId('telc-row').filter({ hasText: 'Дмитрий Орлов' });
+  await swipeLeft(orlov);
+  await expect(root.getByTestId('telc-swipe')).toBeVisible();
+  await checkpoint(page, 'm-tel-contact-swipe');
+  await orlov.getByTestId('telc-row-tap').tap();
+  await expect(root.getByTestId('telc-swipe')).toHaveCount(0);
+  await longPress(orlov.getByTestId('telc-row-tap'));
+  await expectMenuCard(page, 'm-tel-contact-menu');
+
+  // The card: three numbers, the note, the calls; «Позвонить» → which number.
+  await list.getByTestId('telc-row').filter({ hasText: 'Анна Петрова' }).getByTestId('telc-row-tap').tap();
+  const card = page.getByTestId('telc-card');
+  await expect(card.getByTestId('telc-number')).toHaveCount(3);
+  await expect(card.getByTestId('telc-call').first()).toBeVisible();
+  await checkpoint(page, 'm-tel-contact-card');
+  await card.getByTestId('telc-card-call').tap();
+  await expect(page.getByTestId('telc-number-choice')).toBeVisible();
+  await expectMenuCard(page, 'm-tel-contact-number-choice', true);
+
+  // The form: the fields, then the keyboard up with «Сохранить» right above it.
+  await card.getByTestId('telc-card-edit').tap();
+  const form = page.getByTestId('telc-form');
+  await expect(form.getByTestId('telc-f-number')).toHaveCount(3);
+  await expectNoFieldFocus(page, 'contact form');
+  await checkpoint(page, 'm-tel-contact-edit');
+  await form.getByTestId('telc-f-company').tap();
+  await page.evaluate(() => (window as unknown as KeyboardStub).__keyboard(336));
+  await expect(page.locator('html.kb-open')).toHaveCount(1);
+  await checkpoint(page, 'm-tel-contact-edit-keyboard', { keyboard: true });
+  await page.evaluate(() => (window as unknown as KeyboardStub).__keyboard(null));
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  // A number another contact has: the error under the numbers with a link to that contact.
+  await form.getByTestId('telc-f-number').last().fill('+7 812 333-44-55');
+  await form.getByTestId('telc-f-save').tap();
+  await expect(form.getByTestId('telc-f-phones-error')).toContainText('Константин');
+  await form.getByTestId('telc-f-phones-error').scrollIntoViewIfNeeded();
+  await checkpoint(page, 'm-tel-contact-dup-error');
+  await toRoot(page);
+
+  // An empty book: «Добавить контакт» and, for MANAGE_INTEGRATIONS, «Импорт CSV».
+  mock.seedSipContacts({ empty: true });
+  await segment('Недавние').tap();
+  await segment('Контакты').tap();
+  await expect(root.getByTestId('telc-empty')).toContainText('Контактов пока нет');
+  await checkpoint(page, 'm-tel-contacts-empty');
+  // «Импорт CSV»: a file → the preview with its skips.
+  mock.seedSipContacts();
+  await root.getByTestId('telc-empty-import').tap();
+  await page.getByTestId('telc-import-file').setInputFiles({ name: 'contacts.csv', mimeType: 'text/csv', buffer: Buffer.from(CONTACTS_CSV) });
+  await expect(page.getByTestId('telc-import-preview')).toContainText('Будет добавлено: 1');
+  await checkpoint(page, 'm-tel-import-preview');
+  await page.keyboard.press('Escape');
+});
+
+/**
+ * ADR-0137 T4 «Набор» on a phone: the FAB's screen — empty, a number typed with the contact it
+ * belongs to, a colleague's internal number, «+» from a held «0» (iPhone SE: the keypad fits
+ * without scrolling — layout invariants on every phone); the call: «Вызов…» full screen, then
+ * the band with the tone keypad; an inbound call from a contact — its name, company, number.
+ */
+test('m-telephony-dial', async ({ page }) => {
+  test.setTimeout(300_000);
+  await signedIn(page);
+  mock.seedSipExchange();
+  mock.seedSipJournal();
+  mock.seedSipContacts();
+  const root = await openTelephony(page);
+  await root.getByTestId('tel-fab').tap();
+  const dial = page.getByTestId('tel-dial-screen');
+  await expect(dial.getByTestId('tel-keypad')).toBeVisible();
+  await expectNoFieldFocus(page, 'dial pad');
+  await checkpoint(page, 'm-tel-keypad-empty');
+  const press = async (keys: string): Promise<void> => {
+    for (const k of keys) await dial.locator(`[data-key="${k}"]`).tap();
   };
-  await pick('calls');
-  await expect(dialog.getByTestId('sip-call-row')).toHaveCount(4);
-  await expectNoFieldFocus(page, 'telephony');
-  // The timers and the journal's times follow the clock.
-  const clock = [dialog.getByTestId('sip-call-timer'), dialog.getByTestId('sip-journal-row').locator('td:first-child')];
-  await checkpoint(page, 'm-telephony-calls', { mask: clock });
-  await dialog.getByTestId('sip-tab').tap();
-  await expect(page.getByTestId('sip-tab-ivr')).toBeVisible();
-  await checkpoint(page, 'm-telephony-tabs', { mask: clock });
-  await page.getByTestId('sip-tab-numbers').tap();
-  await expect(dialog.getByTestId('sip-ext-row')).toHaveCount(4);
+  const clear = async (): Promise<void> => {
+    await longPress(dial.getByTestId('tel-dial-back'));
+    await expect(dial.getByTestId('tel-dial-field')).toHaveValue('');
+  };
+  await press('89161234567');
+  await expect(dial.getByTestId('tel-dial-field')).toHaveValue('8 916 123-45-67');
+  await expect(dial.getByTestId('tel-dial-suggestion')).toContainText('Анна Петрова');
+  await checkpoint(page, 'm-tel-keypad-typed');
+  await clear();
+  await press('101');
+  await expect(dial.getByTestId('tel-dial-suggestion')).toContainText('Борис Петров');
+  await expect(dial.getByTestId('tel-dial-suggestion')).toContainText('вн. 101');
+  await checkpoint(page, 'm-tel-keypad-extension');
+  await clear();
+  await longPress(dial.locator('[data-key="0"]'));
+  await press('74957001100');
+  await expect(dial.getByTestId('tel-dial-field')).toHaveValue('+7 495 700-11-00');
+  await expect(dial.getByTestId('tel-dial-suggestion')).toContainText('«Альфа-Сервис»');
+  await checkpoint(page, 'm-tel-keypad-plus');
+  await clear();
+
+  // The call: «Вызов…» over everything until the answer, then the band with «Клавиатура».
+  await press('89161234567');
+  await dial.getByTestId('tel-dial-call').tap();
+  const calling = page.getByTestId('sip-outgoing');
+  await expect(calling).toContainText('Анна Петрова');
+  await checkpoint(page, 'm-tel-calling');
+  mock.advanceSipPersonal();
+  await expect(calling).toHaveCount(0);
+  const strip = page.getByTestId('mobile-voice-strip');
+  await expect(strip).toContainText('Анна Петрова');
+  // Like the iPhone «Телефон»: the name on one line, the call's timer under it.
+  await expect(strip.getByTestId('mobile-voice-status')).toHaveText(/^\d{2}:\d{2}$/, { timeout: 30_000 });
+  // WebKit here has no microphone: its toast is not what the frame is about.
+  while (await page.getByTestId('toast').count()) await page.getByTestId('toast').first().getByRole('button', { name: 'Закрыть' }).tap();
+  expect(await strip.getByTestId('mobile-voice-label').evaluate((el) => el.getBoundingClientRect().height < 24), 'name on one line').toBe(true);
+  await checkpoint(page, 'm-tel-in-call', { mask: [strip.getByTestId('mobile-voice-status')] });
+  await strip.getByTestId('dtmf-open').tap();
+  const pad = page.getByTestId('dtmf-pad');
+  for (const k of '12#') await pad.locator(`[data-key="${k}"]`).tap();
+  await expect(page.getByTestId('dtmf-typed')).toHaveText('12#');
+  await checkpoint(page, 'm-tel-in-call-dtmf', { mask: [strip.getByTestId('mobile-voice-status')] });
+  await page.keyboard.press('Escape');
+  await strip.getByRole('button', { name: 'Отключиться' }).tap();
+  await expect(strip).toHaveCount(0);
+
+  // An inbound call from a contact's number: the name big, the company, the number under them.
+  mock.ringSipInbound(IDS.users.anna, '+78123334455', 'Отдел продаж');
+  const ring = page.getByTestId('sip-incoming');
+  await expect(ring.getByTestId('call-sheet-title')).toContainText('Константин');
+  await expect(ring).toContainText('+7 812 333-44-55');
+  await checkpoint(page, 'm-call-incoming-contact');
+});
+
+/** «Набор» without PLACE_CALLS (Вера, a member with an internal number): the note; colleagues' numbers still dial. */
+test('m-telephony-no-place-calls', async ({ page }) => {
+  await open(page, '/');
+  await page.getByLabel('Email').fill('vera@calaba.test');
+  await page.getByLabel('Пароль', { exact: true }).fill(PASSWORD);
+  await page.getByRole('button', { name: 'Войти', exact: true }).tap();
+  await expect(page.getByTestId('mobile-shell')).toBeVisible();
+  mock.seedSipExchange();
+  const root = await openTelephony(page);
+  await root.getByTestId('tel-fab').tap();
+  const dial = page.getByTestId('tel-dial-screen');
+  await expect(dial.getByTestId('tel-dial-no-place')).toBeVisible();
+  await checkpoint(page, 'm-tel-no-place-calls');
+  for (const k of '84951') await dial.locator(`[data-key="${k}"]`).tap();
+  await expect(dial.getByTestId('tel-dial-suggestion')).toHaveText('Только внутренние номера');
+  await expect(dial.getByTestId('tel-dial-call')).toBeDisabled();
+  // A colleague's internal number still dials.
+  await longPress(dial.getByTestId('tel-dial-back'));
+  for (const k of '101') await dial.locator(`[data-key="${k}"]`).tap();
+  await expect(dial.getByTestId('tel-dial-suggestion')).toContainText('Борис Петров');
+  await expect(dial.getByTestId('tel-dial-call')).toBeEnabled();
+});
+
+// «Телефония» pinned to the bar (in place of «Календарь»): the tab with my missed calls.
+test('m-telephony-pinned', async ({ page }) => {
+  await signedIn(page, { phonePinnedTabs: ['chats', 'dms', 'boards', 'telephony'] });
+  mock.seedSipExchange();
+  mock.seedSipJournal();
+  await expect(page.getByTestId('phone-tab-telephony')).toContainText('2');
+  await checkpoint(page, 'm-tel-pinned');
+});
+
+test('m-telephony-recents', async ({ page }) => {
+  test.setTimeout(300_000);
+  await signedIn(page);
+  mock.seedSipExchange();
+  mock.seedSipJournal();
+  await phoneRecents(page);
+});
+
+/**
+ * ADR-0137 §7 (T5): the station's settings on a phone — no tables, a drill-down list. The admin
+ * before anything is connected (the empty state, the connection form with a field error); then ⚙ →
+ * the list with values, «Входящие» over a registration (registered, then refused) with the entry
+ * point's target card, the numbers and a number's form (sticky «Сохранить» above the keyboard), a
+ * group with its order handles, the menus and a menu's 3×4 keys with the action card and its
+ * second level, the greeting and the notice rows, recording, retention and limits, the working
+ * hours (two intervals on Monday, a Friday night shift) and their off-hours action; a profile's
+ * internal number — the admin's edit with a taken number, a member's own read-only. Then the
+ * incoming call (ADR-0117 step 2) and its transfer (ADR-0132).
+ */
+test('m-telephony', async ({ page }) => {
+  test.setTimeout(600_000);
+  await page.addInitScript(KEYBOARD_STUB);
+  await signedIn(page);
+  mock.seedSipExchange(true);
+  mock.setSip(IDS.workspaces.main, null);
+  await tab(page, 'telephony');
+  const root = page.getByTestId('phone-telephony');
+  await expect(root.getByTestId('tel-not-connected')).toContainText('Подключите SIP-провайдера');
+  await expectNoFieldFocus(page, 'telephony not connected');
+  await checkpoint(page, 'm-tel-not-connected');
+  await root.getByTestId('tel-connect').tap();
+  const screen = page.getByTestId('tel-phone-settings');
+  await expect(screen.getByTestId('sip-form')).toBeVisible();
+  await expectNoFieldFocus(page, 'telephony connection');
+  await screen.getByTestId('sip-host').fill('sip:bad host');
+  await screen.getByTestId('sip-save').tap();
+  await expect(screen.getByTestId('sip-err-host')).toBeVisible();
+  await checkpoint(page, 'm-tel-settings-connection');
+  await page.getByTestId('phone-back').tap();
+
+  // Connected: ⚙ in the root's header → the list with each page's value.
+  mock.seedSipExchange();
+  mock.setSipRegistration('registered');
+  mock.seedSipSchedule();
+  // The account the connection screen cached is the never-saved one (the clock is fixed: it never goes stale).
+  await page.reload();
+  await expect(page.getByTestId('mobile-shell')).toBeVisible();
+  await tab(page, 'telephony');
+  await expect(root.getByTestId('tel-settings-open')).toBeVisible();
+  await checkpoint(page, 'm-tel-root-admin');
+  await root.getByTestId('tel-settings-open').tap();
+  const list = page.getByTestId('tset-list');
+  await expect(list.getByTestId('tset-row-numbers')).toContainText('4');
+  await expect(list.getByTestId('tset-row-schedule')).toContainText('РФ календарь → Выходные');
+  await checkpoint(page, 'm-tel-settings');
+  const row = async (id: string): Promise<void> => {
+    await page.getByTestId(`tset-row-${id}`).tap();
+    await expect(screen).toHaveAttribute('data-page', id);
+  };
+
+  // «Входящие»: the registration's state, the entry point as a row → the target card.
+  await row('inbound');
+  await expect(screen.getByTestId('sip-reg-status')).toContainText('Зарегистрировано до 13:39');
+  await checkpoint(page, 'm-tel-settings-inbound');
+  await screen.getByTestId('sip-inbound-target').tap();
+  const card = page.getByTestId('tset-target-card');
+  await expect(card).toBeVisible();
+  await checkpoint(page, 'm-tel-target-card');
+  await page.keyboard.press('Escape');
+  await expect(card).toHaveCount(0);
+  mock.setSipRegistration('failed');
+  await screen.getByTestId('sip-inbound-save').tap();
+  await expect(screen.getByTestId('sip-reg-status')).toContainText('Ошибка регистрации');
+  // «Сохранено» stays while the clock is fixed and would sit over the next screens: close it.
+  await expect(page.getByTestId('toast')).toHaveCount(1);
+  while (await page.getByTestId('toast').count()) await page.getByTestId('toast').first().getByRole('button', { name: 'Закрыть' }).tap();
+  await screen.getByTestId('sip-reg-status').scrollIntoViewIfNeeded();
+  await checkpoint(page, 'm-tel-settings-inbound-failed');
+  await page.getByTestId('phone-back').tap();
+
+  // «Внутренние номера»: rows 56 px → a number's form; the field focused with the keyboard up —
+  // «Сохранить» stays right above it.
+  await row('numbers');
+  await expect(screen.getByTestId('sip-ext-row')).toHaveCount(4);
   await checkpoint(page, 'm-telephony');
-  // ADR-0129: a number closed to external callers — the switch in its form on a phone. Review shot.
-  await dialog.getByTestId('sip-ext-row').filter({ hasText: 'Борис' }).getByRole('button', { name: 'Изменить' }).tap();
-  await dialog.getByTestId('sip-ext-no-external-switch').scrollIntoViewIfNeeded();
-  await checkpoint(page, 'm-telephony-number-no-external', { snapshot: false });
-  await dialog.getByTestId('sip-ext-form').getByRole('button', { name: 'Отмена' }).tap();
-  // ADR-0124: the group form with its fallback on (after N s → a target) on a phone.
-  await pick('groups');
-  await dialog.getByTestId('sip-group-row').filter({ hasText: 'Отдел продаж' }).getByRole('button', { name: 'Изменить' }).tap();
-  await expect(dialog.getByTestId('sip-group-onfail')).toBeVisible();
-  await dialog.getByTestId('sip-group-fallback').scrollIntoViewIfNeeded();
+  await screen.getByTestId('sip-ext-row').filter({ hasText: 'Борис' }).tap();
+  await expect(screen.getByTestId('sip-ext-form')).toBeVisible();
+  await expectNoFieldFocus(page, 'number form');
+  await checkpoint(page, 'm-telephony-number-no-external');
+  await screen.getByTestId('sip-ext-number').tap();
+  await page.evaluate((h) => (window as unknown as KeyboardStub).__keyboard(h), 300);
+  await expect(page.locator('html')).toHaveClass(/kb-open/);
+  await checkpoint(page, 'm-tel-save-keyboard', { keyboard: true });
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.evaluate(() => (window as unknown as KeyboardStub).__keyboard(null));
+  await page.getByTestId('phone-back').tap();
+  await page.getByTestId('phone-back').tap();
+
+  // «Группы»: «Отдел продаж» — the members as rows with ×; «Изменить порядок» swaps them for handles.
+  await row('groups');
+  await screen.getByTestId('sip-group-row').filter({ hasText: 'Отдел продаж' }).tap();
+  await expect(screen.getByTestId('sip-group-member')).toHaveCount(3);
   await checkpoint(page, 'm-telephony-group');
-  await dialog.getByTestId('sip-group-form').getByRole('button', { name: 'Отмена' }).tap();
-  await pick('ivr');
+  await screen.getByTestId('sip-group-reorder').tap();
+  await expect(screen.getByTestId('sip-group-drag')).toHaveCount(3);
+  await screen.getByTestId('sip-group-members').scrollIntoViewIfNeeded();
+  await checkpoint(page, 'm-tel-group-reorder');
+  await page.getByTestId('phone-back').tap();
+  await page.getByTestId('phone-back').tap();
+
+  // «Автоответ»: the menus → «Главное меню»: the keys as a 3×4 tile grid (9 leads to a deleted
+  // menu), a tile → the action card, «Группа ›» → the second level.
+  await row('ivr');
   await checkpoint(page, 'm-telephony-ivr');
-  await dialog.getByTestId('sip-menu-row').filter({ hasText: 'Главное меню' }).getByRole('button', { name: 'Изменить' }).tap();
-  await dialog.getByTestId('sip-menu-keys').scrollIntoViewIfNeeded();
+  await screen.getByTestId('sip-menu-row').filter({ hasText: 'Главное меню' }).tap();
+  await expect(screen.getByTestId('sip-menu-key-9')).toHaveAttribute('data-value', 'missing');
+  await screen.getByTestId('sip-menu-keys').scrollIntoViewIfNeeded();
   await checkpoint(page, 'm-telephony-menu');
-  await dialog.getByTestId('sip-menu-dial').scrollIntoViewIfNeeded();
-  await checkpoint(page, 'm-telephony-menu-dial', { snapshot: false });
+  await screen.getByTestId('sip-menu-key-1').tap();
+  await expect(card).toBeVisible();
+  await checkpoint(page, 'm-tel-ivr-key-picker');
+  await card.getByTestId('tset-target-groups').tap();
+  await expect(card.getByRole('radio', { name: /Отдел продаж/ })).toHaveAttribute('aria-checked', 'true');
+  await checkpoint(page, 'm-tel-ivr-key-picker-groups');
+  await card.getByRole('radio', { name: /Поддержка/ }).tap();
+  await expect(card).toHaveCount(0);
+  await expect(screen.getByTestId('sip-menu-key-1')).toContainText('Поддержка');
   // The greeting row on a phone: ▶, the length, «Заменить» / «Удалить запись», a refused file.
-  const promptRow = dialog.getByTestId('sip-menu-prompt');
-  await dialog.getByTestId('sip-menu-prompt-file').setInputFiles({ name: 'greeting.docx', mimeType: 'application/msword', buffer: Buffer.from('doc') });
-  await expect(dialog.getByTestId('sip-menu-prompt-error')).toHaveText('Этот файл не подходит — нужен MP3, WAV или OGG');
-  await promptRow.scrollIntoViewIfNeeded();
+  await screen.getByTestId('sip-menu-prompt-file').setInputFiles({ name: 'greeting.docx', mimeType: 'application/msword', buffer: Buffer.from('doc') });
+  await expect(screen.getByTestId('sip-menu-prompt-error')).toHaveText('Этот файл не подходит — нужен MP3, WAV или OGG');
+  await screen.getByTestId('sip-menu-prompt').scrollIntoViewIfNeeded();
   await checkpoint(page, 'm-telephony-prompt');
-  // ADR-0131: the recording notice row, then «Запись звонков» in «Настройки».
-  await dialog.getByTestId('sip-menu-notice').scrollIntoViewIfNeeded();
-  await checkpoint(page, 'm-telephony-menu-notice', { snapshot: false });
-  await pick('settings');
-  await dialog.getByTestId('sip-recording').scrollIntoViewIfNeeded();
-  await checkpoint(page, 'm-telephony-recording', { snapshot: false });
+  await screen.getByTestId('sip-menu-notice').scrollIntoViewIfNeeded();
+  await checkpoint(page, 'm-telephony-menu-notice');
+  await page.getByTestId('phone-back').tap();
+  await page.getByTestId('phone-back').tap();
+
+  // «Запись звонков», «Хранение и лимиты».
+  await row('recording');
+  await expect(screen.getByTestId('sip-recording')).toBeVisible();
+  await checkpoint(page, 'm-tel-recording');
+  await page.getByTestId('phone-back').tap();
+  await row('policy');
+  await expect(screen.getByRole('radio', { name: '1 год' })).toHaveAttribute('aria-checked', 'true');
+  await checkpoint(page, 'm-tel-retention');
+  await page.getByTestId('phone-back').tap();
+
+  // «Рабочие часы» (ADR-0138): Monday's two intervals, the Friday night shift, the off-hours action.
+  await row('schedule');
+  await expect(screen.getByTestId('tset-day-1').getByTestId('tset-interval')).toHaveCount(2);
+  await checkpoint(page, 'm-tel-schedule');
+  await screen.getByTestId('tset-day-5').scrollIntoViewIfNeeded();
+  await expect(screen.getByTestId('tset-day-5').getByTestId('tset-interval-night')).toHaveText('до утра — Сб');
+  await checkpoint(page, 'm-tel-schedule-night');
+  await screen.getByTestId('tset-schedule-target').scrollIntoViewIfNeeded();
+  await checkpoint(page, 'm-tel-schedule-off-hours');
+  await toRoot(page);
+
+  // The internal number in a profile: the admin's pencil, a taken number says whose it is.
+  await openRoom(page, /^общий/);
+  await page.getByRole('button', { name: 'Участники' }).tap();
+  await page.getByTestId('members-page').getByRole('button', { name: /Борис Петров/ }).tap();
+  const profile = page.getByRole('dialog', { name: 'Борис Петров' });
+  await expect(profile.getByTestId('profile-extension')).toContainText('101');
+  await checkpoint(page, 'm-tel-profile-extension');
+  await profile.getByTestId('profile-extension-edit').tap();
+  await profile.getByTestId('profile-extension-input').fill('102');
+  await profile.getByTestId('profile-extension-save').tap();
+  await expect(profile.getByTestId('profile-extension-error')).toHaveText('Номер 102 уже у: Вера Ким');
+  await checkpoint(page, 'm-tel-profile-extension-conflict');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await toRoot(page);
+
   // ADR-0117 step 2: an inbound call rings me — the sheet takes the whole screen.
   mock.ringSipInbound(IDS.users.anna, '+79161234567', 'Отдел продаж');
   const ring = page.getByTestId('sip-incoming');
@@ -1744,6 +2188,28 @@ test('m-telephony', async ({ page }) => {
   await expect(transferring).toHaveCount(0);
   await strip.getByRole('button', { name: 'Отключиться' }).tap();
   await expect(strip).toHaveCount(0);
+
+  // A member sees their own internal number read-only (no pencil): Вера (a member) on her own card.
+  await openProfile(page);
+  await page.getByTestId('phone-profile-logout').tap();
+  await page.getByLabel('Email').fill('vera@calaba.test');
+  await page.getByLabel('Пароль', { exact: true }).fill(PASSWORD);
+  await page.getByRole('button', { name: 'Войти', exact: true }).tap();
+  await expect(page.getByTestId('mobile-shell')).toBeVisible();
+  // «Сессия завершена…» of Анна's logout stays while the clock is fixed: close it.
+  await page
+    .getByTestId('toast')
+    .first()
+    .waitFor({ timeout: 5000 })
+    .catch(() => undefined);
+  while (await page.getByTestId('toast').count()) await page.getByTestId('toast').first().getByRole('button', { name: 'Закрыть' }).tap();
+  await openRoom(page, /^общий/);
+  await page.getByRole('button', { name: 'Участники' }).tap();
+  await page.getByTestId('members-page').getByRole('button', { name: /Вера Ким/ }).tap();
+  const own = page.getByRole('dialog', { name: 'Вера Ким' });
+  await expect(own.getByTestId('profile-extension')).toContainText('102');
+  await expect(own.getByTestId('profile-extension-edit')).toHaveCount(0);
+  await checkpoint(page, 'm-tel-profile-extension-own');
 });
 
 // ADR-0073 (owner 07.10): a pushed screen slides in from the right, a pop slides it out; the copy of

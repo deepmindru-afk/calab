@@ -1,0 +1,29 @@
+{
+  "comment": "Phone number normalisation to E.164 (ADR-0046, ADR-0137 §2). number = sip.NormalizeNumber(in) (calls from a room, caller ID); contact = sip.NormalizeContactNumber(in, callerId) (the phone book, the dial pad, CSV import). Empty = not a phone number. The TS mirror lib/phoneNumber.ts runs the same vectors.",
+  "cases": [
+    { "in": "+79161234567", "callerId": "+74951234567", "number": "+79161234567", "contact": "+79161234567" },
+    { "in": "+7 (916) 123-45-67", "callerId": "+74951234567", "number": "+79161234567", "contact": "+79161234567" },
+    { "in": "8 (916) 123-45-67", "callerId": "+74951234567", "number": "+79161234567", "contact": "+79161234567" },
+    { "in": "7 916 123 45 67", "callerId": "+74951234567", "number": "+79161234567", "contact": "+79161234567" },
+    { "in": "8.916.123.45.67", "callerId": "", "number": "+79161234567", "contact": "+79161234567" },
+    { "in": "0049 30 1234567", "callerId": "+74951234567", "number": "+49301234567", "contact": "+49301234567" },
+    { "in": "+49 30 1234567", "callerId": "", "number": "+49301234567", "contact": "+49301234567" },
+    { "in": "  +1 212 555 0100  ", "callerId": "+12125550199", "number": "+12125550100", "contact": "+12125550100" },
+    { "in": "9161234567", "callerId": "+74951234567", "number": "", "contact": "+79161234567" },
+    { "in": "(916) 123-45-67", "callerId": "+74951234567", "number": "", "contact": "+79161234567" },
+    { "in": "9161234567", "callerId": "+12125550199", "number": "", "contact": "" },
+    { "in": "9161234567", "callerId": "", "number": "", "contact": "" },
+    { "in": "4951234567", "callerId": "+74951234567", "number": "", "contact": "" },
+    { "in": "916123456", "callerId": "+74951234567", "number": "", "contact": "" },
+    { "in": "91612345678", "callerId": "+74951234567", "number": "", "contact": "" },
+    { "in": "+0123456789", "callerId": "", "number": "", "contact": "" },
+    { "in": "+123456", "callerId": "", "number": "", "contact": "" },
+    { "in": "+1234567890123456", "callerId": "", "number": "", "contact": "" },
+    { "in": "+7 916 123 45 67 доб. 12", "callerId": "+74951234567", "number": "", "contact": "" },
+    { "in": "tel:+79161234567", "callerId": "", "number": "", "contact": "" },
+    { "in": "7+9161234567", "callerId": "", "number": "", "contact": "" },
+    { "in": "", "callerId": "+74951234567", "number": "", "contact": "" },
+    { "in": "anonymous", "callerId": "+74951234567", "number": "", "contact": "" },
+    { "in": "=1+2", "callerId": "+74951234567", "number": "", "contact": "" }
+  ]
+}

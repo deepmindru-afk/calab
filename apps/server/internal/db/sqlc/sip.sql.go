@@ -238,7 +238,7 @@ func (q *Queries) GetLiveSipRecordingByCall(ctx context.Context, callID uuid.UUI
 }
 
 const getSipAccount = `-- name: GetSipAccount :one
-SELECT workspace_id, provider, host, transport, username, auth_username, port, password_enc, caller_id, outbound_prefix, allowed_prefixes, trunk_id, enabled, last_error, updated_at, updated_by, inbound_enabled, inbound_kind, inbound_menu_id, inbound_extension_id, inbound_group_id, inbound_allowed_cidrs, inbound_trunk_id, inbound_rule_id, inbound_mode, reg_registrar, reg_domain, reg_expires, reg_keepalive_sec, reg_contact_user, reg_auth_username, reg_password_enc, reg_trunk_password_enc, reg_status, reg_error, reg_registered_at, reg_expires_at, reg_contact, reg_status_at, record_inbound, record_outbound, retention_months, out_per_hour, out_per_user_hour FROM sip_accounts WHERE workspace_id = $1
+SELECT workspace_id, provider, host, transport, username, auth_username, port, password_enc, caller_id, outbound_prefix, allowed_prefixes, trunk_id, enabled, last_error, updated_at, updated_by, inbound_enabled, inbound_kind, inbound_menu_id, inbound_extension_id, inbound_group_id, inbound_allowed_cidrs, inbound_trunk_id, inbound_rule_id, inbound_mode, reg_registrar, reg_domain, reg_expires, reg_keepalive_sec, reg_contact_user, reg_auth_username, reg_password_enc, reg_trunk_password_enc, reg_status, reg_error, reg_registered_at, reg_expires_at, reg_contact, reg_status_at, record_inbound, record_outbound, retention_months, out_per_hour, out_per_user_hour, schedule_enabled, schedule_tz, schedule_hours, schedule_holidays, off_hours_kind, off_hours_menu_id, off_hours_extension_id, off_hours_group_id, off_hours_notice_file_id, off_hours_notice_ms FROM sip_accounts WHERE workspace_id = $1
 `
 
 func (q *Queries) GetSipAccount(ctx context.Context, workspaceID uuid.UUID) (SipAccount, error) {
@@ -289,6 +289,16 @@ func (q *Queries) GetSipAccount(ctx context.Context, workspaceID uuid.UUID) (Sip
 		&i.RetentionMonths,
 		&i.OutPerHour,
 		&i.OutPerUserHour,
+		&i.ScheduleEnabled,
+		&i.ScheduleTz,
+		&i.ScheduleHours,
+		&i.ScheduleHolidays,
+		&i.OffHoursKind,
+		&i.OffHoursMenuID,
+		&i.OffHoursExtensionID,
+		&i.OffHoursGroupID,
+		&i.OffHoursNoticeFileID,
+		&i.OffHoursNoticeMs,
 	)
 	return i, err
 }
@@ -393,10 +403,12 @@ func (q *Queries) GetSipCallRecording(ctx context.Context, id uuid.UUID) (SipCal
 
 const getSipPromptFile = `-- name: GetSipPromptFile :one
 SELECT f.id, f.workspace_id, f.uploader_id, f.key, f.thumbnail_key, f.name, f.mime, f.size, f.width, f.height, f.sha256, f.created_at, f.voice_duration_ms, f.voice_waveform FROM files f WHERE f.id = $1
-  AND EXISTS (SELECT 1 FROM sip_ivr_menus m WHERE m.prompt_file_id = f.id OR m.notice_file_id = f.id)
+  AND (EXISTS (SELECT 1 FROM sip_ivr_menus m WHERE m.prompt_file_id = f.id OR m.notice_file_id = f.id)
+       OR EXISTS (SELECT 1 FROM sip_accounts a WHERE a.off_hours_notice_file_id = f.id))
 `
 
-// The IVR worker downloads a prompt: only files that are a menu's prompt or recording notice.
+// The IVR worker downloads a prompt: only files that are a menu's prompt or recording notice, or
+// the off-hours notice of a schedule (ADR-0138).
 func (q *Queries) GetSipPromptFile(ctx context.Context, id uuid.UUID) (File, error) {
 	row := q.db.QueryRow(ctx, getSipPromptFile, id)
 	var i File
@@ -1093,7 +1105,7 @@ func (q *Queries) ListSipRecordingFilesToDelete(ctx context.Context, before *tim
 }
 
 const listSipRegisterAccounts = `-- name: ListSipRegisterAccounts :many
-SELECT workspace_id, provider, host, transport, username, auth_username, port, password_enc, caller_id, outbound_prefix, allowed_prefixes, trunk_id, enabled, last_error, updated_at, updated_by, inbound_enabled, inbound_kind, inbound_menu_id, inbound_extension_id, inbound_group_id, inbound_allowed_cidrs, inbound_trunk_id, inbound_rule_id, inbound_mode, reg_registrar, reg_domain, reg_expires, reg_keepalive_sec, reg_contact_user, reg_auth_username, reg_password_enc, reg_trunk_password_enc, reg_status, reg_error, reg_registered_at, reg_expires_at, reg_contact, reg_status_at, record_inbound, record_outbound, retention_months, out_per_hour, out_per_user_hour FROM sip_accounts
+SELECT workspace_id, provider, host, transport, username, auth_username, port, password_enc, caller_id, outbound_prefix, allowed_prefixes, trunk_id, enabled, last_error, updated_at, updated_by, inbound_enabled, inbound_kind, inbound_menu_id, inbound_extension_id, inbound_group_id, inbound_allowed_cidrs, inbound_trunk_id, inbound_rule_id, inbound_mode, reg_registrar, reg_domain, reg_expires, reg_keepalive_sec, reg_contact_user, reg_auth_username, reg_password_enc, reg_trunk_password_enc, reg_status, reg_error, reg_registered_at, reg_expires_at, reg_contact, reg_status_at, record_inbound, record_outbound, retention_months, out_per_hour, out_per_user_hour, schedule_enabled, schedule_tz, schedule_hours, schedule_holidays, off_hours_kind, off_hours_menu_id, off_hours_extension_id, off_hours_group_id, off_hours_notice_file_id, off_hours_notice_ms FROM sip_accounts
 WHERE inbound_mode = 'register' AND inbound_trunk_id <> '' AND enabled AND inbound_enabled
 ORDER BY workspace_id
 `
@@ -1153,6 +1165,16 @@ func (q *Queries) ListSipRegisterAccounts(ctx context.Context) ([]SipAccount, er
 			&i.RetentionMonths,
 			&i.OutPerHour,
 			&i.OutPerUserHour,
+			&i.ScheduleEnabled,
+			&i.ScheduleTz,
+			&i.ScheduleHours,
+			&i.ScheduleHolidays,
+			&i.OffHoursKind,
+			&i.OffHoursMenuID,
+			&i.OffHoursExtensionID,
+			&i.OffHoursGroupID,
+			&i.OffHoursNoticeFileID,
+			&i.OffHoursNoticeMs,
 		); err != nil {
 			return nil, err
 		}
@@ -1413,7 +1435,7 @@ SET provider = excluded.provider, host = excluded.host, transport = excluded.tra
     outbound_prefix = excluded.outbound_prefix, allowed_prefixes = excluded.allowed_prefixes,
     trunk_id = excluded.trunk_id, enabled = excluded.enabled, last_error = '',
     updated_at = now(), updated_by = excluded.updated_by
-RETURNING workspace_id, provider, host, transport, username, auth_username, port, password_enc, caller_id, outbound_prefix, allowed_prefixes, trunk_id, enabled, last_error, updated_at, updated_by, inbound_enabled, inbound_kind, inbound_menu_id, inbound_extension_id, inbound_group_id, inbound_allowed_cidrs, inbound_trunk_id, inbound_rule_id, inbound_mode, reg_registrar, reg_domain, reg_expires, reg_keepalive_sec, reg_contact_user, reg_auth_username, reg_password_enc, reg_trunk_password_enc, reg_status, reg_error, reg_registered_at, reg_expires_at, reg_contact, reg_status_at, record_inbound, record_outbound, retention_months, out_per_hour, out_per_user_hour
+RETURNING workspace_id, provider, host, transport, username, auth_username, port, password_enc, caller_id, outbound_prefix, allowed_prefixes, trunk_id, enabled, last_error, updated_at, updated_by, inbound_enabled, inbound_kind, inbound_menu_id, inbound_extension_id, inbound_group_id, inbound_allowed_cidrs, inbound_trunk_id, inbound_rule_id, inbound_mode, reg_registrar, reg_domain, reg_expires, reg_keepalive_sec, reg_contact_user, reg_auth_username, reg_password_enc, reg_trunk_password_enc, reg_status, reg_error, reg_registered_at, reg_expires_at, reg_contact, reg_status_at, record_inbound, record_outbound, retention_months, out_per_hour, out_per_user_hour, schedule_enabled, schedule_tz, schedule_hours, schedule_holidays, off_hours_kind, off_hours_menu_id, off_hours_extension_id, off_hours_group_id, off_hours_notice_file_id, off_hours_notice_ms
 `
 
 type PutSipAccountParams struct {
@@ -1496,6 +1518,16 @@ func (q *Queries) PutSipAccount(ctx context.Context, arg PutSipAccountParams) (S
 		&i.RetentionMonths,
 		&i.OutPerHour,
 		&i.OutPerUserHour,
+		&i.ScheduleEnabled,
+		&i.ScheduleTz,
+		&i.ScheduleHours,
+		&i.ScheduleHolidays,
+		&i.OffHoursKind,
+		&i.OffHoursMenuID,
+		&i.OffHoursExtensionID,
+		&i.OffHoursGroupID,
+		&i.OffHoursNoticeFileID,
+		&i.OffHoursNoticeMs,
 	)
 	return i, err
 }
@@ -1584,7 +1616,7 @@ SET inbound_enabled = $1, inbound_kind = $2,
     inbound_trunk_id = $7, inbound_rule_id = $8,
     last_error = '', updated_at = now(), updated_by = $9
 WHERE workspace_id = $10
-RETURNING workspace_id, provider, host, transport, username, auth_username, port, password_enc, caller_id, outbound_prefix, allowed_prefixes, trunk_id, enabled, last_error, updated_at, updated_by, inbound_enabled, inbound_kind, inbound_menu_id, inbound_extension_id, inbound_group_id, inbound_allowed_cidrs, inbound_trunk_id, inbound_rule_id, inbound_mode, reg_registrar, reg_domain, reg_expires, reg_keepalive_sec, reg_contact_user, reg_auth_username, reg_password_enc, reg_trunk_password_enc, reg_status, reg_error, reg_registered_at, reg_expires_at, reg_contact, reg_status_at, record_inbound, record_outbound, retention_months, out_per_hour, out_per_user_hour
+RETURNING workspace_id, provider, host, transport, username, auth_username, port, password_enc, caller_id, outbound_prefix, allowed_prefixes, trunk_id, enabled, last_error, updated_at, updated_by, inbound_enabled, inbound_kind, inbound_menu_id, inbound_extension_id, inbound_group_id, inbound_allowed_cidrs, inbound_trunk_id, inbound_rule_id, inbound_mode, reg_registrar, reg_domain, reg_expires, reg_keepalive_sec, reg_contact_user, reg_auth_username, reg_password_enc, reg_trunk_password_enc, reg_status, reg_error, reg_registered_at, reg_expires_at, reg_contact, reg_status_at, record_inbound, record_outbound, retention_months, out_per_hour, out_per_user_hour, schedule_enabled, schedule_tz, schedule_hours, schedule_holidays, off_hours_kind, off_hours_menu_id, off_hours_extension_id, off_hours_group_id, off_hours_notice_file_id, off_hours_notice_ms
 `
 
 type SetSipInboundParams struct {
@@ -1662,6 +1694,16 @@ func (q *Queries) SetSipInbound(ctx context.Context, arg SetSipInboundParams) (S
 		&i.RetentionMonths,
 		&i.OutPerHour,
 		&i.OutPerUserHour,
+		&i.ScheduleEnabled,
+		&i.ScheduleTz,
+		&i.ScheduleHours,
+		&i.ScheduleHolidays,
+		&i.OffHoursKind,
+		&i.OffHoursMenuID,
+		&i.OffHoursExtensionID,
+		&i.OffHoursGroupID,
+		&i.OffHoursNoticeFileID,
+		&i.OffHoursNoticeMs,
 	)
 	return i, err
 }
@@ -1704,7 +1746,7 @@ INSERT INTO sip_accounts (workspace_id, record_inbound, record_outbound)
 VALUES ($1, $2, $3)
 ON CONFLICT (workspace_id) DO UPDATE
 SET record_inbound = excluded.record_inbound, record_outbound = excluded.record_outbound
-RETURNING workspace_id, provider, host, transport, username, auth_username, port, password_enc, caller_id, outbound_prefix, allowed_prefixes, trunk_id, enabled, last_error, updated_at, updated_by, inbound_enabled, inbound_kind, inbound_menu_id, inbound_extension_id, inbound_group_id, inbound_allowed_cidrs, inbound_trunk_id, inbound_rule_id, inbound_mode, reg_registrar, reg_domain, reg_expires, reg_keepalive_sec, reg_contact_user, reg_auth_username, reg_password_enc, reg_trunk_password_enc, reg_status, reg_error, reg_registered_at, reg_expires_at, reg_contact, reg_status_at, record_inbound, record_outbound, retention_months, out_per_hour, out_per_user_hour
+RETURNING workspace_id, provider, host, transport, username, auth_username, port, password_enc, caller_id, outbound_prefix, allowed_prefixes, trunk_id, enabled, last_error, updated_at, updated_by, inbound_enabled, inbound_kind, inbound_menu_id, inbound_extension_id, inbound_group_id, inbound_allowed_cidrs, inbound_trunk_id, inbound_rule_id, inbound_mode, reg_registrar, reg_domain, reg_expires, reg_keepalive_sec, reg_contact_user, reg_auth_username, reg_password_enc, reg_trunk_password_enc, reg_status, reg_error, reg_registered_at, reg_expires_at, reg_contact, reg_status_at, record_inbound, record_outbound, retention_months, out_per_hour, out_per_user_hour, schedule_enabled, schedule_tz, schedule_hours, schedule_holidays, off_hours_kind, off_hours_menu_id, off_hours_extension_id, off_hours_group_id, off_hours_notice_file_id, off_hours_notice_ms
 `
 
 type SetSipRecordingParams struct {
@@ -1764,6 +1806,16 @@ func (q *Queries) SetSipRecording(ctx context.Context, arg SetSipRecordingParams
 		&i.RetentionMonths,
 		&i.OutPerHour,
 		&i.OutPerUserHour,
+		&i.ScheduleEnabled,
+		&i.ScheduleTz,
+		&i.ScheduleHours,
+		&i.ScheduleHolidays,
+		&i.OffHoursKind,
+		&i.OffHoursMenuID,
+		&i.OffHoursExtensionID,
+		&i.OffHoursGroupID,
+		&i.OffHoursNoticeFileID,
+		&i.OffHoursNoticeMs,
 	)
 	return i, err
 }
@@ -1826,7 +1878,7 @@ SET inbound_mode = $1, reg_registrar = $2, reg_domain = $3,
     reg_expires_at = CASE WHEN $10::text = 'registered' THEN reg_expires_at END,
     reg_contact = CASE WHEN $10::text = 'registered' THEN reg_contact ELSE '' END
 WHERE workspace_id = $11
-RETURNING workspace_id, provider, host, transport, username, auth_username, port, password_enc, caller_id, outbound_prefix, allowed_prefixes, trunk_id, enabled, last_error, updated_at, updated_by, inbound_enabled, inbound_kind, inbound_menu_id, inbound_extension_id, inbound_group_id, inbound_allowed_cidrs, inbound_trunk_id, inbound_rule_id, inbound_mode, reg_registrar, reg_domain, reg_expires, reg_keepalive_sec, reg_contact_user, reg_auth_username, reg_password_enc, reg_trunk_password_enc, reg_status, reg_error, reg_registered_at, reg_expires_at, reg_contact, reg_status_at, record_inbound, record_outbound, retention_months, out_per_hour, out_per_user_hour
+RETURNING workspace_id, provider, host, transport, username, auth_username, port, password_enc, caller_id, outbound_prefix, allowed_prefixes, trunk_id, enabled, last_error, updated_at, updated_by, inbound_enabled, inbound_kind, inbound_menu_id, inbound_extension_id, inbound_group_id, inbound_allowed_cidrs, inbound_trunk_id, inbound_rule_id, inbound_mode, reg_registrar, reg_domain, reg_expires, reg_keepalive_sec, reg_contact_user, reg_auth_username, reg_password_enc, reg_trunk_password_enc, reg_status, reg_error, reg_registered_at, reg_expires_at, reg_contact, reg_status_at, record_inbound, record_outbound, retention_months, out_per_hour, out_per_user_hour, schedule_enabled, schedule_tz, schedule_hours, schedule_holidays, off_hours_kind, off_hours_menu_id, off_hours_extension_id, off_hours_group_id, off_hours_notice_file_id, off_hours_notice_ms
 `
 
 type SetSipRegistrationParams struct {
@@ -1905,6 +1957,188 @@ func (q *Queries) SetSipRegistration(ctx context.Context, arg SetSipRegistration
 		&i.RetentionMonths,
 		&i.OutPerHour,
 		&i.OutPerUserHour,
+		&i.ScheduleEnabled,
+		&i.ScheduleTz,
+		&i.ScheduleHours,
+		&i.ScheduleHolidays,
+		&i.OffHoursKind,
+		&i.OffHoursMenuID,
+		&i.OffHoursExtensionID,
+		&i.OffHoursGroupID,
+		&i.OffHoursNoticeFileID,
+		&i.OffHoursNoticeMs,
+	)
+	return i, err
+}
+
+const setSipSchedule = `-- name: SetSipSchedule :one
+
+UPDATE sip_accounts
+SET schedule_enabled = $1, schedule_tz = $2,
+    schedule_hours = $3, schedule_holidays = $4,
+    off_hours_kind = $5, off_hours_menu_id = $6,
+    off_hours_extension_id = $7, off_hours_group_id = $8
+WHERE workspace_id = $9
+RETURNING workspace_id, provider, host, transport, username, auth_username, port, password_enc, caller_id, outbound_prefix, allowed_prefixes, trunk_id, enabled, last_error, updated_at, updated_by, inbound_enabled, inbound_kind, inbound_menu_id, inbound_extension_id, inbound_group_id, inbound_allowed_cidrs, inbound_trunk_id, inbound_rule_id, inbound_mode, reg_registrar, reg_domain, reg_expires, reg_keepalive_sec, reg_contact_user, reg_auth_username, reg_password_enc, reg_trunk_password_enc, reg_status, reg_error, reg_registered_at, reg_expires_at, reg_contact, reg_status_at, record_inbound, record_outbound, retention_months, out_per_hour, out_per_user_hour, schedule_enabled, schedule_tz, schedule_hours, schedule_holidays, off_hours_kind, off_hours_menu_id, off_hours_extension_id, off_hours_group_id, off_hours_notice_file_id, off_hours_notice_ms
+`
+
+type SetSipScheduleParams struct {
+	ScheduleEnabled     bool
+	ScheduleTz          string
+	ScheduleHours       []byte
+	ScheduleHolidays    string
+	OffHoursKind        string
+	OffHoursMenuID      *uuid.UUID
+	OffHoursExtensionID *uuid.UUID
+	OffHoursGroupID     *uuid.UUID
+	WorkspaceID         uuid.UUID
+}
+
+// ---- the working-hours schedule (ADR-0138)
+// PUT …/sip/schedule: the schedule as a whole (the notice: SetSipScheduleNotice).
+func (q *Queries) SetSipSchedule(ctx context.Context, arg SetSipScheduleParams) (SipAccount, error) {
+	row := q.db.QueryRow(ctx, setSipSchedule,
+		arg.ScheduleEnabled,
+		arg.ScheduleTz,
+		arg.ScheduleHours,
+		arg.ScheduleHolidays,
+		arg.OffHoursKind,
+		arg.OffHoursMenuID,
+		arg.OffHoursExtensionID,
+		arg.OffHoursGroupID,
+		arg.WorkspaceID,
+	)
+	var i SipAccount
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.Provider,
+		&i.Host,
+		&i.Transport,
+		&i.Username,
+		&i.AuthUsername,
+		&i.Port,
+		&i.PasswordEnc,
+		&i.CallerID,
+		&i.OutboundPrefix,
+		&i.AllowedPrefixes,
+		&i.TrunkID,
+		&i.Enabled,
+		&i.LastError,
+		&i.UpdatedAt,
+		&i.UpdatedBy,
+		&i.InboundEnabled,
+		&i.InboundKind,
+		&i.InboundMenuID,
+		&i.InboundExtensionID,
+		&i.InboundGroupID,
+		&i.InboundAllowedCidrs,
+		&i.InboundTrunkID,
+		&i.InboundRuleID,
+		&i.InboundMode,
+		&i.RegRegistrar,
+		&i.RegDomain,
+		&i.RegExpires,
+		&i.RegKeepaliveSec,
+		&i.RegContactUser,
+		&i.RegAuthUsername,
+		&i.RegPasswordEnc,
+		&i.RegTrunkPasswordEnc,
+		&i.RegStatus,
+		&i.RegError,
+		&i.RegRegisteredAt,
+		&i.RegExpiresAt,
+		&i.RegContact,
+		&i.RegStatusAt,
+		&i.RecordInbound,
+		&i.RecordOutbound,
+		&i.RetentionMonths,
+		&i.OutPerHour,
+		&i.OutPerUserHour,
+		&i.ScheduleEnabled,
+		&i.ScheduleTz,
+		&i.ScheduleHours,
+		&i.ScheduleHolidays,
+		&i.OffHoursKind,
+		&i.OffHoursMenuID,
+		&i.OffHoursExtensionID,
+		&i.OffHoursGroupID,
+		&i.OffHoursNoticeFileID,
+		&i.OffHoursNoticeMs,
+	)
+	return i, err
+}
+
+const setSipScheduleNotice = `-- name: SetSipScheduleNotice :one
+UPDATE sip_accounts
+SET off_hours_notice_file_id = $1, off_hours_notice_ms = $2
+WHERE workspace_id = $3
+RETURNING workspace_id, provider, host, transport, username, auth_username, port, password_enc, caller_id, outbound_prefix, allowed_prefixes, trunk_id, enabled, last_error, updated_at, updated_by, inbound_enabled, inbound_kind, inbound_menu_id, inbound_extension_id, inbound_group_id, inbound_allowed_cidrs, inbound_trunk_id, inbound_rule_id, inbound_mode, reg_registrar, reg_domain, reg_expires, reg_keepalive_sec, reg_contact_user, reg_auth_username, reg_password_enc, reg_trunk_password_enc, reg_status, reg_error, reg_registered_at, reg_expires_at, reg_contact, reg_status_at, record_inbound, record_outbound, retention_months, out_per_hour, out_per_user_hour, schedule_enabled, schedule_tz, schedule_hours, schedule_holidays, off_hours_kind, off_hours_menu_id, off_hours_extension_id, off_hours_group_id, off_hours_notice_file_id, off_hours_notice_ms
+`
+
+type SetSipScheduleNoticeParams struct {
+	OffHoursNoticeFileID *uuid.UUID
+	OffHoursNoticeMs     int32
+	WorkspaceID          uuid.UUID
+}
+
+func (q *Queries) SetSipScheduleNotice(ctx context.Context, arg SetSipScheduleNoticeParams) (SipAccount, error) {
+	row := q.db.QueryRow(ctx, setSipScheduleNotice, arg.OffHoursNoticeFileID, arg.OffHoursNoticeMs, arg.WorkspaceID)
+	var i SipAccount
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.Provider,
+		&i.Host,
+		&i.Transport,
+		&i.Username,
+		&i.AuthUsername,
+		&i.Port,
+		&i.PasswordEnc,
+		&i.CallerID,
+		&i.OutboundPrefix,
+		&i.AllowedPrefixes,
+		&i.TrunkID,
+		&i.Enabled,
+		&i.LastError,
+		&i.UpdatedAt,
+		&i.UpdatedBy,
+		&i.InboundEnabled,
+		&i.InboundKind,
+		&i.InboundMenuID,
+		&i.InboundExtensionID,
+		&i.InboundGroupID,
+		&i.InboundAllowedCidrs,
+		&i.InboundTrunkID,
+		&i.InboundRuleID,
+		&i.InboundMode,
+		&i.RegRegistrar,
+		&i.RegDomain,
+		&i.RegExpires,
+		&i.RegKeepaliveSec,
+		&i.RegContactUser,
+		&i.RegAuthUsername,
+		&i.RegPasswordEnc,
+		&i.RegTrunkPasswordEnc,
+		&i.RegStatus,
+		&i.RegError,
+		&i.RegRegisteredAt,
+		&i.RegExpiresAt,
+		&i.RegContact,
+		&i.RegStatusAt,
+		&i.RecordInbound,
+		&i.RecordOutbound,
+		&i.RetentionMonths,
+		&i.OutPerHour,
+		&i.OutPerUserHour,
+		&i.ScheduleEnabled,
+		&i.ScheduleTz,
+		&i.ScheduleHours,
+		&i.ScheduleHolidays,
+		&i.OffHoursKind,
+		&i.OffHoursMenuID,
+		&i.OffHoursExtensionID,
+		&i.OffHoursGroupID,
+		&i.OffHoursNoticeFileID,
+		&i.OffHoursNoticeMs,
 	)
 	return i, err
 }

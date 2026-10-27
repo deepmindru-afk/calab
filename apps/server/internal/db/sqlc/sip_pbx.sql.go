@@ -447,7 +447,8 @@ func (q *Queries) InsertSipIvrMenu(ctx context.Context, arg InsertSipIvrMenuPara
 }
 
 const isSipPromptFile = `-- name: IsSipPromptFile :one
-SELECT EXISTS (SELECT 1 FROM sip_ivr_menus WHERE prompt_file_id = $1 OR notice_file_id = $1)::boolean
+SELECT (EXISTS (SELECT 1 FROM sip_ivr_menus WHERE prompt_file_id = $1 OR notice_file_id = $1)
+        OR EXISTS (SELECT 1 FROM sip_accounts WHERE off_hours_notice_file_id = $1))::boolean
 `
 
 // The file is the prompt or the recording notice of a voice menu (files.CanRead:

@@ -83,6 +83,11 @@ type InCall struct {
 	Xfer *Xfer `json:"xfer,omitempty"`
 	// Seq: the journal events logged so far (ADR-0137 §1, events.go); the next one is Seq+1.
 	Seq int `json:"ev_seq,omitempty"`
+	// OffHours: the call came outside the schedule's working hours and follows its off-hours
+	// route (ADR-0138); ViaFallback: the route that rings now was reached through a group's
+	// fallback (nobody answered, everybody busy or declined). Both go to whoever it rings.
+	OffHours    bool `json:"off_hours,omitempty"`
+	ViaFallback bool `json:"via_fallback,omitempty"`
 }
 
 // Effects of one transition.
@@ -130,10 +135,14 @@ var ErrNotRinging = errors.New("sip: the call does not ring this user")
 // Live reports a call that is not over.
 func (c *InCall) Live() bool { return c.Phase != PhaseEnded && c.Phase != "" }
 
-// Enter follows route t (the entry point, a key, a fallback).
-func (c *InCall) Enter(e Env, t Target, fx *Effects) {
+// Enter follows route t (the entry point, a key, a dialed number).
+func (c *InCall) Enter(e Env, t Target, fx *Effects) { c.enter(e, t, false, fx) }
+
+// enter follows route t; fallback: t is a group's fallback.
+func (c *InCall) enter(e Env, t Target, fallback bool, fx *Effects) {
 	c.stopRinging(e, EndNoAnswer, fx)
 	d := Route(e.PBX, t, e.Avail, DirectRingSec)
+	c.ViaFallback = fallback || d.Fallbacks > 0
 	c.Hops += d.Hops + 1
 	c.Fallbacks += d.Fallbacks
 	c.step(routeLabel(t))
@@ -400,6 +409,8 @@ func (c *InCall) failRing(e Env, reason string, fx *Effects) {
 			c.hangup(e, ReasonLoop, fx)
 			return
 		}
+		c.enter(e, c.OnFail, true, fx)
+		return
 	}
 	c.Enter(e, c.OnFail, fx)
 }
@@ -549,10 +560,15 @@ func (c *InCall) noticeFirst(e Env, m *Menu, t Target, fx *Effects) bool {
 	return true
 }
 
-// afterNotice: the notice played — the call goes where the key led.
+// afterNotice: the notice played — the call goes where the key led, or (the schedule's notice,
+// no menu yet) along the off-hours route.
 func (c *InCall) afterNotice(e Env, fx *Effects) {
 	t := *c.Notice
 	c.Notice, c.NoticeAt = nil, 0
+	if c.OffHours && c.Menu == nil {
+		c.offHoursRoute(e, t, fx)
+		return
+	}
 	c.Enter(e, t, fx)
 }
 

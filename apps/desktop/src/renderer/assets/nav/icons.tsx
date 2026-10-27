@@ -165,3 +165,27 @@ export function CanvasActiveIcon({ className }: IconProps): ReactNode {
     </svg>
   );
 }
+
+// «Телефония» (ADR-0137 §5): a handset on the same 3…41 frame with the set's 2-unit line (the
+// Lucide handset scaled ×1.8, its stroke scaled back to 2 units); filled when open, one silhouette.
+const PHONE_HANDSET =
+  'M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384';
+const PHONE_FIT = 'translate(0.4 0.4) scale(1.8)';
+
+/** «Телефония»: a handset; outline at rest. */
+export function PhoneIdleIcon({ className }: IconProps): ReactNode {
+  return (
+    <svg viewBox="0 0 44 44" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden focusable="false">
+      <path d={PHONE_HANDSET} transform={PHONE_FIT} strokeWidth={1.11} />
+    </svg>
+  );
+}
+
+/** «Телефония», filled: the same handset, solid. */
+export function PhoneActiveIcon({ className }: IconProps): ReactNode {
+  return (
+    <svg viewBox="0 0 44 44" fill="currentColor" stroke="currentColor" strokeLinejoin="round" className={className} aria-hidden focusable="false">
+      <path d={PHONE_HANDSET} transform={PHONE_FIT} strokeWidth={1.11} />
+    </svg>
+  );
+}

@@ -34,10 +34,10 @@ FOR NO KEY UPDATE OF c;
 
 -- name: MarkSipCallMissed :execrows
 -- An inbound call ended without an answer after it rang somebody, or in a menu (no input, a
--- route to «hang up»).
+-- route to «hang up»), or by the schedule's off-hours «hang up» (ADR-0138).
 UPDATE sip_calls c SET missed = true
 WHERE c.id = $1 AND c.direction = 'in' AND c.status = 'ended' AND c.answered_at IS NULL AND NOT c.missed
-  AND (c.reason IN ('no_input', 'hangup_menu') OR EXISTS (SELECT 1 FROM sip_call_parties p WHERE p.call_id = c.id AND p.rang));
+  AND (c.reason IN ('no_input', 'hangup_menu', 'off_hours') OR EXISTS (SELECT 1 FROM sip_call_parties p WHERE p.call_id = c.id AND p.rang));
 
 -- name: ListSipJournal :many
 -- The workspace's journal, newest first, page key (started_at, id). digits: a substring of the

@@ -595,6 +595,9 @@ func New(d Deps) *App {
 	sipSvc := sip.New(d.DB, d.Redis, lkRooms, lkSIP, pub, planSvc, []byte(d.Config.JWTSecret), sipOpts)
 	sipSvc.SetFiles(filesSvc)
 	sipSvc.Presence = hub.PresenceChanged
+	if rtcSvc != nil { // ADR-0137 §3: the personal call's room tokens
+		sipSvc.SetMedia(d.Config.LiveKitURL, d.Config.LiveKitAPIKey, d.Config.LiveKitAPISecret)
+	}
 	// Phone call recording to the Disk (ADR-0131): the meeting recorder's egress and storage.
 	recLoc, _ := time.LoadLocation(d.Config.SIPRecordingTZ) // validated by config
 	recSvc.SetPhone(recording.PhoneConfig{Location: recLoc, MaxConcurrent: d.Config.SIPRecordingMaxConcurrent, Disk: diskSvc, MaxCall: sip.MaxCallTime})

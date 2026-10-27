@@ -12,6 +12,7 @@ import { leaveMail, useMailUi } from './mailUi';
 import { leaveDisk, useDiskUi } from './diskUi';
 import { leaveCanvas, useCanvasUi } from './canvasUi';
 import { leaveWiki, useWikiUi } from './wikiUi';
+import { leaveTelephony, useTelephonyUi } from './telephonyUi';
 import type { PlanLink } from '../lib/billing/plans';
 import { chatFollow, followTarget, type FollowEvent } from '../lib/chatFollow';
 
@@ -206,6 +207,7 @@ export const useUi = create<UiState>()(
           leaveDisk();
           leaveWiki();
           leaveCanvas();
+          leaveTelephony();
           return { calDay: day, calEvent: eventKey === undefined ? s.calEvent : eventKey, calMonth: day.slice(0, 7), membersOverlay: false, editing: null };
         }),
       selectCalEvent: (calEvent) => set({ calEvent }),
@@ -234,6 +236,7 @@ export const useUi = create<UiState>()(
           leaveDisk();
           leaveWiki();
           leaveCanvas();
+          leaveTelephony();
           return {
           calDay: null,
           calEvent: null,
@@ -309,6 +312,7 @@ function travel(s: UiState, dir: -1 | 1): Partial<UiState> {
   leaveDisk();
   leaveWiki();
   leaveCanvas();
+  leaveTelephony();
   const { ws, room } = r.to;
   return {
     calDay: null,
@@ -344,6 +348,7 @@ function roomColumnCovered(s: UiState): boolean {
     useDiskUi.getState().active ||
     useWikiUi.getState().active ||
     useCanvasUi.getState().active ||
+    useTelephonyUi.getState().active ||
     useWebApps.getState().open !== null
   );
 }

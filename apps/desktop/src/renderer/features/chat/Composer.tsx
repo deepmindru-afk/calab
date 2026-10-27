@@ -30,6 +30,8 @@ import { loadRoomCommands } from '../../services/bots';
 import { useBots } from '../../stores/bots';
 import { previewPartsOf } from './mentionText';
 import { enterInsertsNewline, trimMessage } from './composerText';
+import { ExpandedEditor, type Sel } from './ExpandedEditor';
+import { isExpandHotkey, offersExpand } from './editorLogic';
 import { shouldFocusOnAttach } from './attachFocus';
 import { PreviewRuns } from './PreviewRuns';
 import { roomLabel } from './roomLabel';
@@ -248,6 +250,34 @@ export function Composer({
 
   const cancelEdit = (): void => setEditing(null);
 
+  // Expanded editor (#97): another view over the same `text`; `editorSel` is the field's selection
+  // at the moment it opened, `restoreSel` the editor's selection to put back into the field.
+  const [editorSel, setEditorSel] = useState<Sel | null>(null);
+  const restoreSel = useRef<Sel | null>(null);
+  const openEditor = (): void => {
+    const el = ref.current;
+    setEditorSel({ start: el?.selectionStart ?? text.length, end: el?.selectionEnd ?? text.length });
+  };
+  const collapseEditor = useCallback((sel: Sel): void => {
+    restoreSel.current = sel;
+    setEditorSel(null);
+  }, []);
+  const editorOpen = editorSel !== null;
+  useEffect(() => {
+    if (editorOpen) return;
+    const sel = restoreSel.current;
+    restoreSel.current = null;
+    if (!sel) return;
+    // After the dialog has given the focus back (Radix does it on unmount).
+    const id = window.setTimeout(() => {
+      const el = ref.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(sel.start, sel.end);
+    }, 30);
+    return () => window.clearTimeout(id);
+  }, [editorOpen]);
+
   // Voice messages (docs/09 #43): recorded, then sent at once as a message of its own.
   const sendVoice = (r: VoiceResult): void => {
     if (useMessages.getState().rooms[room.id]?.hasMoreAfter) void loadPresent(room.id);
@@ -290,16 +320,16 @@ export function Composer({
   }, []);
   const onSuggestDismiss = useCallback(() => setSuggestOff(latest.current.text), []);
 
-  const send = (): void => {
+  const send = (): boolean => {
     const content = wire(trimMessage(text));
-    if (content.length > MAX_CONTENT) return;
+    if (content.length > MAX_CONTENT) return false;
     if (editMsg) {
-      if (!content && editMsg.attachments.length === 0) return;
+      if (!content && editMsg.attachments.length === 0) return false;
       if (content !== editMsg.content) void editMessage(editMsg.id, content);
       cancelEdit();
-      return;
+      return true;
     }
-    if (!content && files.length === 0) return;
+    if (!content && files.length === 0) return false;
     // Viewing older history: go back to the present so the new message is visible.
     if (useMessages.getState().rooms[room.id]?.hasMoreAfter) void loadPresent(room.id);
     void sendMessage(workspaceId, room.id, content, files, replyTo);
@@ -307,9 +337,29 @@ export function Composer({
     setMentions(NO_MENTIONS);
     setFiles([]);
     setReply(room.id, undefined);
+    return true;
+  };
+
+  /** Sends from the editor: on success it closes (the draft is gone), otherwise it stays with the text. */
+  const sendFromEditor = (): void => {
+    if (send()) setEditorSel(null);
+  };
+
+  const deleteDraft = (): void => {
+    setText('');
+    setMentions(NO_MENTIONS);
+    if (!editMsg) setFiles([]);
+    setEditorSel(null);
+    // The field, now empty, takes the focus back.
+    window.setTimeout(() => ref.current?.focus(), 30);
   };
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (isExpandHotkey(e.nativeEvent)) {
+      e.preventDefault();
+      openEditor();
+      return;
+    }
     if (suggestEmoji && suggestRef.current?.onKey(e)) return;
     if (cmdPopover && !e.nativeEvent.isComposing) {
       const o = cmdOptions[cmdIdx];
@@ -409,6 +459,15 @@ export function Composer({
         : room.type === RoomType.TASK
           ? t('boards.commentPlaceholder')
           : t('chat.placeholderIn', { room: roomLabel(room) });
+  const editorTitle = editMsg
+    ? t('chat.editor.titleEdit')
+    : room.type === RoomType.DM
+      ? t('chat.editor.titleDm', { name: roomLabel(room) })
+      : room.type === RoomType.NOTES
+        ? t('chat.editor.titleNotes', { name: room.name })
+        : room.type === RoomType.TASK
+          ? t('chat.editor.titleTask')
+          : t('chat.editor.titleRoom', { room: roomLabel(room) });
   const bar = editMsg ? (
     <ContextBar
       icon={<Pencil className="size-4" aria-hidden />}
@@ -427,6 +486,21 @@ export function Composer({
 
   return (
     <div className="px-4 pb-3 pt-2 mobile:px-2 mobile:pb-2 mobile:pt-3">
+      {editorSel ? (
+        <ExpandedEditor
+          title={editorTitle}
+          text={text}
+          setText={setText}
+          maxLength={MAX_CONTENT}
+          initialSel={editorSel}
+          attachments={files.length > 0 && !editMsg ? <AttachmentGrid files={files} setFiles={setFiles} /> : null}
+          canSubmit={hasContent}
+          editing={!!editMsg}
+          onSend={sendFromEditor}
+          onCollapse={collapseEditor}
+          onDelete={deleteDraft}
+        />
+      ) : null}
       {bar}
       {files.length > 0 && !editMsg ? <AttachmentGrid files={files} setFiles={setFiles} /> : null}
       <ComposerField
@@ -436,6 +510,7 @@ export function Composer({
         maxLength={MAX_CONTENT}
         multi={multi}
         hidden={voice.active}
+        onExpand={offersExpand(text) && !voice.active ? openEditor : undefined}
         onEmoji={insert}
         popover={
           cmdPopover ? (

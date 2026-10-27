@@ -31,7 +31,7 @@ import { Kanban } from './Kanban';
 import { EmptyBoard, ListRow, ListView } from './ListView';
 import { doneType, hasBit, CREATE_TASKS } from './model';
 import { TaskPanel } from './TaskPanel';
-import { TaskTabs } from './TaskTabs';
+import { useTaskTabs } from '../../stores/taskTabs';
 import { TaskView } from './TaskView';
 import { Timeline } from './Timeline';
 import { useBoardHotkeys } from './useBoardHotkeys';
@@ -66,6 +66,12 @@ export function BoardsView({ workspaceId, mobile = false }: { workspaceId: strin
   const covered = !!taskId && !phone;
   const board = useRef<HTMLElement>(null);
   useBoardHotkeys(workspaceId, boardId);
+  // The title-bar tabs highlight the open task only while this section is the one on screen.
+  useEffect(() => {
+    if (phone) return;
+    useTaskTabs.getState().setShown(true);
+    return () => useTaskTabs.getState().setShown(false);
+  }, [phone]);
   useEffect(() => {
     if (boardId === MY_TASKS) return;
     void ensureBoardTasks(boardId);
@@ -73,7 +79,6 @@ export function BoardsView({ workspaceId, mobile = false }: { workspaceId: strin
   }, [boardId]);
   return (
     <div className="flex min-w-0 flex-1 flex-col" data-testid="boards-view">
-      {phone ? null : <TaskTabs workspaceId={workspaceId} boardId={boardId} />}
       <div className="relative flex min-h-0 min-w-0 flex-1">
         {/* `invisible` keeps the layout (and so every scroll offset) but paints nothing under the task. */}
         <section ref={board} className={cx('mat-content flex min-w-0 flex-1 flex-col', covered && 'invisible')} aria-label={t('boards.boards')} inert={covered} aria-hidden={covered || undefined} data-toast-anchor>

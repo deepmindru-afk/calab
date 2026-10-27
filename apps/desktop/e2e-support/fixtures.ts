@@ -63,6 +63,7 @@ import {
   type RoomPermissionOverride,
   type RoomRecording,
   type SipCall,
+  type SipContact,
   type SipSettings,
   type Badge,
   type WorkspaceBackground,
@@ -76,6 +77,7 @@ import {
 import { buildMarketingState } from './fixtures-marketing';
 import type { AdmissionRec } from './mock-admissions';
 import type { MockPbx } from './mock-pbx';
+import type { JournalRow } from './mock-journal';
 import { avatarPicture, cardPicture, encodePng } from './png';
 
 /**
@@ -463,6 +465,12 @@ export interface MockState {
   sipCalls: Map<string, SipCall>;
   /** The telephony exchange per workspace (ADR-0117, mock-pbx.ts); absent = empty. */
   sipPbx: Map<string, MockPbx>;
+  /** The call journal (ADR-0137 §1, mock-journal.ts) by call id; empty until seedSipJournal. */
+  sipJournal: Map<string, JournalRow>;
+  /** `${workspace}|${user}` → when they last looked at «Недавние» (ms; absent = never: every missed call counts). */
+  sipSeen: Map<string, number>;
+  /** The phone book (ADR-0137 §2, mock-contacts.ts) by contact id; empty until seedSipContacts. */
+  sipContacts: Map<string, SipContact>;
   /** Sticker packs by id (ADR-0030), live stickers inside in order; deleted stickers stay in `deletedStickers`. */
   stickerPacks: Map<string, StickerPack>;
   /** Stickers removed from a pack that messages still show, by id. */
@@ -846,6 +854,9 @@ export function buildState(scenario: Scenario): MockState {
     sipPasswords: new Map(),
     sipCalls: new Map(),
     sipPbx: new Map(),
+    sipJournal: new Map(),
+    sipSeen: new Map(),
+    sipContacts: new Map(),
     stickerPacks: new Map(),
     deletedStickers: new Map(),
     userStickerPacks: new Map(),

@@ -44,6 +44,8 @@ import { useWikiUi } from '../../stores/wikiUi';
 import { WikiScreen } from '../wiki/WikiScreen';
 import { useCanvasUi } from '../../stores/canvasUi';
 import { CanvasScreen } from '../canvas/CanvasScreen';
+import { useTelephonyUi } from '../../stores/telephonyUi';
+import { TelephonySection } from '../telephony/TelephonySection';
 import { EventPanel } from '../calendar/EventCard';
 import { BottomIsland } from './BottomIsland';
 import { WindowVibrancy } from './WindowVibrancy';
@@ -106,6 +108,8 @@ function ShellLayout(): ReactNode {
   const wiki = useWikiUi((s) => s.active) && !home && !!wsId && !guestWs;
   // «Холст» (ADR-0126 §5): the same, exclusive with the Disk and the wiki; guests have none.
   const canvas = useCanvasUi((s) => s.active) && !home && !!wsId && !guestWs;
+  // «Телефония» (ADR-0137 §5): the same; the section itself gives way when it is not mine.
+  const telephony = useTelephonyUi((s) => s.active) && !home && !!wsId && !guestWs;
   // The folded canvas tree takes the island with it (docs/08 «Нижний островок»).
   const canvasFolded = useCanvasUi((s) => s.treeCollapsed);
   // «Открыть историю» of an archived temporary room (ADR-0044) in place of the room.
@@ -213,6 +217,10 @@ function ShellLayout(): ReactNode {
             <CanvasScreen key={wsId} workspaceId={wsId} />
             {/* A canvas hit opens here, the results stay beside it (ADR-0105). */}
             {searchOpen ? <SearchResultsPanel key={searchSeq} floating={!wide} /> : null}
+          </div>
+        ) : hasWs && wsId && telephony ? (
+          <div className="relative flex min-w-0 flex-1 overflow-hidden rounded-tl-[var(--radius-panel)] border-l border-t border-[var(--color-panel-edge)]" data-testid="main-island">
+            <TelephonySection key={wsId} workspaceId={wsId} />
           </div>
         ) : hasWs && wsId ? (
           <div className="flex min-w-0 flex-1 overflow-hidden rounded-tl-[var(--radius-panel)] border-l border-t border-[var(--color-panel-edge)]" data-testid="main-island">

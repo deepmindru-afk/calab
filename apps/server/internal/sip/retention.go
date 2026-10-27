@@ -16,9 +16,9 @@ import (
 // A call whose recording still has its raw file waits for the recording's janitor; the Disk
 // file of a stored recording is the workspace's and stays (ADR-0131).
 //
-// T2 (contacts): the same period applies to sip_contacts — a contact none of whose numbers
+// Contacts (T2): the same period applies to sip_contacts — a contact none of whose numbers
 // called or was called within the period and that nobody edited within it (updated_at) is
-// deleted here too, after the calls.
+// deleted here too, after the calls (purgeContacts).
 
 const (
 	retentionEvery = time.Hour
@@ -83,10 +83,46 @@ func (s *Service) PurgeExpired(ctx context.Context, now time.Time) int64 {
 				break
 			}
 		}
-		// T2: delete the workspace's contacts without calls and edits since before here.
 	}
 	if total > 0 {
 		slog.InfoContext(ctx, "sip: retention deleted old calls", "calls", total)
+	}
+	s.purgeContacts(ctx, now)
+	return total
+}
+
+// purgeContacts deletes, per workspace, the contacts nobody edited within its period and none
+// of whose numbers called or was called within it (after the calls: a deleted call no longer
+// keeps its contact). Workspaces with contacts but no telephony account keep them 12 months.
+func (s *Service) purgeContacts(ctx context.Context, now time.Time) int64 {
+	list, err := s.db.Q.ListSipContactRetention(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "sip: contact retention", "err", err)
+		return 0
+	}
+	var total int64
+	for _, w := range list {
+		months := int(w.RetentionMonths)
+		if months <= 0 {
+			months = DefaultRetentionMonths
+		}
+		before := now.AddDate(0, -months, 0)
+		for range retentionBatches {
+			n, err := db.GuardValue(ctx, s.db, func(q *sqlc.Queries) (int64, error) {
+				return q.DeleteOldSipContacts(ctx, sqlc.DeleteOldSipContactsParams{WorkspaceID: w.WorkspaceID, Before: before})
+			})
+			if err != nil {
+				slog.WarnContext(ctx, "sip: contact retention", "workspace", w.WorkspaceID, "err", err)
+				break
+			}
+			total += n
+			if n < retentionBatch || ctx.Err() != nil {
+				break
+			}
+		}
+	}
+	if total > 0 {
+		slog.InfoContext(ctx, "sip: retention deleted old contacts", "contacts", total)
 	}
 	return total
 }

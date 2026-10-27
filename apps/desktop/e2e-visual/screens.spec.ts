@@ -2991,6 +2991,44 @@ test('chat-code', async ({ open, win, mock, shot }) => {
   await field.press('Enter');
   await expect(field).toHaveValue('```js\n');
   await field.fill('');
+
+  // Expanded editor (#97): the corner button on a long draft; the editor shares the draft with the
+  // field (formatting, Enter = newline, Esc keeps the text), «Удалить» asks, ⌘Enter sends.
+  const longDraft = Array.from({ length: 30 }, (_, i) => `Строка ${i + 1}: черновик длинного сообщения для проверки редактора`).join('\n');
+  await expect(win.getByTestId('composer-expand')).toHaveCount(0);
+  for (const b of await win.getByTestId('toast').locator('button[aria-label="Закрыть уведомление"]').all()) await b.evaluate((x) => (x as HTMLButtonElement).click());
+  await expect(win.getByTestId('toast')).toHaveCount(0);
+  await field.fill(longDraft);
+  const expand = win.getByTestId('composer-expand');
+  await expect(expand).toBeVisible();
+  await checkpoint(shot, 'chat-expand-button');
+  await expand.click();
+  const editor = win.getByRole('dialog', { name: /Сообщение в/ });
+  const ed = editor.getByTestId('editor-field');
+  await expect(ed).toHaveValue(longDraft);
+  await ed.evaluate((el: HTMLTextAreaElement) => el.setSelectionRange(0, 6));
+  await editor.getByTestId('editor-bold').click();
+  await expect(ed).toHaveValue(longDraft.replace('Строка', '**Строка**'));
+  await ed.evaluate((el: HTMLTextAreaElement) => el.setSelectionRange(el.value.length, el.value.length));
+  await ed.press('Enter');
+  await expect(ed).toHaveValue(`${longDraft.replace('Строка', '**Строка**')}\n`);
+  await checkpoint(shot, 'chat-expanded-editor');
+  await win.keyboard.press('Escape');
+  await expect(editor).toHaveCount(0);
+  await expect(field).toHaveValue(`${longDraft.replace('Строка', '**Строка**')}\n`);
+  await field.focus();
+  await win.keyboard.press(`${MOD}+Shift+E`);
+  await expect(editor).toBeVisible();
+  await editor.getByTestId('editor-delete').click();
+  await win.getByRole('dialog', { name: 'Удалить черновик?' }).getByRole('button', { name: 'Удалить' }).click();
+  await expect(editor).toHaveCount(0);
+  await expect(field).toHaveValue('');
+  await field.fill(longDraft);
+  await win.keyboard.press(`${MOD}+Shift+E`);
+  await expect(ed).toBeFocused();
+  await ed.press(`${MOD}+Enter`);
+  await expect(editor).toHaveCount(0);
+  await expect(field).toHaveValue('');
 });
 
 // Voice messages (docs/09 #43, docs/08 «Голосовые сообщения»): recording with the fake mic
@@ -4169,6 +4207,19 @@ test('boards-task', async ({ open, win, mock, shot }) => {
   await panel.getByTestId('task-composer').getByRole('textbox').blur();
   await win.mouse.move(0, 0);
   await checkpoint(shot, 'boards-task-tabs');
+
+  // #93 follow-up: the strip lives in the title bar, so it stays in other sections; no tab is
+  // highlighted there, and a click brings the task back with the draft.
+  await win.getByTestId('section-calendar').click();
+  await expect(win.getByTestId('titlebar').getByTestId('task-tabs')).toBeVisible();
+  await expect(tabs).toHaveCount(3);
+  await expect(win.getByTestId('task-tab').and(win.locator('[data-active]'))).toHaveCount(0);
+  await win.mouse.move(0, 0);
+  await checkpoint(shot, 'boards-task-tabs-calendar');
+  await tabs.nth(0).getByRole('button').first().click();
+  await expect(panel.getByTestId('task-composer').getByRole('textbox')).toHaveValue('Черновик, который не должен пропасть');
+  await expect(win.getByTestId('task-tab').nth(0)).toHaveAttribute('data-active', 'true');
+  await panel.getByTestId('task-composer').getByRole('textbox').blur();
 
   // #89: from the «Все задачи» search the path starts with the query; «×» returns to the same list.
   await win.getByTestId('my-tasks').click();

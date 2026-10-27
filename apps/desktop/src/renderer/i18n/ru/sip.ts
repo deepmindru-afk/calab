@@ -43,9 +43,7 @@ export const ruSip = {
   'sip.err.provider': 'Провайдер отказал',
   'sip.err.notInCall': 'Сначала войдите в звонок этой комнаты',
   'sip.err.forbidden': 'Нет права звонить на номера в этой комнате',
-  // Workspace settings → «Телефония»
-  'sip.tab': 'Телефония',
-  'sip.intro': 'Звонки на городские и мобильные номера из голосовой комнаты через вашего SIP-провайдера. Звонить могут те, кому дано право «Звонить на телефонные номера».',
+  // «Телефония → Настройки → Подключение»
   'sip.loadFailed': 'Не удалось загрузить настройки телефонии',
   'sip.card.provider': 'Провайдер',
   'sip.enabled': 'SIP включён',
@@ -96,20 +94,7 @@ export const ruSip = {
   'sip.err.field.provider': 'Название — до 64 символов',
   'sip.err.field.transport': 'Выберите транспорт',
   'sip.err.providerSave': 'LiveKit не принял настройки: {message}',
-  // Call journal
-  'sip.journal': 'Журнал звонков',
-  'sip.journal.empty': 'Звонков пока не было',
-  'sip.journal.when': 'Когда',
-  'sip.journal.room': 'Комната',
-  'sip.journal.number': 'Номер',
-  'sip.journal.who': 'Кто',
-  'sip.journal.status': 'Итог',
-  'sip.journal.duration': 'Длит.',
-  'sip.journal.more': 'Показать ещё',
-  'sip.journal.test': 'Проверка подключения',
-  'sip.journal.answered': 'Разговор',
-  'sip.journal.live': 'Идёт',
-  'sip.journal.loadFailed': 'Не удалось загрузить журнал',
+  // Roles, plans
   'roles.group.telephony': 'Телефония',
   'admin.limit.telephony': 'Телефония (SIP)',
   'admin.limit.telephonyHint': 'Выключена — сохранённый транк виден, звонки недоступны',

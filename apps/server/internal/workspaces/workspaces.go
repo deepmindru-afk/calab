@@ -34,6 +34,7 @@ import (
 	"github.com/calaba/calaba/server/internal/plans"
 	"github.com/calaba/calaba/server/internal/redisx"
 	"github.com/calaba/calaba/server/internal/rooms"
+	"github.com/calaba/calaba/server/internal/sip"
 	"github.com/calaba/calaba/server/internal/wsaudit"
 )
 
@@ -304,6 +305,24 @@ func Snapshot(ctx context.Context, q *sqlc.Queries, pl *plans.Service, ws sqlc.W
 			}
 			for _, c := range in {
 				sipCalls = append(sipCalls, pbconv.SipCall(c))
+			}
+			// The recipient's own personal call (ADR-0137 §3): «on a call» on every device.
+			mine, err := q.ListLivePersonalCallsForUser(ctx, sqlc.ListLivePersonalCallsForUserParams{WorkspaceID: ws.ID, StartedBy: &userID})
+			if err != nil {
+				return nil, err
+			}
+			for _, c := range mine {
+				sipCalls = append(sipCalls, pbconv.SipCall(c))
+			}
+			// Caller ID of the inbound and personal calls (ADR-0137 §2); never an employee's
+			// phone to a bot.
+			if err := sip.FillCallers(ctx, q, ws.ID, sipCalls); err != nil {
+				return nil, err
+			}
+			if viewerBot {
+				for _, c := range sipCalls {
+					c.CallerUserId = ""
+				}
 			}
 		}
 	}

@@ -407,7 +407,7 @@ var botRouteGroups = []botRouteGroup{
 		"POST /api/boards/{id}/webhook/ping",
 		"PUT /api/boards/{id}/permissions",
 	}},
-	{access: botAllow, onBehalf: onBehalfClosed, why: "ADR-0109: workspace integrations by MANAGE_INTEGRATIONS — web apps (members read them), GPTunneL pairing, telephony settings and test (the provider password is never returned) and the exchange — internal numbers, groups, voice menus (ADR-0117; the list of numbers is open to every member but guests), the live calls (ADR-0128; numbers masked without VIEW_JOURNALS), the AI provider and its check (CBF-60; the key is never returned); the calls journal by VIEW_JOURNALS; the call journal of the telephony section (ADR-0137: the bot's own calls, all by VIEW_JOURNALS) and the telephony policy (retention, outbound limits; MANAGE_INTEGRATIONS)", routes: []string{
+	{access: botAllow, onBehalf: onBehalfClosed, why: "ADR-0109: workspace integrations by MANAGE_INTEGRATIONS — web apps (members read them), GPTunneL pairing, telephony settings and test (the provider password is never returned) and the exchange — internal numbers, groups, voice menus (ADR-0117; the list of numbers is open to every member but guests), the live calls (ADR-0128; numbers masked without VIEW_JOURNALS), the AI provider and its check (CBF-60; the key is never returned); the calls journal by VIEW_JOURNALS; the call journal of the telephony section (ADR-0137: the bot's own calls, all by VIEW_JOURNALS) and the telephony policy (retention, outbound limits; MANAGE_INTEGRATIONS); the working-hours schedule of the entry point (ADR-0138, MANAGE_INTEGRATIONS)", routes: []string{
 		"GET /api/workspaces/{id}/apps",
 		"POST /api/workspaces/{id}/apps",
 		"PATCH /api/workspace-apps/{appId}",
@@ -421,6 +421,7 @@ var botRouteGroups = []botRouteGroup{
 		"PUT /api/workspaces/{id}/sip/inbound",
 		"PUT /api/workspaces/{id}/sip/recording",
 		"PUT /api/workspaces/{id}/sip/policy",
+		"PUT /api/workspaces/{id}/sip/schedule",
 		"GET /api/workspaces/{id}/sip/journal",
 		"GET /api/workspaces/{id}/sip/journal/{cid}",
 		"POST /api/workspaces/{id}/sip/journal/seen",
@@ -450,6 +451,19 @@ var botRouteGroups = []botRouteGroup{
 		"DELETE /api/sip/inbound/{cid}",
 		"POST /api/workspaces/{id}/sip/calls/{cid}/transfer",
 		"DELETE /api/workspaces/{id}/sip/calls/{cid}/transfer",
+	}},
+	{access: botAllow, onBehalf: onBehalfClosed, why: "ADR-0137 §2: the telephony section's phone book — read, create and edit by whoever sees the section (MANAGE_INTEGRATIONS, or telephony on and PLACE_CALLS, VIEW_JOURNALS or an internal number), delete by the author or MANAGE_INTEGRATIONS, CSV import / export by MANAGE_INTEGRATIONS (a CRM sync); an employee's phone behind a number is never told to a bot; ending a personal call (§3) is the caller's or MANAGE_INTEGRATIONS'", routes: []string{
+		"GET /api/workspaces/{id}/sip/contacts",
+		"POST /api/workspaces/{id}/sip/contacts",
+		"GET /api/workspaces/{id}/sip/contacts/export.csv",
+		"POST /api/workspaces/{id}/sip/contacts/import",
+		"GET /api/workspaces/{id}/sip/contacts/{cid}",
+		"PATCH /api/workspaces/{id}/sip/contacts/{cid}",
+		"DELETE /api/workspaces/{id}/sip/contacts/{cid}",
+		"DELETE /api/workspaces/{id}/sip/calls/{cid}",
+	}},
+	{access: botDeny, why: "ADR-0137 §3: a personal phone call puts the caller's own LiveKit client into the call's room — a bot has none; bots call a number from a voice room (POST /api/rooms/{id}/calls)", routes: []string{
+		"POST /api/workspaces/{id}/sip/calls",
 	}},
 	{access: botAllow, onBehalf: onBehalfClosed, why: "ADR-0109: workspace content — camera backgrounds (MANAGE_WORKSPACE; members read them), the achievements catalog (MANAGE_WORKSPACE) and grants (MANAGE_MEMBERS; never to a bot or oneself)", routes: []string{
 		"GET /api/workspaces/{id}/backgrounds",
@@ -763,6 +777,8 @@ var botAudited = map[string]bool{
 	"PUT /api/workspaces/{id}/sip/inbound":                                true,
 	"PUT /api/workspaces/{id}/sip/recording":                              true,
 	"POST /api/workspaces/{id}/sip/test":                                  true, // a real call billed to the workspace
+	"POST /api/workspaces/{id}/sip/contacts/import":                       true, // ADR-0137: a bulk write of personal data
+	"GET /api/workspaces/{id}/sip/contacts/export.csv":                    true, // ADR-0137: the whole phone book leaves
 	"POST /api/workspaces/{id}/sip/extensions":                            true,
 	"PATCH /api/workspaces/{id}/sip/extensions/{eid}":                     true,
 	"DELETE /api/workspaces/{id}/sip/extensions/{eid}":                    true,

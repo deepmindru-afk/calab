@@ -2,9 +2,9 @@ import { Guitar, HeadphoneOff, MicOff, Phone } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { cx } from '../../components/ui';
 import { t } from '../../i18n';
-import { micGlyph } from '../../lib/voiceLogic';
-import { usePrefs } from '../../stores/prefs';
+import { selfMicGlyph } from '../../lib/voiceLogic';
 import { useVoice } from '../../stores/voice';
+import { useSelfMic } from './selfMic';
 
 /** One icon of the per-participant voice state, in display order. */
 export type VoiceStateIcon = 'server-muted' | 'muted' | 'deafened' | 'ptt-idle' | 'on-phone';
@@ -86,14 +86,14 @@ export function MusicianIcon({ className }: { className?: string }): ReactNode {
 }
 
 /**
- * My own voice-state icons (CBF-71): the leaf that knows the push-to-talk wait. It subscribes to
- * two booleans, so a key press redraws only this icon, never the row.
+ * My own voice-state icons (CBF-71): the leaf that knows the push-to-talk wait. It draws the same
+ * view as the self panel (#96, useSelfMic), never the row's server copy: that copy lags this
+ * device's intent, and with another device of mine in the call it is not what the panel showed.
+ * Primitive subscriptions: a key press redraws only this icon, never the row.
  */
-export function SelfVoiceStateIcons({ muted, deafened, serverMuted = false, onPhone = false }: { muted: boolean; deafened: boolean; serverMuted?: boolean; onPhone?: boolean }): ReactNode {
-  // A one-to-one call is voice activation only (ADR-0034): no PTT wait there.
-  const pttPref = usePrefs((s) => s.micMode === 'ptt');
-  const oneToOne = useVoice((s) => s.call);
-  const talking = useVoice((s) => s.pttDown);
-  const pttIdle = micGlyph({ muted, deafened, ptt: pttPref && !oneToOne, talking }) === 'ptt-idle';
-  return <VoiceStateIcons muted={muted} deafened={deafened} serverMuted={serverMuted} pttIdle={pttIdle} onPhone={onPhone} />;
+export function SelfVoiceStateIcons({ onPhone = false, pttWait = true }: { onPhone?: boolean; /** False: a list that shows nobody's PTT wait (the members column). */ pttWait?: boolean }): ReactNode {
+  const m = useSelfMic();
+  const pttDown = useVoice((s) => s.pttDown);
+  const pttIdle = pttWait && selfMicGlyph(m, pttDown) === 'ptt-idle';
+  return <VoiceStateIcons muted={m.muted} deafened={m.deafened} serverMuted={m.serverMuted} pttIdle={pttIdle} onPhone={onPhone} />;
 }

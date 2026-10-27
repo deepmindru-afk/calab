@@ -119,6 +119,9 @@ const safeStorage: StateStorage = {
 };
 
 interface TabsStore extends TabsState {
+  /** The boards section is on screen (BoardsView mounted); not persisted. */
+  shown: boolean;
+  setShown: (on: boolean) => void;
   activate: (entry: TaskTab) => void;
   add: (entry: TaskTab, open?: TaskTab) => void;
   close: (id: string) => TaskTab | null;
@@ -130,6 +133,8 @@ export const useTaskTabs = create<TabsStore>()(
     (set, get) => ({
       tabs: [],
       cur: null,
+      shown: false,
+      setShown: (shown) => set({ shown }),
       activate: (entry) => set((s) => reduceActivate(s, entry)),
       add: (entry, open) => set((s) => reduceAdd(s, entry, open)),
       close: (id) => {

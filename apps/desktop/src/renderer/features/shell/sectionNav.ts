@@ -6,6 +6,7 @@ import { useBoardsUi } from '../../stores/boardsUi';
 import { leaveDisk, useDiskUi } from '../../stores/diskUi';
 import { leaveCanvas, useCanvasUi } from '../../stores/canvasUi';
 import { leaveWiki, useWikiUi } from '../../stores/wikiUi';
+import { leaveTelephony, useTelephonyUi } from '../../stores/telephonyUi';
 import { HOME } from '../../stores/dms';
 import { useFreeBusy } from '../../stores/freebusy';
 import { leaveMail, useMailUi } from '../../stores/mailUi';
@@ -14,7 +15,7 @@ import { useUi } from '../../stores/ui';
 import { useWebApps } from '../../stores/webApps';
 import { useWorkspaces } from '../../stores/workspaces';
 
-export type Mode = 'voice' | 'calendar' | 'boards' | 'disk' | 'wiki' | 'canvas';
+export type Mode = 'voice' | 'calendar' | 'boards' | 'disk' | 'wiki' | 'canvas' | 'telephony';
 
 /**
  * Switches the workspace mode: «Голос» — the room (calendar and boards off); «Календарь» — today's
@@ -26,7 +27,7 @@ export type Mode = 'voice' | 'calendar' | 'boards' | 'disk' | 'wiki' | 'canvas';
 export function showMode(mode: Mode): void {
   const ui = useUi.getState();
   const boards = useBoardsUi.getState();
-  if (mode === 'disk' || mode === 'wiki' || mode === 'canvas') {
+  if (mode === 'disk' || mode === 'wiki' || mode === 'canvas' || mode === 'telephony') {
     // «Диск» (ADR-0094 §8) / «Вики» (ADR-0096 §9) / «Холст» (ADR-0126 §5): the boards and the day
     // view off, the section covers the column and the centre; the three are exclusive with each other.
     if (ui.calDay !== null) ui.closeCalendar();
@@ -35,14 +36,18 @@ export function showMode(mode: Mode): void {
     if (mode !== 'disk') leaveDisk();
     if (mode !== 'wiki') leaveWiki();
     if (mode !== 'canvas') leaveCanvas();
+    // «Телефония» (ADR-0137 §5) is one of them.
+    if (mode !== 'telephony') leaveTelephony();
     if (mode === 'disk') useDiskUi.getState().setActive(true);
     else if (mode === 'wiki') useWikiUi.getState().setActive(true);
+    else if (mode === 'telephony') useTelephonyUi.getState().setActive(true);
     else useCanvasUi.getState().setActive(true);
     return;
   }
   leaveDisk();
   leaveWiki();
   leaveCanvas();
+  leaveTelephony();
   if (mode === 'calendar') {
     if (ui.calDay !== null) return;
     ui.setCalMonth(null);
@@ -59,7 +64,7 @@ export function showMode(mode: Mode): void {
 /** The phone layout (the web build at ≤ 768 px) — lib/mobile.ts without the platform import (unit tests run in Node). */
 const onPhone = (): boolean => typeof window !== 'undefined' && typeof document !== 'undefined' && (document.documentElement as HTMLElement | undefined)?.classList.contains('web') === true && window.matchMedia(MOBILE_QUERY).matches;
 
-const MODE: Record<WsSection, Mode> = { chats: 'voice', calendar: 'calendar', boards: 'boards', disk: 'disk', wiki: 'wiki', canvas: 'canvas' };
+const MODE: Record<WsSection, Mode> = { chats: 'voice', calendar: 'calendar', boards: 'boards', disk: 'disk', wiki: 'wiki', canvas: 'canvas', telephony: 'telephony' };
 
 const isGuest = (wsId: string): boolean => useWorkspaces.getState().byId[wsId]?.role === WorkspaceRole.GUEST;
 

@@ -5,6 +5,8 @@ import { api } from '../lib/api/endpoints';
 import { holdNotification } from '../lib/notifyHold';
 import { log } from '../lib/log';
 import { formatPhone } from '../lib/sip';
+import { phonePartyLabel } from '../lib/sipOutbound';
+import { memberName } from '../stores/workspaces';
 import { applyInbound, inboundOf, isPhoneRoom, phoneCallId, phoneRoomId, setPhoneJoin, transferTargets, type InboundState } from '../lib/sipInbound';
 import { currentRing, startRing, stopRing } from '../lib/sounds';
 import { platform } from '../platform';
@@ -69,7 +71,10 @@ function notify(c: SipCall): void {
   if (prefs().presence === PresenceStatus.DND) return;
   try {
     closeNotice();
-    const n = holdNotification(new Notification(t('call.sipNotify', { number: c.number ? formatPhone(c.number) : t('call.sipUnknown') }), {
+    // Caller ID (ADR-0137 §2): «Входящий звонок · Анна Петрова (ООО Ромашка)», else the number.
+    const who = c.callerName || c.callerCompany || c.callerUserId ? phonePartyLabel(c, t('call.sipUnknown'), c.callerUserId ? memberName(c.workspaceId, c.callerUserId) : '') : '';
+    const title = who ? t('telc.notify', { who }) : t('call.sipNotify', { number: c.number ? formatPhone(c.number) : t('call.sipUnknown') });
+    const n = holdNotification(new Notification(title, {
       tag: `sipin:${c.id}`,
       silent: true,
       requireInteraction: true,

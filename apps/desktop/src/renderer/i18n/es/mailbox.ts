@@ -19,7 +19,7 @@ export const esMailbox: DictShape<typeof ruMailbox> = {
   'mbox.switcher': 'Elegir buzón',
   'mbox.addAccount': 'Añadir correo',
   'mbox.compose': 'Mensaje nuevo',
-  'mbox.search': 'Buscar',
+  'mbox.search': 'Buscar texto, nombre, dirección',
   'mbox.clearSearch': 'Borrar búsqueda',
   'mbox.unreadOnly': 'Solo sin leer',
   'mbox.searchResults': 'Resultados de búsqueda',

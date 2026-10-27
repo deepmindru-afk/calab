@@ -180,6 +180,7 @@ export const zhShell: DictShape<typeof enShell> = {
   'voiceUi.serverMuted': '已被版主静音',
   'voiceUi.serverUnmuted': '版主已允许你发言——请取消麦克风静音',
   'voiceUi.micSyncing': '尚未同步给其他人——正在重试',
+  'voiceUi.seatElsewhere': '语音已在另一台设备上连接——请在那里切换',
   'voiceUi.reconnectHint': '连接恢复后语音会自动重连',
   'voiceUi.blocked': '与{host}的连接被应用策略阻止——请更新应用',
   'voiceUi.cantReach': '无法连接到{host}',

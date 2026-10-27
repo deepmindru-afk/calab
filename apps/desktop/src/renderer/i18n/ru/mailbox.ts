@@ -20,7 +20,7 @@ export const ruMailbox = {
   'mbox.switcher': 'Выбрать ящик',
   'mbox.addAccount': 'Добавить почту',
   'mbox.compose': 'Новое письмо',
-  'mbox.search': 'Поиск',
+  'mbox.search': 'Поиск: текст, имя, адрес',
   'mbox.clearSearch': 'Очистить поиск',
   'mbox.unreadOnly': 'Только непрочитанные',
   'mbox.searchResults': 'Результаты поиска',

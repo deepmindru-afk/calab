@@ -46,6 +46,33 @@ func NormalizeNumber(s string) (string, bool) {
 	return n, e164.MatchString(n)
 }
 
+// NormalizeContactNumber is NormalizeNumber for what people type into the phone book, the
+// dial pad and an imported file (ADR-0137 §2): besides its forms, a Russian mobile number
+// without the trunk prefix — 10 digits starting with 9 — becomes +7… when the workspace's own
+// number (callerID) is a +7 number.
+func NormalizeContactNumber(s, callerID string) (string, bool) {
+	if n, ok := NormalizeNumber(s); ok {
+		return n, true
+	}
+	if !strings.HasPrefix(callerID, "+7") {
+		return "", false
+	}
+	var b strings.Builder
+	for _, r := range strings.TrimSpace(s) {
+		switch {
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == ' ' || r == '-' || r == '.' || r == '(' || r == ')' || r == ' ':
+		default:
+			return "", false
+		}
+	}
+	if d := b.String(); len(d) == 10 && d[0] == '9' {
+		return "+7" + d, true
+	}
+	return "", false
+}
+
 // prefixRe: an allowed prefix, «+» and 1..15 digits.
 var prefixRe = regexp.MustCompile(`^\+[0-9]{1,15}$`)
 

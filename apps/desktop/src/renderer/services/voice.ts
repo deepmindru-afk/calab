@@ -22,7 +22,7 @@ import type { PttEvent } from '../../shared/ipc';
 import { t } from '../i18n';
 import { ApiError } from '../lib/api/client';
 import { api } from '../lib/api/endpoints';
-import { isPhoneRoom, phoneCallId, takePhoneJoin } from '../lib/sipInbound';
+import { isPersonalRoom, isPhoneRoom, phoneCallId, takePhoneJoin } from '../lib/sipInbound';
 import { log } from '../lib/log';
 import { isLapsed } from '../lib/billing/model';
 import { restrictedPerms, roomPerms, voiceCaps } from '../lib/permissions';
@@ -53,7 +53,7 @@ import { SpeakingDebouncer, speakingUserIds } from '../lib/speaking';
 import { AUTO_MUTE_TOAST, AutoMuteTimer, autoMuteArmed, type AutoMuteSec } from '../lib/autoMute';
 import { REMOTE_LEVEL, RemoteLevelSpeaking, readLevel, type LevelSample } from '../lib/remoteSpeaking';
 import { audioDevices, deviceName, deviceSwitches, type AudioDevice } from '../lib/deviceSwitch';
-import { answerCallSelf, canSpeakFrom, isDeviceGone, meterUpdate, micModeFor, pttAllowed, pttCue, qualityOf, remoteAudio, toggleDeafen, toggleMute, transmitDecision, withUserMuted, withUserVolume } from '../lib/voiceLogic';
+import { answerCallSelf, canSpeakFrom, isDeviceGone, meterUpdate, micModeFor, mySeat, pttAllowed, pttCue, qualityOf, remoteAudio, toggleDeafen, toggleMute, transmitDecision, withUserMuted, withUserVolume } from '../lib/voiceLogic';
 import { RemoteAudioOut } from '../lib/media/remoteAudioOut';
 import { useMessages } from '../stores/messages';
 import { useRooms } from '../stores/rooms';
@@ -1472,8 +1472,15 @@ class VoiceEngine {
   private sendJoin(roomId: string): ReturnType<typeof api.voice.join> {
     // An inbound phone call's session (ADR-0117): the accept's token once, then a fresh one
     // for each reconnect — never the room /join.
+    // A personal call (ADR-0137 §3) has only the token its POST gave (kept for the call's life).
     const pre = isPhoneRoom(roomId) ? takePhoneJoin(roomId) : undefined;
-    const req = isPhoneRoom(roomId) ? (pre ? Promise.resolve(pre) : api.sip.joinInbound(phoneCallId(roomId))) : api.voice.join(roomId);
+    const req = isPhoneRoom(roomId)
+      ? pre
+        ? Promise.resolve(pre)
+        : isPersonalRoom(roomId)
+          ? Promise.reject(new ApiError('ERROR_CODE_NOT_FOUND', 'the personal call is over', 404))
+          : api.sip.joinInbound(phoneCallId(roomId))
+      : api.voice.join(roomId);
     const settled = req.then(
       () => undefined,
       () => undefined,
@@ -2941,7 +2948,32 @@ class VoiceEngine {
     if (this.room) this.afterSelfChange();
   }
 
+  /**
+   * A tone digit to the line of my personal phone call (ADR-0137 §3.7): a SipDTMF data packet
+   * (livekit-client publishDtmf; livekit/sip sends it to the provider as RFC 2833). Data, not
+   * sound: the echo rules (docs/02) are untouched. Only in a connected personal call's room.
+   */
+  publishDtmf(digit: string): boolean {
+    const room = this.room;
+    if (!room || !isPersonalRoom(this.roomId) || room.state !== ConnectionState.Connected || !/^[0-9*#]$/.test(digit)) return false;
+    const code = digit === '*' ? 10 : digit === '#' ? 11 : Number(digit);
+    room.localParticipant.publishDtmf(code, digit).catch((err: unknown) => log.warn('voice: dtmf failed', err));
+    return true;
+  }
+
+  /**
+   * Another device of mine holds the voice seat (#96): the mic / headphones buttons show that
+   * device's state, so a click here cannot quietly change a pre-join intent nobody sees — it says
+   * where to switch instead.
+   */
+  private seatElsewhere(): boolean {
+    if (useVoice.getState().roomId !== null || !mySeat(useWorkspaces.getState().byId, this.myId())) return false;
+    toast.info(t('voiceUi.seatElsewhere'));
+    return true;
+  }
+
   toggleMute(): void {
+    if (this.seatElsewhere()) return;
     const v = useVoice.getState();
     // A moderator mute (VoiceState.server_muted) can't be lifted by the user: the server removed
     // the microphone from our grant and PATCH /api/voice/self {muted:false} would be 403.
@@ -2957,6 +2989,7 @@ class VoiceEngine {
   }
 
   toggleDeafen(): void {
+    if (this.seatElsewhere()) return;
     setVoice(toggleDeafen(useVoice.getState()));
     playSound(useVoice.getState().deafened ? 'deafen' : 'undeafen');
     this.afterSelfChange();

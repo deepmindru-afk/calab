@@ -16,6 +16,7 @@ import { popoverBox } from './menu';
 import { AppSettingsWindow } from './lazyWindows';
 import { InboxButton } from './InboxPopover';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
+import { TaskTabs } from '../boards/TaskTabs';
 import { PlanBadge } from '../workspace/billing/PlanBadge';
 
 /**
@@ -56,7 +57,10 @@ export function TitleBar(): ReactNode {
         <TitleBarWorkspace />
       </div>
 
-      <div className="ml-auto flex min-w-0 items-center justify-end gap-1 pr-2">
+      {/* Open task tabs (#93): in every section; nothing without tabs. */}
+      <TaskTabs />
+
+      <div className="ml-auto flex shrink-0 items-center justify-end gap-1 pr-2">
         {/* The one workspace search entry point (docs/09 #53): always shown. */}
         <button
           type="button"

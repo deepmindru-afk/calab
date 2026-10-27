@@ -213,9 +213,16 @@
 | Положить телефонную линию | звонивший или `MUTE_MEMBERS` room (не гость) | `sip.hangup` | — |
 | Настройки SIP, проверка подключения | `MANAGE_INTEGRATIONS` ws (ADR-0048; не гость); боты — так же (ADR-0109) | `sip.manage` | — |
 | Срок хранения журнала, лимиты исходящих (`PUT …/sip/policy`, ADR-0137) | `MANAGE_INTEGRATIONS` ws (не гость), тариф телефонии; боты — так же | `sip.putPolicy` | — |
+| Расписание входящих: рабочие часы, «нерабочее время →» (`PUT …/sip/schedule`, ADR-0138) | `MANAGE_INTEGRATIONS` ws (не гость), тариф телефонии; боты — так же | `sip.putSchedule` | — |
 | Свои звонки в журнале раздела (`GET …/sip/journal?scope=mine`, деталь своего звонка, `…/journal/seen`) | участник, не гость (звонил, ему звонили, ответил, переводил); боты — так же | `sip.listJournal`, `sip.journalEntry`, `sip.journalSeen` | — |
 | Все звонки раздела, фильтр по сотруднику (`scope=all`, `user=`) | `VIEW_JOURNALS` ws (не гость); звонки комнат, которых не видно, пропускаются; деталь чужого звонка без бита — 404 | `sip.listJournal`, `sip.journalEntry` | — |
 | Запись разговора в детали звонка | `DISK_VIEW` на файл записи (не в корзине), иначе поля нет | `sip.recordingFor` | — |
+| Контакты: читать, создать, править (ADR-0137 §2) | видит раздел: не гость и (`MANAGE_INTEGRATIONS` ws или `Workspace.sip_enabled` и (`PLACE_CALLS` ws или `VIEW_JOURNALS` ws или внутренний номер)); создать/править — ещё тариф телефонии; боты — так же | `sip.sectionMember` | — |
+| Контакты: удалить | автор или `MANAGE_INTEGRATIONS` ws (и видит раздел) | `sip.deleteContact` | — |
+| Контакты: импорт / экспорт CSV | `MANAGE_INTEGRATIONS` ws (импорт — и тариф); боты — так же | `sip.importContacts`, `sip.exportContacts` | — |
+| Имя звонящего по телефону сотрудника (`caller_user_id`, `member_user_id`) | видят люди-получатели звонка/журнала; ботам — никогда (ADR-0077) | `sip.botsAmong`, `sip.hideMembers` | — |
+| Личный звонок из раздела (`POST …/sip/calls`, ADR-0137 §3) | `PLACE_CALLS` ws (переопределения комнат не в счёт), не гость, не бот (`botDeny`), тариф, `sip_enabled`, `allowed_prefixes`, лимиты политики | `sip.placePersonal` | — |
+| Положить личный звонок (`DELETE …/sip/calls/{cid}`) | звонивший или `MANAGE_INTEGRATIONS` ws; боты — так же | `sip.hangupPersonal` | — |
 
 ## Интеграции и боты
 

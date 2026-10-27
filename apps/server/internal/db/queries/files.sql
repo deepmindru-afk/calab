@@ -74,6 +74,7 @@ WHERE f.created_at < $1
   AND NOT EXISTS (SELECT 1 FROM wiki_page_files wf WHERE wf.file_id = f.id)
   AND NOT EXISTS (SELECT 1 FROM wiki_pages wc WHERE wc.cover_file_id = f.id)
   AND NOT EXISTS (SELECT 1 FROM sip_ivr_menus im WHERE im.prompt_file_id = f.id OR im.notice_file_id = f.id)
+  AND NOT EXISTS (SELECT 1 FROM sip_accounts sa WHERE sa.off_hours_notice_file_id = f.id)
 ORDER BY f.created_at
 LIMIT 500;
 

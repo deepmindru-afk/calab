@@ -222,7 +222,7 @@ export function ProfileDialog({
               ) : null}
 
               {/* Email and phone (ADR-0077): colleagues only. */}
-              <ProfileContacts userId={userId} variant="section" extension={m.extension} />
+              <ProfileContacts userId={userId} variant="section" workspaceId={workspaceId} extension={m.extension} />
 
               {registered || joined ? (
                 <Section title={t('people.profile.memberSince')}>
