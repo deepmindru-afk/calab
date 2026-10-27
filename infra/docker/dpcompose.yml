@@ -233,7 +233,8 @@ services:
     env_file:
       .env
     environment:
-      - HTTP_ADDR=127.0.0.1:3000
+      - HTTP_ADDR=0.0.0.0:3000
+      #127.0.0.1:3000
       - PUBLIC_APP_URL=https://${APP_HOST:-${DOMAIN}}
       - PUBLIC_APP_URL_ALT=${DOMAIN_ALT:+https://${DOMAIN_ALT}}   # empty when no alias host
       # every browser origin of the web client (server: PUBLIC_APP_URLS, comma-separated); empty parts skipped
