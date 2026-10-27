@@ -36,6 +36,8 @@ services:
       resources:
         limits: { memory: 512m }
     command: caddy run --config /etc/caddy/Caddyfile
+    env_file:
+      .env
     environment:
       # docs/10-branding.md: rtc./turn.<DOMAIN>; the app on APP_HOST (default DOMAIN); optional landing
       - DOMAIN=${DOMAIN}
@@ -153,6 +155,8 @@ services:
     restart: unless-stopped
     <<: *hardening
     tmpfs: [/tmp]                  # the prompt cache (≤ 200 MB, refetched after a restart)
+    env_file:
+      .env
     environment:
       - API_URL=${IVR_API_URL:-https://${APP_HOST:-${DOMAIN}}}
       - IVR_AGENT_TOKEN=${IVR_AGENT_TOKEN:-}
@@ -205,6 +209,8 @@ services:
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
     cap_add: [CHOWN, FOWNER]
+    env_file:
+      .env
     entrypoint: ["sh", "-c", "chmod 0755 /out && chown 65532:65532 /out"]
     volumes:
       - recordings_data:/out
@@ -221,6 +227,8 @@ services:
         COMMIT: ${CALABA_COMMIT:-unknown}
     network_mode: host
     restart: unless-stopped
+    env_file:
+      .env
     environment:
       - HTTP_ADDR=127.0.0.1:3000
       - PUBLIC_APP_URL=https://${APP_HOST:-${DOMAIN}}
@@ -317,6 +325,8 @@ services:
     tmpfs:
       - /tmp
       - /var/run/postgresql:uid=70,gid=70,mode=2775
+    env_file:
+      .env
     environment:
       - POSTGRES_USER=calaba
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
@@ -344,6 +354,8 @@ services:
     <<: *hardening
     user: "999:1000"               # valkey
     tmpfs: [/tmp]
+    env_file:
+      .env
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD}
     # Password goes into a tmpfs config file, not argv (visible in `ps` on the shared host).
