@@ -164,8 +164,8 @@ services:
     deploy:
       resources:
         limits: { cpus: "1", memory: 256m }
-    depends_on:
-      livekit: { condition: service_started }
+    #depends_on:
+    #  livekit: { condition: service_started }
     logging: *logging
 
   # SIP registration agent of inbound calls (ADR-0121): SIPREG_AGENT_TOKEN in .env (with
@@ -225,7 +225,7 @@ services:
         # so the caller passes them: CALABA_COMMIT=$(git rev-parse --short HEAD).
         VERSION: ${CALABA_VERSION:-dev}
         COMMIT: ${CALABA_COMMIT:-unknown}
-    network_mode: host
+    #network_mode: host
     restart: unless-stopped
     env_file:
       .env
