@@ -48,6 +48,7 @@ import { voice } from './voice';
 import { onCallRing, onCallState, onReadyCall } from './call';
 import { resumeVoiceAfterReady } from './resumeVoice';
 import { checkWebVersion } from './webVersion';
+import { loadOfficeCaps } from '../features/disk/office/loadCaps';
 import { applySnapshotRecordings, dropRecordings, onRoomRecording, resetRecordings } from './recording';
 import { applySnapshotSipCalls, dropSipCalls, onSipCallUpdate, resetSipCalls } from './sip';
 import { onSipInboundRing } from './sipInbound';
@@ -272,6 +273,8 @@ export function applyDispatch(ev: DispatchEvent): void {
       resumeVoiceAfterReady(r.call);
       // Web: a server newer than this bundle → «Обновить страницу» (docs/09 #125).
       void checkWebVersion();
+      // The office editor (ADR-0143): on / off and the format map, as this server has them now.
+      void loadOfficeCaps();
       // Balance billing (ADR-0080): a BILLING_UPDATE may have been missed while away.
       resyncBilling(new Set(r.workspaces.map((w) => w.workspace?.id ?? '')));
       return;

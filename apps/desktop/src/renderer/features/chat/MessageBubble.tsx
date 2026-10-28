@@ -3,7 +3,6 @@ import * as ContextMenu from '../../components/radix/context-menu';
 import { AlertCircle, Clock3, Download, FileText, RotateCw } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FocusEvent, type PointerEvent, type ReactNode, type SyntheticEvent } from 'react';
 import { Avatar } from '../../components/Avatar';
-import { MediaImg } from '../../components/MediaImg';
 import { Tip, cx } from '../../components/ui';
 import { t, useLocale } from '../../i18n';
 import { thumbnailPath } from '../../lib/api/endpoints';
@@ -12,7 +11,11 @@ import { fmt, toDate, useTimeFormat } from '../../lib/format';
 import { Markdown } from '../../lib/markdown/Markdown';
 import { firstLink, isEmojiOnly, parseMarkdown } from '../../lib/markdown/parse';
 import { filePreview } from '../../lib/filePreview';
-import { openAttachment } from '../../services/files';
+import { officeOpens } from '../disk/office/bridge';
+import { isImageAttachment } from '../../lib/imageAttachment';
+import type { LightboxImage } from '../../lib/lightbox';
+import { AttachmentImg } from '../../components/AttachmentImg';
+import { downloadFile, openAttachment } from '../../services/files';
 import { can } from '../../lib/permissions';
 import { retrySend, setEmbedsHidden, toggleReaction } from '../../services/chat';
 import { messageById, useMessages, type ChatMessage, type PendingUpload } from '../../stores/messages';
@@ -86,7 +89,8 @@ export function MentionChip({ workspaceId, v, own }: { workspaceId: string; v: s
   );
 }
 
-export const isImage = (f: FileMeta): boolean => f.mime.startsWith('image/') && !!f.thumbnailUrl;
+/** A picture attachment (lib/imageAttachment: by type and name, a server thumbnail is not required). */
+export const isImage = (f: FileMeta): boolean => isImageAttachment(f);
 
 export interface RowProps {
   c: ChatMessage;
@@ -890,15 +894,18 @@ function imageBoxPx(files: FileMeta[]): number {
   return Math.max(200, Math.round(h > IMAGE_MAX_H ? (IMAGE_MAX_H * f.width) / f.height : w));
 }
 
-/** The chat thumbnail of an image, with the 1024 px one for 2× screens when it is sharper (docs/09 #62). */
-function Thumb({ f, boxW, boxH }: { f: FileMeta; boxW: number; boxH: number }): ReactNode {
+/** The chat preview of an image, with the 1024 px thumbnail for 2× screens when it is sharper (docs/09 #62). */
+function Thumb({ f, boxW, boxH, onGone }: { f: FileMeta; boxW: number; boxH: number; onGone: () => void }): ReactNode {
   const path = thumbnailPath(f.id);
   const hi = wantsLargeThumb(f.width, f.height, boxW, boxH) ? thumbWidthPath(path, THUMB_LARGE) : undefined;
   // 1× keeps the bare path (= w=512): the same URL as the lightbox placeholder, loaded once.
+  // No thumbnail (owner 28.10): the server makes it on this request, else the original is shown.
   return (
-    <MediaImg
-      path={path}
-      hiDpiPath={hi}
+    <AttachmentImg
+      f={f}
+      thumb={path}
+      hiDpiThumb={hi}
+      onGone={onGone}
       alt={f.name}
       loading="lazy"
       decoding="async"
@@ -908,26 +915,17 @@ function Thumb({ f, boxW, boxH }: { f: FileMeta; boxW: number; boxH: number }): 
   );
 }
 
+/** The Lightbox list of a message's images. */
+const lightboxImages = (files: FileMeta[]): LightboxImage[] => files.map((g) => ({ fileId: g.id, name: g.name, mime: g.mime, width: g.width, height: g.height }));
+
 function ImageGrid({ files, padTop, overlay }: { files: FileMeta[]; padTop: boolean; overlay: ReactNode }): ReactNode {
-  const open = useUi((s) => s.openDialog);
   const single = files.length === 1 ? files[0] : undefined;
-  const aspect = single?.width && single.height ? `${single.width} / ${single.height}` : undefined;
   const boxPx = single ? imageBoxPx(files) : (IMAGE_MAX - 2) / 2; // grid: square cells, gap-0.5
+  const boxH = single ? (single.width && single.height ? (boxPx * single.height) / single.width : boxPx * 0.75) : boxPx;
   return (
     <div className={cx('relative grid gap-0.5', files.length > 1 && 'grid-cols-2', padTop && 'pt-1.5')} style={{ width: '100%' }}>
       {files.map((f, index) => (
-        <button
-          key={f.id}
-          type="button"
-          aria-label={t('chat.openImage', { name: f.name })}
-          onClick={() => open({ kind: 'image', images: files.map((g) => ({ fileId: g.id, name: g.name, mime: g.mime, width: g.width, height: g.height })), index })}
-          {...dragOutAttrs(f)}
-          {...dragOutHandlers}
-          className="block overflow-hidden bg-[color-mix(in_srgb,var(--bubble-accent)_10%,transparent)] focus-visible:outline-offset-[-2px]"
-          style={single ? { aspectRatio: aspect ?? '4 / 3', maxHeight: IMAGE_MAX_H, width: '100%' } : { aspectRatio: '1 / 1' }}
-        >
-          <Thumb f={f} boxW={boxPx} boxH={single ? (single.width && single.height ? (boxPx * single.height) / single.width : boxPx * 0.75) : boxPx} />
-        </button>
+        <ImageTile key={f.id} f={f} files={files} index={index} single={!!single} boxW={boxPx} boxH={boxH} />
       ))}
       {overlay ? (
         <span className="pointer-events-none absolute bottom-1.5 right-1.5 rounded-full bg-[rgb(0_0_0/50%)] px-1.5 py-1 [--bubble-meta:var(--color-on-accent)]">{overlay}</span>
@@ -936,17 +934,52 @@ function ImageGrid({ files, padTop, overlay }: { files: FileMeta[]; padTop: bool
   );
 }
 
+/**
+ * One picture of a message: the box keeps the picture's proportions before it loads (no jump); a
+ * click opens the Lightbox over the message's pictures. A file whose preview does not load at all
+ * (not a picture after all) stays in its box as a file: icon, name, a click downloads.
+ */
+function ImageTile({ f, files, index, single, boxW, boxH }: { f: FileMeta; files: FileMeta[]; index: number; single: boolean; boxW: number; boxH: number }): ReactNode {
+  const open = useUi((s) => s.openDialog);
+  const [gone, setGone] = useState(false);
+  const onGone = useCallback(() => setGone(true), []);
+  const aspect = f.width && f.height ? `${f.width} / ${f.height}` : undefined;
+  return (
+    <button
+      type="button"
+      aria-label={gone ? `${t('chat.download')} ${f.name}` : t('chat.openImage', { name: f.name })}
+      onClick={() => (gone ? downloadFile(f) : open({ kind: 'image', images: lightboxImages(files), index }))}
+      {...dragOutAttrs(f)}
+      {...dragOutHandlers}
+      className="block overflow-hidden bg-[color-mix(in_srgb,var(--bubble-accent)_10%,transparent)] focus-visible:outline-offset-[-2px]"
+      style={single ? { aspectRatio: aspect ?? '4 / 3', maxHeight: IMAGE_MAX_H, width: '100%' } : { aspectRatio: '1 / 1' }}
+      data-testid="chat-image"
+      data-state={gone ? 'file' : 'image'}
+    >
+      {gone ? (
+        <span className="flex size-full flex-col items-center justify-center gap-1.5 px-3 text-[color:var(--bubble-meta)]">
+          <FileText className="size-6" aria-hidden />
+          <span className="max-w-full truncate text-caption">{f.name}</span>
+        </span>
+      ) : (
+        <Thumb f={f} boxW={boxW} boxH={boxH} onGone={onGone} />
+      )}
+    </button>
+  );
+}
+
 function FileRow({ f }: { f: FileMeta }): ReactNode {
   // A PDF opens in the viewer (ADR-0103, its header has «Скачать»); anything else is saved.
-  const pdf = filePreview(f, useUi.getState().phone.on) === 'pdf';
+  const office = officeOpens(f.name);
+  const pdf = office || filePreview(f, useUi.getState().phone.on) === 'pdf';
   const download = (): void => openAttachment(f, [f]);
   return (
     <div className="group/file flex min-w-[min(220px,100%)] items-center gap-3 py-1">
-      <Tip label={t('chat.download')}>
+      <Tip label={office ? t('disk.open') : t('chat.download')}>
         <button
           type="button"
           onClick={download}
-          aria-label={`${t('chat.download')} ${f.name}`}
+          aria-label={`${office ? t('disk.open') : t('chat.download')} ${f.name}`}
           className="grid size-11 shrink-0 place-items-center rounded-full bg-[var(--bubble-chip-bg)] text-[color:var(--bubble-chip-fg)]"
         >
           <FileText className={cx('size-5', !pdf && 'group-hover/file:hidden')} aria-hidden />

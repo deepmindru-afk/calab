@@ -3,6 +3,7 @@
 package app_test
 
 import (
+	"context"
 	"testing"
 
 	v1 "github.com/calaba/calaba/server/gen/calaba/v1"
@@ -76,5 +77,63 @@ func TestTaskNoticeLog(t *testing.T) {
 	o.must(204, "DELETE", "/api/workspaces/"+wid+"/members/"+bob.id, nil, nil)
 	if n := len(list(bob, "").GetEntries()); n != 0 {
 		t.Fatalf("a former member sees %d notices", n)
+	}
+}
+
+// TestTaskNoticeLogHiddenPage (ADR-0141 review): a page whose rows are all of tasks the caller
+// no longer sees lists nothing of them (no key, title or actor) but still moves the cursor past
+// them, so the older notices of tasks still seen are reachable; the batch write keeps one row
+// per recipient; the prune drops notices past the retention.
+func TestTaskNoticeLogHiddenPage(t *testing.T) {
+	ctx := context.Background()
+	o, bob, ws, _ := setupTeam(t)
+	ws2 := createWorkspace(t, o, v1.WorkspaceVisibility_WORKSPACE_VISIBILITY_PRIVATE)
+	bob.must(200, "POST", "/api/invites/"+invite(t, o, ws2.GetId())+"/join", nil, nil)
+	carol := register(t, invite(t, o, ws.GetId()))
+	gb := dialGW(t)
+	gb.identify(bob.token)
+
+	// The oldest: a task of the second workspace, seen throughout.
+	b2 := createBoard(t, o, ws2.GetId(), &v1.CreateBoardRequest{Name: "Видно", Key: "VIS"}, 201)
+	kept := createTask(t, o, b2.GetId(), &v1.CreateTaskRequest{Title: "Остаётся", Assignees: []*v1.TaskAssigneeInput{{UserId: bob.id}}}, 201)
+	gb.wait("kept", noticeOf(kept.GetId(), v1.TaskNoticeKind_TASK_NOTICE_KIND_ASSIGNED))
+	// Newer: two notices of a task in the first workspace, which bob then leaves. Carol gets
+	// the same assignment in the same change: one row each.
+	b := createBoard(t, o, ws.GetId(), &v1.CreateBoardRequest{Name: "Скрыто", Key: "HID"}, 201)
+	hidden := createTask(t, o, b.GetId(), &v1.CreateTaskRequest{Title: "Секрет",
+		Assignees: []*v1.TaskAssigneeInput{{UserId: bob.id}, {UserId: carol.id}}}, 201)
+	gb.wait("hidden", noticeOf(hidden.GetId(), v1.TaskNoticeKind_TASK_NOTICE_KIND_ASSIGNED))
+	send(t, o, hidden.GetRoomId(), "секрет @"+bob.id, "")
+	gb.wait("hidden mention", noticeOf(hidden.GetId(), v1.TaskNoticeKind_TASK_NOTICE_KIND_MENTIONED))
+	var rows int
+	if err := testDB.Pool.QueryRow(ctx, "SELECT count(*) FROM task_notice_log WHERE task_id = $1 AND kind = $2",
+		hidden.GetId(), int16(v1.TaskNoticeKind_TASK_NOTICE_KIND_ASSIGNED)).Scan(&rows); err != nil || rows != 2 {
+		t.Fatalf("assigned rows of the hidden task: %d %v, want bob's and carol's", rows, err)
+	}
+	o.must(204, "DELETE", "/api/workspaces/"+ws.GetId()+"/members/"+bob.id, nil, nil)
+
+	var first v1.ListTaskNoticesResponse
+	bob.must(200, "GET", "/api/me/task-notices?limit=2", nil, &first)
+	if len(first.GetEntries()) != 0 || !first.GetHasMore() || first.GetNextBefore() == "" {
+		t.Fatalf("a page of hidden notices: %v", &first)
+	}
+	var second v1.ListTaskNoticesResponse
+	bob.must(200, "GET", "/api/me/task-notices?limit=2&before="+first.GetNextBefore(), nil, &second)
+	es := second.GetEntries()
+	if len(es) != 1 || es[0].GetTaskId() != kept.GetId() || second.GetHasMore() || second.GetNextBefore() != "" {
+		t.Fatalf("the page after the hidden ones: %v", &second)
+	}
+
+	// Retention: a notice older than 90 days is pruned, a recent one stays.
+	if _, err := testDB.Pool.Exec(ctx, "UPDATE task_notice_log SET created_at = now() - interval '91 days' WHERE task_id = $1", hidden.GetId()); err != nil {
+		t.Fatal(err)
+	}
+	if err := testApp.Boards.PruneNoticeLog(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var left, keptRows int
+	if err := testDB.Pool.QueryRow(ctx, "SELECT count(*) FILTER (WHERE task_id = $1), count(*) FILTER (WHERE task_id = $2) FROM task_notice_log",
+		hidden.GetId(), kept.GetId()).Scan(&left, &keptRows); err != nil || left != 0 || keptRows != 1 {
+		t.Fatalf("after the prune: hidden %d kept %d %v", left, keptRows, err)
 	}
 }

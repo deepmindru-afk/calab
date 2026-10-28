@@ -116,6 +116,15 @@ import {
   CreateDiskFolderRequestSchema,
   CreateDiskLinkRequestSchema,
   DISK_BITS,
+  OfficeConfigResponseSchema,
+  OfficeCapabilitiesResponseSchema,
+  OfficeCapability,
+  OfficeFormatSchema,
+  type DiskItem,
+  OfficeConvertRequestSchema,
+  CreateOfficeFileRequestSchema,
+  ImportDiskFileRequestSchema,
+  OfficeMode,
   DiskActivityPageSchema,
   DiskItemKind,
   DiskItemResponseSchema,
@@ -982,6 +991,10 @@ export interface MockServer {
   readonly boards: BoardsMock;
   /** Disk (ADR-0094, mock-disk.ts): the live items, rights and links (marketing scenes rename the fixture). */
   readonly disk: DiskMock;
+  /** The office editor's mock fault (ADR-0143): '' | 'config' | 'token' | 'stuck'. */
+  setOfficeFault(fault: '' | 'config' | 'token' | 'stuck'): void;
+  /** The office editor on / off (GET /api/office/capabilities, ADR-0143); off after every reset. */
+  setOffice(on: boolean): void;
   /** Wiki (ADR-0096, mock-wiki.ts): the live pages, documents and sync sockets (marketing scenes replace the fixture). */
   readonly wiki: WikiMock;
   /** Canvas (ADR-0126, mock-canvas.ts): the live tree, documents and sync sockets. */
@@ -1082,6 +1095,12 @@ export async function startMockServer(opts: MockServerOptions = {}): Promise<Moc
     },
     get disk() {
       return impl.disk;
+    },
+    setOfficeFault: (f) => {
+      impl.officeFault = f;
+    },
+    setOffice: (on) => {
+      impl.officeEnabled = on;
     },
     get wiki() {
       return impl.wiki;
@@ -1336,6 +1355,13 @@ function send(res: ServerResponse, status: number, body: string | Buffer, type: 
   res.end(body);
 }
 
+/** The office editor's host page (infra/office) and the STUB api.js, on the mock's origin (ADR-0143). */
+const OFFICE_STUB: Record<string, { file: URL; type: string }> = {
+  '/web-apps/apps/calab/calab-editor.html': { file: new URL('../../../infra/office/calab-editor.html', import.meta.url), type: 'text/html; charset=utf-8' },
+  '/web-apps/apps/calab/calab-editor.js': { file: new URL('../../../infra/office/calab-editor.js', import.meta.url), type: 'text/javascript; charset=utf-8' },
+  '/web-apps/apps/api/documents/api.js': { file: new URL('./assets/office-stub-api.js', import.meta.url), type: 'text/javascript; charset=utf-8' },
+};
+
 /** A search snippet as the server writes it (ADR-0062 §1): the first match of `q` wrapped in \u0002…\u0003. */
 function markHit(text: string, q: string): string {
   const at = q.trim() ? text.toLowerCase().indexOf(q.trim().toLowerCase()) : -1;
@@ -1423,6 +1449,10 @@ class MockImpl {
   boards: BoardsMock;
   /** Disk (ADR-0094); rebuilt with the state. */
   disk: DiskMock;
+  /** The office editor's mock fault (ADR-0143): '' none, 'config' (the config call fails), 'token' (the stub editor errors with a refused token), 'stuck' (never saves). */
+  officeFault = '';
+  /** The office editor (ADR-0143): off unless a test turns it on (the other screens keep their Disk menus). */
+  officeEnabled = false;
   /** Wiki (ADR-0096); rebuilt with the state. */
   wiki: WikiMock;
   /** The wiki sync sockets (snapshots up to 2 MiB: not the gateway's 64 KiB limit). */
@@ -1526,6 +1556,8 @@ class MockImpl {
   }
 
   reset(scenario: Scenario): void {
+    this.officeFault = '';
+    this.officeEnabled = false;
     for (const t of this.timers) clearTimeout(t);
     this.aiState.clear();
     this.timers.clear();
@@ -3145,6 +3177,12 @@ class MockImpl {
       const raw = Buffer.concat(chunks);
       const isApi = url.pathname.startsWith('/api/') || url.pathname.startsWith('/__mock/');
       if (!isApi) {
+        // The office editor (ADR-0143): the real host page and a STUB of the Document Server's api.js.
+        const office = OFFICE_STUB[url.pathname];
+        if (office && method === 'GET') {
+          send(res, 200, readFileSync(office.file), office.type);
+          return;
+        }
         if (url.pathname === '/healthz') {
           send(res, 200, 'ok', 'text/plain');
           return;
@@ -8870,6 +8908,100 @@ class MockImpl {
     const d = (): DiskMock => this.disk;
     const q = (c: Ctx, k: string): string => c.url.searchParams.get(k) ?? '';
     const p0 = (c: Ctx): string => c.params[0] ?? '';
+    // The office editor (ADR-0143), the server's contract (apps/server/internal/office): the format
+    // map, the signed config (unsigned here: the stub checks nothing; the «Document Server» is the
+    // mock itself — the real host page and a STUB api.js), «Сохранить как», «Сохранить в Диск», «Создать».
+    const officeOn = (): void => {
+      if (!this.officeEnabled) throw notFound();
+    };
+    const officeOf = (name: string) => OFFICE_FORMATS.find((f) => f.extension === (/\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase() ?? ''));
+    const origin = (c: Ctx): string => `http://${c.req.headers.host ?? '127.0.0.1'}`;
+    this.route('GET', '/api/office/capabilities', (c) => {
+      sendMsg(c.res, 200, OfficeCapabilitiesResponseSchema, this.officeEnabled
+        ? { enabled: true, formats: OFFICE_FORMATS, maxSizeBytes: 100n << 20n, docsUrl: origin(c), themeDark: 'default-dark', themeLight: 'default-light' }
+        : { enabled: false });
+    });
+    this.diskRoute('GET', '/api/office/config', (c, me) => {
+      officeOn();
+      if (this.officeFault === 'config') throw new HttpError(500, ErrorCode.INTERNAL, 'office is down');
+      // A Disk item (rights by the Disk bits), or an attachment (`file`, view only).
+      const fileId = q(c, 'file');
+      const it = fileId ? undefined : d().one(q(c, 'item'), me);
+      const name = it?.name ?? this.state.files.get(fileId)?.meta.name ?? '';
+      if (!it && !this.state.files.get(fileId)) throw notFound();
+      const format = officeOf(name);
+      if (!format) throw new HttpError(415, ErrorCode.VALIDATION, 'this file type does not open in the editor');
+      const phone = q(c, 'phone') === '1';
+      const edit = !!it && !it.trashedAt && (it.myBits & DISK_BITS.WRITE) !== 0n && !phone && format.capability === OfficeCapability.EDIT;
+      const key = `calab-mock-${it?.id ?? fileId}`;
+      const lang = q(c, 'lang') || 'ru';
+      const config = {
+        type: phone ? 'mobile' : 'desktop',
+        documentType: format.documentType,
+        document: { fileType: format.extension, key, title: name, url: `${origin(c)}/__office/file`, permissions: { edit } },
+        editorConfig: {
+          mode: edit ? 'edit' : 'view',
+          lang,
+          region: ({ ru: 'ru-RU', en: 'en-US', es: 'es-ES', zh: 'zh-CN' } as Record<string, string>)[lang] ?? lang,
+          customization: { uiTheme: q(c, 'theme') === 'light' ? 'default-light' : 'default-dark', compactHeader: true, toolbarHideFileName: false, ...(phone ? {} : { goback: { requestClose: true } }) },
+          calabStub: { fault: this.officeFault },
+        },
+        token: 'mock',
+      };
+      sendMsg(c.res, 200, OfficeConfigResponseSchema, {
+        docsUrl: origin(c), hostUrl: `${origin(c)}/web-apps/apps/calab/calab-editor.html`, configJson: JSON.stringify(config),
+        mode: edit ? OfficeMode.EDIT : OfficeMode.VIEW, key, format, itemId: it?.id ?? '', fileId: it?.file?.id ?? fileId,
+      });
+    });
+    // A copy of `meta` under a new name, stored and filed by `me` in folder `parentId` of `ws` (rights, quota, free name, journal).
+    const fileCopy = (ws: string, me: string, parentId: string, meta: FileMeta, name: string, mime = meta.mime): DiskItem => {
+      const bytes = this.state.files.get(meta.id)?.bytes ?? Buffer.from('PK mock office file');
+      const id = this.storeFile(ws, me, { name, mime, bytes });
+      const copy = this.state.files.get(id)?.meta;
+      if (!copy) throw notFound();
+      return d().upload(ws, me, parentId, copy);
+    };
+    const converted = (name: string): { name: string; mime: string } => {
+      const to = officeOf(name)?.convertTo ?? '';
+      if (!to) throw new HttpError(415, ErrorCode.VALIDATION, 'this file type is not converted');
+      return { name: name.replace(/\.[^.]+$/, `.${to}`), mime: OFFICE_MIME[to] ?? 'application/octet-stream' };
+    };
+    // POST /api/disk/items/{id}/office/convert: «Сохранить как» of a legacy Disk file, a NEW item next to it.
+    this.diskRoute('POST', '/api/disk/items/:id/office/convert', (c, me) => {
+      officeOn();
+      const it = d().one(p0(c), me);
+      if (!it.file) throw notFound();
+      const to = converted(it.name);
+      sendMsg(c.res, 201, DiskItemResponseSchema, { item: fileCopy(it.workspaceId, me, it.parentId, it.file, to.name, to.mime) });
+    });
+    // POST /api/workspaces/{id}/office/convert {file_id, parent_id}: the same of an attachment.
+    this.diskRoute('POST', '/api/workspaces/:id/office/convert', (c, me) => {
+      officeOn();
+      const b = parseBody(c, OfficeConvertRequestSchema);
+      const meta = this.state.files.get(b.fileId)?.meta;
+      if (!meta) throw notFound();
+      const to = converted(meta.name);
+      sendMsg(c.res, 201, DiskItemResponseSchema, { item: fileCopy(p0(c), me, b.parentId, meta, to.name, to.mime) });
+    });
+    // POST /api/workspaces/{id}/disk/import {file_id, parent_id, name}: «Сохранить в Диск» of an attachment.
+    this.diskRoute('POST', '/api/workspaces/:id/disk/import', (c, me) => {
+      const b = parseBody(c, ImportDiskFileRequestSchema);
+      const meta = this.state.files.get(b.fileId)?.meta;
+      if (!meta) throw notFound();
+      sendMsg(c.res, 201, DiskItemResponseSchema, { item: fileCopy(p0(c), me, b.parentId, meta, b.name || meta.name) });
+    });
+    // POST /api/workspaces/{id}/office/create {parent_id, extension, name, lang}: «Создать» — a blank file.
+    this.diskRoute('POST', '/api/workspaces/:id/office/create', (c, me) => {
+      officeOn();
+      const b = parseBody(c, CreateOfficeFileRequestSchema);
+      const mime = OFFICE_MIME[b.extension];
+      if (!mime || !['docx', 'xlsx', 'pptx'].includes(b.extension)) throw new HttpError(422, ErrorCode.VALIDATION, 'must be docx, xlsx or pptx', 'extension');
+      const base = (b.name.trim() || ({ docx: 'Новый документ', xlsx: 'Новая таблица', pptx: 'Новая презентация' } as Record<string, string>)[b.extension] || 'file').replace(new RegExp(`\\.${b.extension}$`, 'i'), '');
+      const id = this.storeFile(p0(c), me, { name: `${base}.${b.extension}`, mime, bytes: Buffer.from('PK mock blank office file') });
+      const meta = this.state.files.get(id)?.meta;
+      if (!meta) throw notFound();
+      sendMsg(c.res, 201, DiskItemResponseSchema, { item: d().upload(p0(c), me, b.parentId, meta) });
+    });
     this.diskRoute('GET', '/api/workspaces/:id/disk/items', (c, me) => {
       const r = d().list(p0(c), me, { parent: q(c, 'parent'), trashed: q(c, 'trashed') === '1' || q(c, 'trashed') === 'true', sort: q(c, 'sort'), cursor: q(c, 'cursor'), limit: Number(q(c, 'limit')) || 0 });
       sendMsg(c.res, 200, ListDiskItemsResponseSchema, r);
@@ -9674,6 +9806,33 @@ class MockImpl {
     return id;
   }
 }
+
+// ---------------------------------------------------------------- office (ADR-0143)
+
+const OFFICE_MIME: Record<string, string> = {
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
+
+/** The server's format map (apps/server/internal/office/formats.go), as the mock serves it. */
+const OFFICE_FORMATS = (
+  [
+    ['docx', 'word', OfficeCapability.EDIT, '', false],
+    ['xlsx', 'cell', OfficeCapability.EDIT, '', false],
+    ['pptx', 'slide', OfficeCapability.EDIT, '', false],
+    ['odt', 'word', OfficeCapability.EDIT, '', true],
+    ['ods', 'cell', OfficeCapability.EDIT, '', true],
+    ['odp', 'slide', OfficeCapability.EDIT, '', true],
+    ['rtf', 'word', OfficeCapability.EDIT, '', true],
+    ['csv', 'cell', OfficeCapability.EDIT, '', true],
+    ['txt', 'word', OfficeCapability.EDIT, '', true],
+    ['doc', 'word', OfficeCapability.CONVERT, 'docx', false],
+    ['xls', 'cell', OfficeCapability.CONVERT, 'xlsx', false],
+    ['ppt', 'slide', OfficeCapability.CONVERT, 'pptx', false],
+    ['pdf', 'pdf', OfficeCapability.VIEW, '', false],
+  ] as const
+).map(([extension, documentType, capability, convertTo, lossy]) => create(OfficeFormatSchema, { extension, documentType, capability, convertTo, lossy }));
 
 // ---------------------------------------------------------------- CLI
 

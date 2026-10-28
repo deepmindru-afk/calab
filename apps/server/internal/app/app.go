@@ -51,6 +51,7 @@ import (
 	"github.com/calaba/calaba/server/internal/moderation"
 	"github.com/calaba/calaba/server/internal/notes"
 	"github.com/calaba/calaba/server/internal/oauthprovider"
+	"github.com/calaba/calaba/server/internal/office"
 	"github.com/calaba/calaba/server/internal/perm"
 	"github.com/calaba/calaba/server/internal/plans"
 	"github.com/calaba/calaba/server/internal/push"
@@ -162,6 +163,8 @@ type App struct {
 	Rooms *rooms.Handlers
 	// Disk: the workspace Disk (ADR-0094) with the hourly trash sweeper.
 	Disk *disk.Service
+	// Office: editing in ONLYOFFICE Docs (ADR-0143) with the access sweep of open sessions.
+	Office *office.Service
 	// Wiki: the workspace Wiki (ADR-0096) with its sync socket and the hourly trash sweeper.
 	Wiki *wiki.Service
 	// Canvas: the workspace Canvas (ADR-0126) with its sync socket and the hourly trash sweeper.
@@ -195,6 +198,7 @@ func (a *App) Run(ctx context.Context) {
 	go a.Files.RunCleanup(ctx, time.Hour)
 	go a.Files.RunStagedCleanup(ctx, 10*time.Minute) // board form uploads never submitted (ADR-0064 v2)
 	go a.Disk.RunTrashSweep(ctx, disk.SweepInterval)
+	go a.Office.RunSweep(ctx, office.SweepInterval)
 	go a.Wiki.RunTrashSweep(ctx, wiki.SweepInterval)
 	go a.Canvas.RunTrashSweep(ctx, canvas.SweepInterval)
 	go a.Files.RunStorageMetrics(ctx, time.Minute)
@@ -493,6 +497,27 @@ func New(d Deps) *App {
 	diskSvc.LinkReadLimit = redisx.NewRateLimiter(d.Redis, "rl:disk-link:", 60, 60)        // public link page + thumbnail: 60 per minute per IP
 	diskSvc.LinkDownloadLimit = redisx.NewRateLimiter(d.Redis, "rl:disk-link-dl:", 30, 30) // public downloads (each Range request): 30 per minute per IP
 	diskSvc.Routes(mux, private)
+	// Office editing (ADR-0143): the routes are always registered (one route table); off = 404.
+	oc := d.Config.Office
+	officeSessions := office.ValkeySessions{C: d.Redis, TTL: oc.SessionTTL}
+	apiURL := oc.APIURL
+	if apiURL == "" {
+		apiURL = d.Config.PublicAppURL
+	}
+	officeSvc := office.New(office.Config{
+		Enabled: oc.Enabled, DocsURL: oc.DocsURL, DocsInternalURL: oc.DocsInternalURL, APIURL: apiURL,
+		Secret: []byte(oc.JWTSecret), URLKey: office.DeriveURLKey([]byte(d.Config.JWTSecret)),
+		ThemeDark: oc.ThemeDark, ThemeLight: oc.ThemeLight, FileURLTTL: oc.FileURLTTL, MaxSize: oc.MaxSizeMB << 20,
+		SessionTTL: oc.SessionTTL,
+	}, &office.DiskStore{DB: d.DB, Files: filesSvc, Disk: diskSvc, PlanActive: planSvc.CheckActive}, officeSessions)
+	officeSvc.Announce = diskSvc
+	officeSvc.ConfigLimit = redisx.NewRateLimiter(d.Redis, "rl:office-config:", 30, 30) // opens: 30 at once, 30 per minute per user
+	officeSvc.ConvertLimit = redisx.NewRateLimiter(d.Redis, "rl:office-convert:", 5, 5) // «Сохранить как»: 5 per minute per user
+	officeSvc.DocsLimit = redisx.NewRateLimiter(d.Redis, "rl:office-ds:", 120, 120)     // Document Server file + callback requests: 120 per minute per item
+	if oc.Enabled {
+		diskSvc.Editing = officeSessions // «Редактирует Имя», the delete-forever guard
+	}
+	officeSvc.Routes(mux, private)
 	wikiSvc := wiki.New(d.DB, pub, filesSvc, planSvc)
 	wikiSvc.PublicURL = d.Config.PublicAppURL
 	wikiSvc.LinkReadLimit = redisx.NewRateLimiter(d.Redis, "rl:wiki-link:", 60, 60)     // public page + state: 60 per minute per IP
@@ -664,7 +689,7 @@ func New(d Deps) *App {
 	)
 	mcpHandler.API = h
 	return &App{SSO: rp, Directory: ds, OAuth: op, Handler: h, Auth: authSvc, Gateway: hub, Files: filesSvc, Guests: guestSvc, RTC: rtcSvc, Plans: planSvc, Mail: mailSvc,
-		Recording: recSvc, Search: searchSvc, Bots: botSvc, Birthdays: bdSvc, Achievements: achSvc, Calls: callSvc, Push: pushSvc, Calendar: calSvc, CalDAV: cdSvc, Boards: boardSvc, BoardWebhooks: boardHooks, Disk: diskSvc, Wiki: wikiSvc, Canvas: canvasSvc, Rooms: roomHandlers, SIP: sipSvc, IVR: ivrHub, SIPReg: sipregHub, billing: billingRT, metrika: metrikaSvc, redis: d.Redis, identityDB: d.DB, Routes: mux.patterns,
+		Recording: recSvc, Search: searchSvc, Bots: botSvc, Birthdays: bdSvc, Achievements: achSvc, Calls: callSvc, Push: pushSvc, Calendar: calSvc, CalDAV: cdSvc, Boards: boardSvc, BoardWebhooks: boardHooks, Disk: diskSvc, Office: officeSvc, Wiki: wikiSvc, Canvas: canvasSvc, Rooms: roomHandlers, SIP: sipSvc, IVR: ivrHub, SIPReg: sipregHub, billing: billingRT, metrika: metrikaSvc, redis: d.Redis, identityDB: d.DB, Routes: mux.patterns,
 		dueTZ: boards.DueZone(d.Config.TasksDueTZ), Mailbox: mailboxSvc}
 }
 

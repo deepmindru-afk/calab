@@ -10,9 +10,17 @@ import { persist, type StateStorage } from 'zustand/middleware';
 export interface TaskTab {
   id: string;
   ws: string;
+  /** The board of a task tab; '' for a file tab. */
   board: string;
+  /** A task's key (CAL-3); a file tab's extension label (XLSX). */
   key: string;
+  /** A task's title; a file tab's name. */
   title: string;
+  /** Absent = a task tab (the first kind, stored before files existed). */
+  kind?: 'task' | 'file';
+  /** A file tab: the Disk item it edits, or (view only) the plain API file. Exactly one is set. */
+  itemId?: string;
+  fileId?: string;
   /** When it was last the open task (ms): the oldest one is dropped past {@link MAX_TABS}. */
   at: number;
 }
@@ -48,7 +56,7 @@ export function reduceActivate(s: TabsState, entry: TaskTab): TabsState {
   const have = s.tabs.findIndex((x) => x.id === entry.id);
   if (have >= 0) return { tabs: s.tabs.map((x, i) => (i === have ? { ...x, at: entry.at } : x)), cur: entry.id };
   if (s.tabs.length === 0) return s.cur === null ? s : { tabs: s.tabs, cur: null };
-  const at = s.cur ? s.tabs.findIndex((x) => x.id === s.cur) : -1;
+  const at = s.cur ? s.tabs.findIndex((x) => x.id === s.cur && x.kind !== 'file') : -1;
   if (at >= 0) return { tabs: s.tabs.map((x, i) => (i === at ? entry : x)), cur: entry.id };
   return { tabs: fit([...s.tabs, entry], entry.id), cur: entry.id };
 }
@@ -72,6 +80,17 @@ export function reduceClose(s: TabsState, id: string): { state: TabsState; next:
   return { state: { tabs, cur: s.cur === id ? null : s.cur }, next: tabs[i] ?? tabs[i - 1] ?? null };
 }
 
+/**
+ * A file was opened (ADR-0143): an existing tab for the same source is just activated; otherwise it
+ * is appended (a plain open replaces nothing), the least recently used other tab dropping past
+ * {@link MAX_TABS}. Never touches `cur` (the open task).
+ */
+export function reduceOpenFile(s: TabsState, entry: TaskTab): TabsState {
+  const have = s.tabs.findIndex((x) => x.id === entry.id);
+  if (have >= 0) return { ...s, tabs: s.tabs.map((x, i) => (i === have ? { ...x, at: entry.at } : x)) };
+  return { ...s, tabs: fit([...s.tabs, entry], entry.id) };
+}
+
 /** Refreshes the snapshot of key + title; the same object when nothing changed. */
 export function reduceSync(s: TabsState, id: string, key: string, title: string): TabsState {
   const tb = s.tabs.find((x) => x.id === id);
@@ -88,7 +107,14 @@ export function sanitizeTabs(raw: unknown): TabsState {
     const v = (x ?? {}) as Partial<TaskTab>;
     if (typeof v.id !== 'string' || !v.id || typeof v.ws !== 'string' || typeof v.board !== 'string') continue;
     if (tabs.some((y) => y.id === v.id)) continue;
-    tabs.push({ id: v.id, ws: v.ws, board: v.board, key: typeof v.key === 'string' ? v.key : '', title: typeof v.title === 'string' ? v.title : '', at: typeof v.at === 'number' ? v.at : 0 });
+    const base = { id: v.id, ws: v.ws, board: v.board, key: typeof v.key === 'string' ? v.key : '', title: typeof v.title === 'string' ? v.title : '', at: typeof v.at === 'number' ? v.at : 0 };
+    if (v.kind === 'file') {
+      // A file tab names exactly one source: a Disk item or a plain file.
+      if (typeof v.itemId === 'string' && v.itemId) tabs.push({ ...base, kind: 'file', itemId: v.itemId });
+      else if (typeof v.fileId === 'string' && v.fileId) tabs.push({ ...base, kind: 'file', fileId: v.fileId });
+      continue;
+    }
+    tabs.push(base);
   }
   const cur = typeof o.cur === 'string' && tabs.some((x) => x.id === o.cur) ? o.cur : null;
   return { tabs: fit(tabs, ''), cur };
@@ -118,13 +144,36 @@ const safeStorage: StateStorage = {
   },
 };
 
+/** A file tab's mark: unsaved / saving changes, or a save that failed while leaving the file. */
+export type FileMark = 'dirty' | 'warn';
+
 interface TabsStore extends TabsState {
+  /**
+   * File view (ADR-0143): the file tab on screen (null = none), the tab whose editor exists (it
+   * outlives the view only while it saves on the way out), the marks, and a pending «save and close».
+   * Not persisted: a reload shows no file, only its tab.
+   */
+  fileActive: string | null;
+  fileMounted: string | null;
+  fileMark: Record<string, FileMark>;
+  fileClosing: string | null;
+  showFile: (id: string) => void;
+  /** The file view is left (the editor may still be saving). */
+  leaveFile: () => void;
+  /** The editor of `id` is gone: the next one (the active tab) may mount. */
+  editorGone: (id: string) => void;
+  setFileMark: (id: string, mark: FileMark | null) => void;
+  setFileClosing: (id: string | null) => void;
+  /** Opens (or activates) a file tab and shows it. */
+  openFile: (entry: TaskTab) => void;
   /** The boards section is on screen (BoardsView mounted); not persisted. */
   shown: boolean;
   setShown: (on: boolean) => void;
   activate: (entry: TaskTab) => void;
   add: (entry: TaskTab, open?: TaskTab) => void;
   close: (id: string) => TaskTab | null;
+  /** Removes a file tab (the caller has settled unsaved changes); its editor unmounts with it. */
+  removeFile: (id: string) => void;
   sync: (id: string, key: string, title: string) => void;
 }
 
@@ -134,6 +183,37 @@ export const useTaskTabs = create<TabsStore>()(
       tabs: [],
       cur: null,
       shown: false,
+      fileActive: null,
+      fileMounted: null,
+      fileMark: {},
+      fileClosing: null,
+      showFile: (id) => set((s) => ({ fileActive: id, fileMounted: s.fileMounted ?? id })),
+      leaveFile: () => set((s) => (s.fileActive === null ? s : { fileActive: null })),
+      editorGone: (id) =>
+        set((s) => {
+          if (s.fileMounted !== id) return s;
+          const mark = { ...s.fileMark };
+          delete mark[id];
+          return { fileMounted: s.fileActive, fileMark: mark, fileClosing: s.fileClosing === id ? null : s.fileClosing };
+        }),
+      setFileMark: (id, mark) =>
+        set((s) => {
+          if ((s.fileMark[id] ?? null) === mark) return s;
+          const next = { ...s.fileMark };
+          if (mark) next[id] = mark;
+          else delete next[id];
+          return { fileMark: next };
+        }),
+      setFileClosing: (id) => set({ fileClosing: id }),
+      openFile: (entry) =>
+        set((s) => ({ ...reduceOpenFile(s, entry), fileActive: entry.id, fileMounted: s.fileMounted ?? entry.id })),
+      removeFile: (id) =>
+        set((s) => {
+          const tabs = s.tabs.filter((x) => x.id !== id);
+          const mark = { ...s.fileMark };
+          delete mark[id];
+          return { tabs, fileMark: mark, fileActive: s.fileActive === id ? null : s.fileActive, fileMounted: s.fileMounted === id ? s.fileActive === id ? null : s.fileActive : s.fileMounted, fileClosing: null };
+        }),
       setShown: (shown) => set({ shown }),
       activate: (entry) => set((s) => reduceActivate(s, entry)),
       add: (entry, open) => set((s) => reduceAdd(s, entry, open)),

@@ -60,6 +60,22 @@ describe('loadMentions (ADR-0141)', () => {
     expect(useInbox.getState().notices.map((x) => x.id)).toEqual(['05', '01']);
   });
 
+  it('pages task notices by next_before, past a page of tasks hidden now', async () => {
+    api.mentions.mockResolvedValue({ messages: [], hasMore: false });
+    // The whole first page is of tasks the caller no longer sees: no entries, a cursor.
+    api.taskNotices.mockResolvedValue({ entries: [], hasMore: true, nextBefore: '09' });
+    await loadMentions();
+    expect(useInbox.getState().noticesHasMore).toBe(true);
+    api.taskNotices.mockResolvedValue({ entries: [n('07'), n('06')], hasMore: true, nextBefore: '03' });
+    await loadMentions(true);
+    expect(api.taskNotices).toHaveBeenLastCalledWith({ limit: 30, before: '09' });
+    api.taskNotices.mockResolvedValue({ entries: [n('02')], hasMore: false, nextBefore: '' });
+    await loadMentions(true);
+    expect(api.taskNotices).toHaveBeenLastCalledWith({ limit: 30, before: '03' });
+    expect(useInbox.getState().notices.map((x) => x.id)).toEqual(['07', '06', '02']);
+    expect(useInbox.getState().noticesHasMore).toBe(false);
+  });
+
   it('one failing list does not empty the other', async () => {
     api.mentions.mockRejectedValue(new Error('down'));
     api.taskNotices.mockResolvedValue({ entries: [n('05')], hasMore: false });

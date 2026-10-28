@@ -73,8 +73,9 @@ test('mail-folders', async ({ open, win, shot }) => {
   // The toast stays clear of the list and the sidebar (anchored to the reading pane), then goes away.
   await expect(win.getByRole('region', { name: 'Уведомления' })).toContainText('Папка «Клиенты» создана');
   await checkpoint(shot, 'mail-toast');
+  // Close every toast (the «mark all read» one may still be there): they lie over the dialog's buttons.
   const closeToast = win.getByRole('button', { name: 'Закрыть уведомление' });
-  if (await closeToast.isVisible().catch(() => false)) await closeToast.click(); // it may already have gone on its own
+  for (let i = 0; i < 5 && (await closeToast.first().isVisible().catch(() => false)); i++) await closeToast.first().click().catch(() => undefined); // they may go on their own
 
   // A smart folder: two conditions, «любое условие».
   await sidebar.getByTestId('mail-sidebar-new-smart').click();
@@ -106,5 +107,22 @@ test('mail-folders', async ({ open, win, shot }) => {
   await joinVoice(win);
   await win.getByTestId('section-mail').click();
   await expect(win.getByTestId('mail-sidebar')).toBeVisible();
+  // 28.10: the island lies under the mailbox sidebar, not the list: no fade / spacer over the last rows.
+  await expect(win.getByTestId('mail-island-spacer')).toHaveCSS('height', '0px');
   await checkpoint(shot, 'mail-voice');
+
+  // Sidebar hidden: the island is under the list, which ends above it (the last row scrolls clear).
+  await win.getByTestId('mail-sidebar-hide').click();
+  await expect(win.getByTestId('mail-sidebar')).toHaveCount(0);
+  await win.getByTestId('mail-list').evaluate((el) => {
+    const scroller = el.matches('[data-virtuoso-scroller]') ? el : (el.querySelector('[data-virtuoso-scroller]') ?? el);
+    scroller.scrollTop = scroller.scrollHeight;
+  });
+  const island = await win.getByTestId('bottom-island').boundingBox();
+  await expect(async () => {
+    const last = await win.getByTestId('mail-row').last().boundingBox();
+    expect((last?.y ?? 0) + (last?.height ?? 0)).toBeLessThanOrEqual(island?.y ?? 0);
+  }).toPass({ timeout: 5_000 });
+  await checkpoint(shot, 'mail-voice-list');
+  await win.getByTestId('mail-sidebar-show').click();
 });

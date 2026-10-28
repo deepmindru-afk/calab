@@ -28,18 +28,22 @@ export function resultFromStream(lines: string): { result: string; isError: bool
   return last;
 }
 
-export function runLead(opts: { bin: string; argv: string[]; cwd: string; env: NodeJS.ProcessEnv; logFile: string; timeoutMs: number }): Promise<RunResult> {
+export function runLead(opts: { bin: string; argv: string[]; cwd: string; env: NodeJS.ProcessEnv; logFile: string; timeoutMs: number; stdin?: string }): Promise<RunResult> {
   return new Promise((resolve) => {
-    const log = createWriteStream(opts.logFile, { flags: 'a' });
-    const child = spawn(opts.bin, opts.argv, { cwd: opts.cwd, env: opts.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const log = createWriteStream(opts.logFile, { flags: 'a', mode: 0o600 });
+    const child = spawn(opts.bin, opts.argv, { cwd: opts.cwd, env: opts.env, stdio: [opts.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
+    if (opts.stdin !== undefined && child.stdin) {
+      child.stdin.on('error', () => undefined);
+      child.stdin.end(opts.stdin);
+    }
     // Keep only the tail in memory: the result line is last.
     let tail = '';
     let timedOut = false;
-    child.stdout.on('data', (d: Buffer) => {
+    child.stdout?.on('data', (d: Buffer) => {
       log.write(d);
       tail = (tail + d.toString('utf8')).slice(-1_000_000);
     });
-    child.stderr.on('data', (d: Buffer) => log.write(d));
+    child.stderr?.on('data', (d: Buffer) => log.write(d));
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill('SIGTERM');

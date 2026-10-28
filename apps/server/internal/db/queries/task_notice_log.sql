@@ -1,7 +1,18 @@
--- name: InsertTaskNotice :exec
--- One notified user of a task change (ADR-0141).
+-- name: InsertTaskNotices :exec
+-- The notified users of one task change (ADR-0141), one statement for all of them: the arrays
+-- are zipped (equal lengths); an absent optional id is uuid.Nil.
 INSERT INTO task_notice_log (id, user_id, task_id, kind, actor_id, message_id, text, rule_id, re_requested, due_on, days_left)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+SELECT n.id, n.user_id, sqlc.arg('task_id')::uuid, n.kind,
+       NULLIF(n.actor_id, '00000000-0000-0000-0000-000000000000'::uuid),
+       NULLIF(n.message_id, '00000000-0000-0000-0000-000000000000'::uuid),
+       n.text,
+       NULLIF(n.rule_id, '00000000-0000-0000-0000-000000000000'::uuid),
+       n.re_requested, n.due_on, n.days_left
+FROM (SELECT unnest(sqlc.arg('ids')::uuid[]) AS id, unnest(sqlc.arg('user_ids')::uuid[]) AS user_id,
+             unnest(sqlc.arg('kinds')::smallint[]) AS kind, unnest(sqlc.arg('actor_ids')::uuid[]) AS actor_id,
+             unnest(sqlc.arg('message_ids')::uuid[]) AS message_id, unnest(sqlc.arg('texts')::text[]) AS text,
+             unnest(sqlc.arg('rule_ids')::uuid[]) AS rule_id, unnest(sqlc.arg('re_requested')::boolean[]) AS re_requested,
+             unnest(sqlc.arg('due_ons')::text[]) AS due_on, unnest(sqlc.arg('days_left')::integer[]) AS days_left) AS n
 ON CONFLICT DO NOTHING;
 
 -- name: ListTaskNoticeLog :many

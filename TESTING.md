@@ -2342,3 +2342,16 @@ macOS desktop build, two workspaces, member B in both; A mentions and assigns B.
 2. B minimises the window (yellow button). A assigns B a task → «KEY-N · Название», body «A назначил(а) вас»; click → the window restores, the task opens.
 3. Same with the window open but another app in front; and with notifications grouped in the Notification Center (click an older one).
 4. Title bar «Упоминания»: the mention and the task event are listed (dot = unread); after reading them they stay, without the dot; a reload keeps both.
+
+## Office files in ONLYOFFICE (ADR-0143, #98)
+
+A Document Server per docs/ops/office-onlyoffice-deploy.md, `OFFICE_ENABLED=true`; desktop app, members A («Правка») and B («Просмотр» on folder «Отчёты»), a call going on.
+
+1. A: Disk → «+» shows Папка, Документ, Таблица, Презентация, Загрузить файлы → «Таблица»: «Новая таблица.xlsx» opens at once as a tab in the title bar; the island (mute, the self panel) stays, the editor's status bar is above it.
+2. Type in a cell, Ctrl+S → «Все изменения сохранены»; the Disk row shows the new size, «История» an edit entry; download it and open in Excel / LibreOffice and with openpyxl.
+3. «Создать → Таблица» again → «Новая таблица (2).xlsx». B opens the first one: view only, the row shows «Редактирует A» while A has it open.
+4. B: «+» in «Отчёты» is absent (no write); in the root it creates a «Документ» — Russian text is not underlined.
+5. A sends an xlsx in chat; B opens it: view only, «Сохранить в Диск» → a new Disk item opens editable. A legacy .doc: «Сохранить как .docx» makes a copy next to it.
+6. Close a tab with unsaved changes → the three-button dialog. Hide the window for 5 minutes, show it → the editor opens again.
+7. Phone: «Создать → Документ» → the file is in the list with the note «Править его можно на компьютере»; opening it views only.
+8. `OFFICE_ENABLED=false` + rollout: after a reconnect the office items and the editor are gone, xlsx opens its card as before.

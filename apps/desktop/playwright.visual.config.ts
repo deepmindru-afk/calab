@@ -54,6 +54,9 @@ export default defineConfig<VisualOptions>({
     // «Диск» (ADR-0094 §8, a new interface): dark 960×600; «Доступ» also light (disk.visual.spec.ts).
     { name: 'disk-dark-960', testMatch: /disk\.visual\.spec\.ts/, use: { theme: 'dark', size: { width: 960, height: 600 } } },
     { name: 'disk-light-960', testMatch: /disk\.visual\.spec\.ts/, use: { theme: 'light', size: { width: 960, height: 600 } } },
+    // Office editor frame (ADR-0143, a new interface): dark 960×600; the open editors also light (office.visual.spec.ts).
+    { name: 'office-dark-960', testMatch: /office\.visual\.spec\.ts/, use: { theme: 'dark', size: { width: 960, height: 600 } } },
+    { name: 'office-light-960', testMatch: /office\.visual\.spec\.ts/, use: { theme: 'light', size: { width: 960, height: 600 } } },
     // «Вики» (ADR-0096 §9, a new interface): dark 960×600; the page also light (wiki.visual.spec.ts).
     { name: 'wiki-dark-960', testMatch: /wiki\.visual\.spec\.ts/, use: { theme: 'dark', size: { width: 960, height: 600 } } },
     { name: 'wiki-light-960', testMatch: /wiki\.visual\.spec\.ts/, use: { theme: 'light', size: { width: 960, height: 600 } } },

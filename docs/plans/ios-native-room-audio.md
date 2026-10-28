@@ -1,6 +1,6 @@
 # iOS native room audio — implementation plan
 
-ADR: [0143](../adr/0143-ios-native-room-audio.md). Task: DEV-4955, GitHub #255. Status: accepted
+ADR: [0147](../adr/0147-ios-native-room-audio.md). Task: DEV-4955, GitHub #255. Status: accepted
 28.10. Order: stage 1 (background and lock) first, stage 2 (the rest) after it.
 
 Goal: on an iPhone shell built with `CALAB_IOS_NATIVE_ROOM_AUDIO=1`, workspace voice rooms use native
@@ -24,7 +24,7 @@ shared web keeps UI, REST, permissions, seat state and video. Everything else ke
 
 ## Alignment with parallel work
 
-- ADR-0144 seat grace (`fix/dev-4955-voice-seat-grace`, VOICE_LOST_GRACE 60 s, `connection_lost`):
+- ADR-0146 seat grace (`fix/dev-4955-voice-seat-grace`, VOICE_LOST_GRACE 60 s, `connection_lost`):
   R5 starts after it merges; companion rules sit next to `seatAfterDrop`/`explicitRelease` and never
   feed them. R3's reconnect schedule is tested to end inside the grace: a LiveKit reconnect after
   the grace would recreate the seat through `participant_joined`.
@@ -40,7 +40,7 @@ shared web keeps UI, REST, permissions, seat state and video. Everything else ke
 
 | # | Goal (one PR) | Layers | Depends | Days | iPhone |
 |---|---|---|---|---|---|
-| R0 | ADR-0143 + this plan | docs | — | 0.5 | — |
+| R0 | ADR-0147 + this plan | docs | — | 0.5 | — |
 | R1 | Session policy, engine owner and a debug probe | Swift | R0 | 2 | gates G1–G5 |
 | R2 | `roomAudio` bridge contract and capability | TS shared, RN, Swift parsers | R0 | 1.5 | — |
 | R3 | Native room driver behind the build flag | Swift, Expo plugin | R1, R2 | 4 | G6, G8, G14 |
@@ -54,7 +54,7 @@ why), so it stays with internal testers.
 
 | # | Goal (one PR) | Layers | Depends | Days | iPhone |
 |---|---|---|---|---|---|
-| R5 | Server companion identity and endpoint | proto, Go | R0, ADR-0144 | 3 | — |
+| R5 | Server companion identity and endpoint | proto, Go | R0, ADR-0146 | 3 | — |
 | R6 | Web companion connection for video and data | web | R4, R5 | 2.5 | G10 |
 | R7 | Live Activity updates and lock-screen mute | Swift, widget | R3 | 2 | G12, G13 |
 | R8 | CallKit coexistence through the engine owner | Swift | R1, R3 | 1.5 | G11, G15 |
@@ -140,7 +140,7 @@ owner's iPhone and a desktop peer.
 ### R7. Live Activity and lock-screen mute
 
 - Files: `ios/CalabSessionActivityModule.swift`, `ios/CalabVoiceAttributes.swift`, widget extension
-  intent under `widgets/`, `plugins/withSessionActivity.js`; ADR-0069 status line points to 0143.
+  intent under `widgets/`, `plugins/withSessionActivity.js`; ADR-0069 status line points to 0147.
 - Tests: Swift merge rule (native phase/mute vs newer web snapshot), plugin test for the intent.
 - iPhone: G12, G13.
 
@@ -156,7 +156,7 @@ owner's iPhone and a desktop peer.
 
 - `docs/mobile/room-audio-testing.md` (scenario and results), `docs/02-media.md` (native exception
   covers rooms; Safari limitation), `docs/mobile/shared-web-status.md`, `TESTING.md` (≤15 lines),
-  ADR-0143 status line records the device results; a finding that contradicts it goes to a new ADR.
+  ADR-0147 status line records the device results; a finding that contradicts it goes to a new ADR.
 
 ## Critical path
 

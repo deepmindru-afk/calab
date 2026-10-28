@@ -833,6 +833,14 @@ type DiskActivity struct {
 	Private     bool
 }
 
+type DiskFileVersion struct {
+	ID        uuid.UUID
+	ItemID    uuid.UUID
+	FileID    uuid.UUID
+	ActorID   *uuid.UUID
+	CreatedAt time.Time
+}
+
 type DiskItem struct {
 	ID          uuid.UUID
 	WorkspaceID uuid.UUID

@@ -6,6 +6,7 @@
     "Author": "root",
     "Push": false,
     "Branch": "",
+    "DefaultBranch": "",
     "BranchCreated": false,
     "Commits": null,
     "PR": {
@@ -38,7 +39,7 @@
       "URL": "https://gitlab.example.com/gitlabhq/gitlab-test/-/merge_requests/7",
       "State": "merged",
       "Author": "root",
-      "Event": "PR_MERGED"
+      "Event": ""
     }
   ]
 }

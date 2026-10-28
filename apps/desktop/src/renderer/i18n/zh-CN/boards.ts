@@ -399,6 +399,7 @@ export const zhBoards: DictShape<typeof ruBoards> = {
   'boards.noteOf': '{name} 负责的内容',
   'boards.removeAssignee': '移除 {name}',
   'boards.addLabel': '标签',
+  'boards.labelsMore': '还有 +{n} 个标签',
   'boards.imageGone': '图片已从附件中移除',
   'boards.attach': '添加附件',
   'boards.removeAttachment': '移除 {name}',

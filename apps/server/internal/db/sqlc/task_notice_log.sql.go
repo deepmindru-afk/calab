@@ -12,39 +12,50 @@ import (
 	"github.com/google/uuid"
 )
 
-const insertTaskNotice = `-- name: InsertTaskNotice :exec
+const insertTaskNotices = `-- name: InsertTaskNotices :exec
 INSERT INTO task_notice_log (id, user_id, task_id, kind, actor_id, message_id, text, rule_id, re_requested, due_on, days_left)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+SELECT n.id, n.user_id, $1::uuid, n.kind,
+       NULLIF(n.actor_id, '00000000-0000-0000-0000-000000000000'::uuid),
+       NULLIF(n.message_id, '00000000-0000-0000-0000-000000000000'::uuid),
+       n.text,
+       NULLIF(n.rule_id, '00000000-0000-0000-0000-000000000000'::uuid),
+       n.re_requested, n.due_on, n.days_left
+FROM (SELECT unnest($2::uuid[]) AS id, unnest($3::uuid[]) AS user_id,
+             unnest($4::smallint[]) AS kind, unnest($5::uuid[]) AS actor_id,
+             unnest($6::uuid[]) AS message_id, unnest($7::text[]) AS text,
+             unnest($8::uuid[]) AS rule_id, unnest($9::boolean[]) AS re_requested,
+             unnest($10::text[]) AS due_on, unnest($11::integer[]) AS days_left) AS n
 ON CONFLICT DO NOTHING
 `
 
-type InsertTaskNoticeParams struct {
-	ID          uuid.UUID
-	UserID      uuid.UUID
+type InsertTaskNoticesParams struct {
 	TaskID      uuid.UUID
-	Kind        int16
-	ActorID     *uuid.UUID
-	MessageID   *uuid.UUID
-	Text        string
-	RuleID      *uuid.UUID
-	ReRequested bool
-	DueOn       string
-	DaysLeft    int32
+	Ids         []uuid.UUID
+	UserIds     []uuid.UUID
+	Kinds       []int16
+	ActorIds    []uuid.UUID
+	MessageIds  []uuid.UUID
+	Texts       []string
+	RuleIds     []uuid.UUID
+	ReRequested []bool
+	DueOns      []string
+	DaysLeft    []int32
 }
 
-// One notified user of a task change (ADR-0141).
-func (q *Queries) InsertTaskNotice(ctx context.Context, arg InsertTaskNoticeParams) error {
-	_, err := q.db.Exec(ctx, insertTaskNotice,
-		arg.ID,
-		arg.UserID,
+// The notified users of one task change (ADR-0141), one statement for all of them: the arrays
+// are zipped (equal lengths); an absent optional id is uuid.Nil.
+func (q *Queries) InsertTaskNotices(ctx context.Context, arg InsertTaskNoticesParams) error {
+	_, err := q.db.Exec(ctx, insertTaskNotices,
 		arg.TaskID,
-		arg.Kind,
-		arg.ActorID,
-		arg.MessageID,
-		arg.Text,
-		arg.RuleID,
+		arg.Ids,
+		arg.UserIds,
+		arg.Kinds,
+		arg.ActorIds,
+		arg.MessageIds,
+		arg.Texts,
+		arg.RuleIds,
 		arg.ReRequested,
-		arg.DueOn,
+		arg.DueOns,
 		arg.DaysLeft,
 	)
 	return err

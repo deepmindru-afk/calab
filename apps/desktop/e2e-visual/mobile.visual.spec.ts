@@ -5,7 +5,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import { AiState, FormerMemberReason, Plan, RecordingStatus, WorkspaceRole } from '@calaba/protocol';
 import { ts } from '../e2e-support/fixtures';
 import { CANVAS_PUBLIC_CODE, CODE_FIXTURE, IDS, MOCK_GPTUNNEL_WEB, WIKI_PUBLIC_CODE, startMockServer, type MockServer } from '../e2e-support/mock-server';
-import { expectAccessible, expectAssigneeStacks, layoutProblems, NOW, PASSWORD, seedAssigneeCounts, seedDays, settle } from './harness';
+import { expectAccessible, expectAssigneeStacks, layoutProblems, NOW, PASSWORD, seedAssigneeCounts, seedDays, seedLabelOverflow, settle } from './harness';
 import { seedDay } from './calendarWeb';
 
 /**
@@ -465,6 +465,15 @@ test('m-chat-image', async ({ page }) => {
     expect(r.height).toBeLessThanOrEqual(vh * 0.6 + 1);
   }
   await checkpoint(page, 'm-chat-image', { main: true });
+  // Owner 28.10: a PNG stored with a wrong type and no thumbnail still shows as a picture.
+  mock.injectMessage({ roomId: IDS.rooms.general, authorId: IDS.users.vera, content: '', attachments: [IDS.files.untypedPng] });
+  const untyped = page.getByRole('button', { name: 'Открыть изображение «image.png»' });
+  await expect.poll(() => untyped.locator('img').evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth === 960)).toBe(true);
+  await feedToBottom(page);
+  await expect(page.locator('[data-virtuoso-scroller][data-scrolling]')).toHaveCount(0);
+  await page.mouse.move(0, 0);
+  await expectFeedFits(page);
+  await checkpoint(page, 'm-chat-image-untyped', { main: true });
 });
 
 // CBF-66: a Disk folder link in a chat is its own card — name, who shared, what is inside, «Открыть».
@@ -1183,6 +1192,35 @@ test('m-boards-kanban', async ({ page }) => {
   await expect(page.getByTestId('task-context-menu')).toBeVisible();
   await expectMenuCard(page, 'm-task-card-menu');
   await expect(page.getByTestId('task-panel')).toHaveCount(0);
+});
+
+// Labels past the card width collapse into «+N» (docs/08 «Лейблы»); a tap opens the hidden ones, the task panel does the same.
+test('m-boards-labels', async ({ page }) => {
+  mock.setClock(NOW.getTime());
+  seedLabelOverflow(mock);
+  await signedIn(page);
+  await tab(page, 'boards');
+  await page.getByTestId('phone-boards').getByTestId('board-row').filter({ hasText: 'Разработка' }).getByRole('button').first().tap();
+  await page.getByTestId('board-more').tap();
+  await page.getByTestId('view-kanban').tap();
+  const kanban = page.getByTestId('kanban');
+  const card = kanban.getByTestId('task-card').filter({ hasText: 'CAL-4' });
+  await card.scrollIntoViewIfNeeded();
+  await expect(card.getByTestId('labels-more')).toBeVisible();
+  await checkpoint(page, 'm-boards-labels');
+  // The card is one touch target (.tap-inert): its «+N» does not catch the tap, the task panel's does.
+  await card.getByTestId('card-title').tap();
+  const panel = page.getByTestId('task-panel');
+  await expect(panel.getByTestId('prop-labels')).toBeVisible();
+  await panel.getByTestId('prop-labels').scrollIntoViewIfNeeded();
+  await expect(panel.getByTestId('labels-more')).toBeVisible();
+  await checkpoint(page, 'm-boards-labels-task');
+  await panel.getByTestId('labels-more').tap();
+  await expect(page.getByTestId('labels-more-list')).toBeVisible();
+  await expect(page.getByTestId('labels-more-list').getByTestId('label-pill')).toHaveCount(await page.getByTestId('labels-more-list').getByTestId('label-pill').count());
+  await checkpoint(page, 'm-boards-labels-more', { snapshot: false });
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('labels-more-list')).toHaveCount(0);
 });
 
 // The status colour picker on a phone (ADR-0093): the shared menu runtime centres it as a card.
@@ -2367,6 +2405,34 @@ test('m-chat-inline-buttons', async ({ page }) => {
   await feedToBottom(page);
   await expect(page.getByTestId('inline-keyboard')).toBeVisible();
   await checkpoint(page, 'm-chat-inline-buttons', { main: true });
+});
+
+// ADR-0143: an office file on the phone — a full-screen view with a back arrow, view only, no tab
+// strip; «Создать» makes a blank file that stays in the Disk with a note (editing is on a computer).
+// The editor is on in the mock per test: `pnpm -F @calaba/desktop e2e:visual:mobile -g m-office`.
+test('m-office-view', async ({ page }) => {
+  mock.setOffice(true);
+  await signedIn(page, { diskView: 'list' });
+  await tab(page, 'disk');
+  const root = page.getByTestId('phone-disk');
+  await root.getByTestId('disk-row').filter({ hasText: 'Бюджет 2026.xlsx' }).getByTestId('disk-row-open').tap();
+  const view = page.getByTestId('office-view');
+  await expect(view).toHaveAttribute('data-mode', 'view');
+  await expect(view).toHaveAttribute('data-state', 'saved');
+  await expect(page.getByTestId('office-view-badge')).toBeVisible();
+  await expect(page.getByTestId('task-tabs')).toHaveCount(0);
+  await checkpoint(page, 'm-office-view');
+  await page.getByTestId('office-back').tap();
+  await expect(view).toHaveCount(0);
+
+  await page.getByTestId('disk-create').tap();
+  await expect(page.getByTestId('disk-new-pptx')).toBeVisible();
+  await checkpoint(page, 'm-office-create-menu');
+  await page.getByTestId('disk-new-xlsx').tap();
+  await expect(page.getByText('Править его можно на компьютере')).toBeVisible();
+  await expect(root.getByTestId('disk-row').filter({ hasText: 'Новая таблица.xlsx' })).toBeVisible();
+  await expect(view).toHaveCount(0);
+  await checkpoint(page, 'm-office-created');
 });
 
 // ADR-0094 §8: «Диск» on the phone — the tab root (the workspace root as 56 px rows), a folder and

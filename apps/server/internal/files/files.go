@@ -220,6 +220,9 @@ func DetectMime(head []byte, declared string) string {
 	if sniffed != "application/octet-stream" && sniffed != "text/plain" {
 		return sniffed
 	}
+	if sniffed == "application/octet-stream" && IsAVIF(head) { // net/http does not sniff AVIF
+		return "image/avif"
+	}
 	d, _, err := mime.ParseMediaType(declared)
 	if err != nil || d == "" {
 		return sniffed
@@ -397,11 +400,13 @@ func (s *Service) makeThumbnail(ctx context.Context, st *stored) {
 	}
 	rc, err := open()
 	if err != nil {
+		slog.InfoContext(ctx, "no thumbnail", "file_id", st.id, "err", err)
 		return
 	}
 	cfg, err := ImageConfig(rc)
 	_ = rc.Close()
 	if err != nil {
+		slog.InfoContext(ctx, "no thumbnail", "file_id", st.id, "err", err)
 		return
 	}
 	w, h := int32(min(cfg.Width, 1<<30)), int32(min(cfg.Height, 1<<30)) //nolint:gosec // clamped
@@ -682,7 +687,8 @@ func (s *Service) UploadAvatar(w http.ResponseWriter, r *http.Request, uid uuid.
 //   - a sticker (ADR-0030): members of its workspace, or VIEW_ROOM in a room where a live
 //     message shows it;
 //   - a file attached to a live message: VIEW_ROOM in that room;
-//   - a file of the Disk (ADR-0094, in the trash too): DISK_VIEW on its item (perm.ComputeDiskItem).
+//   - a file of the Disk (ADR-0094, in the trash too) or a previous version of one (ADR-0143):
+//     DISK_VIEW on its item (perm.ComputeDiskItem).
 func (s *Service) CanRead(r *http.Request, f sqlc.File) (bool, error) {
 	ctx := r.Context()
 	id := auth.MustFromContext(ctx)
@@ -750,6 +756,23 @@ func (s *Service) CanRead(r *http.Request, f sqlc.File) (bool, error) {
 	} else {
 		// A file of the Disk (ADR-0094 §7), in the trash too: DISK_VIEW on its item.
 		if item, err := s.db.Q.GetDiskItemByFile(ctx, &f.ID); err == nil {
+			m, err := res.Member(ctx, item.WorkspaceID, uid)
+			if err == nil {
+				ch, err := diskacl.Load(ctx, s.db.Q, []uuid.UUID{item.ID})
+				if err != nil {
+					return false, err
+				}
+				if ch.Bits(m, &item.ID).Has(perm.DiskView) {
+					return true, nil
+				}
+			} else if err := candidate(err); err != nil {
+				return false, err
+			}
+		} else if !db.IsNotFound(err) {
+			return false, err
+		}
+		// A previous version of a Disk file (ADR-0143): DISK_VIEW on its item, like the current one.
+		if item, err := s.db.Q.GetDiskItemByVersionFile(ctx, f.ID); err == nil {
 			m, err := res.Member(ctx, item.WorkspaceID, uid)
 			if err == nil {
 				ch, err := diskacl.Load(ctx, s.db.Q, []uuid.UUID{item.ID})
@@ -991,7 +1014,11 @@ func (s *Service) serveThumb(w http.ResponseWriter, r *http.Request, f sqlc.File
 		return httpx.BadRequest("w must be 512 or 1024")
 	}
 	if f.ThumbnailKey == nil {
-		return httpx.NotFound("thumbnail")
+		// An image whose upload made no thumbnail gets it now (backfill.go).
+		var ok bool
+		if f, ok = s.backfillThumb(r.Context(), f); !ok {
+			return httpx.NotFound("thumbnail")
+		}
 	}
 	name := strings.TrimSuffix(f.Name, path.Ext(f.Name)) + ".webp"
 	key, etag := *f.ThumbnailKey, f.Sha256+"-t"

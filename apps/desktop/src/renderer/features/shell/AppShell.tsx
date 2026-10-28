@@ -21,6 +21,8 @@ import { UpdateBar } from './UpdateBar';
 import { defaultRoom, roomsOfWorkspace, useRooms } from '../../stores/rooms';
 import { usePrefs } from '../../stores/prefs';
 import { useSession } from '../../stores/session';
+import { useTaskTabs } from '../../stores/taskTabs';
+import { installFileViewLeave } from '../disk/office/fileTabs';
 import { useMediaQuery } from '../../lib/useMediaQuery';
 import { useMobile } from '../../lib/mobile';
 import { MobileShell } from './MobileShell';
@@ -30,7 +32,7 @@ import { ChatPane } from '../chat/ChatPane';
 import { DmPick, useActiveDm } from '../dm/DmHome';
 import { DmSidebar } from '../dm/DmSidebar';
 import { HOME } from '../../stores/dms';
-import { OnboardingLazy, preloadWindows } from './lazyWindows';
+import { OfficeScreenLazy, OnboardingLazy, preloadWindows } from './lazyWindows';
 import { whenIdle } from '../../lib/lazyPreload';
 import { MembersPanel } from './MembersPanel';
 import { DayView } from '../calendar/DayView';
@@ -128,8 +130,12 @@ function ShellLayout(): ReactNode {
   const showReconnect = useSession((s) => s.ready && s.reconnectBanner);
 
   const mobile = useMobile();
+  // An opened office file (ADR-0143): its editor exists (fileMounted) and/or its view is on screen.
+  const fileMounted = useTaskTabs((s) => s.fileMounted !== null);
+  const fileShown = useTaskTabs((s) => s.fileActive !== null) && !home && !!wsId && !guestWs && hasWs;
 
   useEffect(() => installHotkeys(), []);
+  useEffect(() => installFileViewLeave(), []);
   useEffect(() => installAfk(), []);
   useEffect(() => installPresenceTimer(), []);
   useEffect(() => installEmail(), []);
@@ -154,6 +160,8 @@ function ShellLayout(): ReactNode {
         />
         {ready ? <CreateTaskDialog /> : null}
         {ready ? <SmartTaskDialog /> : null}
+        {/* The phone: a full-screen view of the file, view only (ADR-0143 §10). */}
+        {fileMounted ? <OfficeScreenLazy.Component /> : null}
       </>
     );
   }
@@ -175,7 +183,9 @@ function ShellLayout(): ReactNode {
           rail and the column. */}
       <div className="mat-rail relative flex min-h-0 flex-1">
         <SectionRail />
-        {mailOn ? (
+        {/* An opened office file (ADR-0143): the editor in the content slot, the section it came from untouched under it. */}
+        {fileMounted ? <OfficeScreenLazy.Component /> : null}
+        {fileShown ? null : mailOn ? (
           <MailScreenLazy.Component />
         ) : !ready ? (
           <div className="mat-content grid flex-1 place-items-center mobile:px-6">
@@ -268,8 +278,8 @@ function ShellLayout(): ReactNode {
             <Welcome />
           </div>
         )}
-        {/* One island on every screen with the rail (owner 23.10); not over a web app's native view. */}
-        {ready && !(canvas && canvasFolded && !mailOn && !wiki) && (mailOn || home || (hasWs && wsId && !appId)) ? <BottomIsland column={mailOn ? 'mail' : wiki ? 'wiki' : canvas ? 'canvas' : 'sidebar'} /> : null}
+        {/* One island on every screen with the rail (owner 23.10), an opened office file too (its view keeps a strip of island height under the editor, ADR-0143); not over a web app's native view. */}
+        {ready && (fileShown || !(canvas && canvasFolded && !mailOn && !wiki)) && (mailOn || home || (hasWs && wsId && !appId)) ? <BottomIsland column={fileShown ? 'sidebar' : mailOn ? 'mail' : wiki ? 'wiki' : canvas ? 'canvas' : 'sidebar'} /> : null}
         {ready ? <CreateTaskDialog /> : null}
         {ready ? <SmartTaskDialog /> : null}
       </div>

@@ -23,6 +23,7 @@ import {
   recoverIdentity,
   beginSso,
   cancelSso,
+  currentServerUrl,
   invalidateSsoServer,
   forceRefresh,
   getAccessToken,
@@ -62,6 +63,7 @@ import { parseAppId, parseBounds } from './webAppPolicy';
 import { openLink } from './ownLink';
 import { getMainWindow, isOwnPage, isShown, showMainWindow } from './windows';
 import { mailRequest } from './mail';
+import { setOfficeFrame } from './officeFrame';
 
 const VISUAL_TEST = process.env['CALABA_VISUAL_TEST'] === '1';
 const VISUAL_VIBRANCY = process.env['CALABA_VISUAL_VIBRANCY'] === '1';
@@ -158,6 +160,19 @@ function mediaAccess(kind: 'microphone' | 'screen' | 'camera'): string {
 }
 
 type Handler = (e: IpcMainInvokeEvent, arg: unknown) => unknown;
+
+/** The Document Server URL of the server this app is logged in to (GET /api/office/capabilities); '' when the editor is off. */
+async function officeDocsUrl(): Promise<string> {
+  const token = await getAccessToken();
+  if (!token) return '';
+  const res = await apiSession().fetch(`${currentServerUrl()}/api/office/capabilities`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) return '';
+  const body = (await res.json()) as { enabled?: unknown; docsUrl?: unknown };
+  return body.enabled === true && typeof body.docsUrl === 'string' ? body.docsUrl : '';
+}
 
 function handle(channel: string, fn: Handler): void {
   ipcMain.handle(channel, (e, arg: unknown) => {
@@ -470,6 +485,8 @@ export function registerIpc(): void {
     hideTip();
   });
   // ---- mail (ADR-0088 §7): validated and relayed to the engine utilityProcess ----
+  // ---- office editor (ADR-0143 §11): the frame's origin comes from the server, not the renderer ----
+  handle(IPC.officeFrame, (e, a) => setOfficeFrame(e.sender, a === true, officeDocsUrl));
   handle(IPC.mailRequest, (_e, a) => mailRequest(a));
   handle(IPC.systemOpenPrivacySettings, (_e, pane) => {
     if (process.platform === 'win32') {

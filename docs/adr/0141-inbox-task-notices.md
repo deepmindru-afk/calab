@@ -19,7 +19,7 @@
 ## Решение
 1. **История уведомлений о задачах** — `task_notice_log` (миграция 00130): строка на каждого получателя
    в `boards.sendNotices` (единая точка всех видов), id — uuidv7, он же `TaskNotice.id` в живом
-   `TASK_UPDATE`. `GET /api/me/task-notices?before&limit` → `ListTaskNoticesResponse{entries, has_more}`:
+   `TASK_UPDATE`. `GET /api/me/task-notices?before&limit` → `ListTaskNoticesResponse{entries, has_more, next_before}`:
    от новых к старым, только задачи, которые вызывающий видит сейчас (`perm.CheckAccess` пространства +
    права на задачу), ключ и заголовок — текущие. Хранение 90 дней (чистит метёлка сроков). Настройки и
    отписки (ADR-0089) не меняются: в историю попадает ровно то, что ушло уведомлением.

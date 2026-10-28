@@ -57,8 +57,17 @@ import { addressLabel, allLabel, folderLabel, mailErrorText, mailListTime } from
  */
 export function MailColumn(): ReactNode {
   const role = useMail((s) => (s.query ? null : boxRole(s, s.box)));
+  // The bottom island lies under the leftmost column (docs/08 «Нижний островок»): with the mailbox
+  // sidebar shown that is the sidebar, so here the island height is reset (`initial` → every
+  // `var(--island-height, …)` takes its fallback): no fade over the last rows, no bottom spacer.
+  const underIsland = useMailUi((s) => !s.sidebar);
   return (
-    <aside className="mat-sidebar mat-sidebar-window island-fade flex w-[clamp(300px,30vw,380px)] shrink-0 flex-col border-r border-line" aria-label={t('mbox.list')} data-testid="mail-column">
+    <aside
+      className={cx('mat-sidebar mat-sidebar-window island-fade flex w-[clamp(300px,30vw,380px)] shrink-0 flex-col border-r border-line', !underIsland && '[--island-height:initial]')}
+      aria-label={t('mbox.list')}
+      data-testid="mail-column"
+      data-under-island={underIsland || undefined}
+    >
       <ColumnHeader title={<BoxSwitcher />}>
         <SidebarToggle />
         <MarkAllReadButton />

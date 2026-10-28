@@ -72,16 +72,43 @@ func dueDay(now time.Time, loc *time.Location) (pgtype.Date, bool) {
 // DeliverDueNotices claims and sends the due notices of today and returns how many went out.
 func (s *Service) DeliverDueNotices(ctx context.Context, loc *time.Location) (int, error) {
 	if err := db.GuardExec(ctx, s.db, func(guarded *sqlc.Queries) error {
-		if _, err := guarded.PurgeTaskDueNotices(ctx); err != nil {
-			return err
-		}
-		// The inbox's task notice history keeps NoticeLogRetention (ADR-0141).
-		_, err := guarded.PruneTaskNoticeLog(ctx, s.Now().Add(-NoticeLogRetention))
+		_, err := guarded.PurgeTaskDueNotices(ctx)
 		return err
 	}); err != nil {
 		return 0, err
 	}
+	if err := s.PruneNoticeLog(ctx); err != nil && ctx.Err() == nil {
+		slog.WarnContext(ctx, "boards: prune task notice log", "err", err) // never holds up the due notices
+	}
 	return s.DeliverDueNoticesAt(ctx, s.Now(), loc)
+}
+
+// noticePruneBatch is the batch of PruneTaskNoticeLog; noticePruneBatches bounds one sweep of
+// one instance, each batch its own short statement, so a backlog drains over a few sweeps
+// without one long delete (ADR-0141).
+const (
+	noticePruneBatch   = 5000
+	noticePruneBatches = 20
+)
+
+// PruneNoticeLog drops the inbox's task notices older than NoticeLogRetention (ADR-0141).
+func (s *Service) PruneNoticeLog(ctx context.Context) error {
+	cutoff := s.Now().Add(-NoticeLogRetention)
+	for range noticePruneBatches {
+		var n int64
+		err := db.GuardExec(ctx, s.db, func(guarded *sqlc.Queries) error {
+			var err error
+			n, err = guarded.PruneTaskNoticeLog(ctx, cutoff)
+			return err
+		})
+		if err != nil {
+			return err
+		}
+		if n < noticePruneBatch {
+			return nil
+		}
+	}
+	return nil
 }
 
 // DeliverDueNoticesAt is DeliverDueNotices at the moment now (tests).

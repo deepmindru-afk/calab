@@ -80,19 +80,20 @@ import { descriptionToDoc, docToDescription } from './descriptionDoc';
 import { RichDescription } from './RichDescription';
 import { preloadWikiEditor, type UploadedImage, type WikiEditorApi } from '../wiki/editor';
 import type { PmNode } from '@calaba/wiki-doc/markdown';
-import { MediaImg } from '../../components/MediaImg';
+import { AttachmentImg } from '../../components/AttachmentImg';
 import { THUMB_LARGE, thumbWidthPath } from '../../lib/thumbs';
 import { openAttachment } from '../../services/files';
 import { TaskDates } from './TaskDates';
 import { Checklists } from './Checklists';
 import { MilestoneDiamond, TaskMilestones } from './TaskMilestones';
 import { TaskHistory } from './TaskHistory';
+import { LabelsOverflow } from './LabelsOverflow';
 import { AssigneeMenu, ChoiceMenu, DateMenu, EstimateMenu, LabelMenu, MemberAvatar, MilestoneMenu, PriorityMenu, StatusMenu, estimateLabel, useToday, type Choice } from './menus';
 import { linkChoices, taskChoices } from './taskChoices';
 import { doneType, editLockKey, hasBit, mayArchiveTask, mayEditTask, mayRestoreTask, CREATE_TASKS, MANAGE_BOARD } from './model';
 import { useDisabledFeatures, useEstimateScale } from './useBoardView';
 import { useBoardScoped, useTaskPerms } from './useTaskPerms';
-import { Dot, PRIORITY_LABEL, PriorityIcon, StatusIcon, formatDue, isOverdue } from './visuals';
+import { PRIORITY_LABEL, PriorityIcon, StatusIcon, formatDue, isOverdue } from './visuals';
 
 const TITLE_MAX = 200;
 const DESCRIPTION_MAX = 20000;
@@ -413,7 +414,7 @@ const DescriptionImage = memo(function DescriptionImage({ id, name, list }: { id
       className="my-1 w-fit max-w-full cursor-zoom-in rounded-[var(--radius-card)] border border-line"
       data-testid="task-description-img"
     >
-      <MediaImg path={thumbWidthPath(thumbnailPath(f.id), THUMB_LARGE)} alt={name} loading="lazy" className="block max-h-[420px] max-w-full rounded-[var(--radius-card)] object-contain" />
+      <AttachmentImg f={f} thumb={thumbWidthPath(thumbnailPath(f.id), THUMB_LARGE)} alt={name} loading="lazy" className="block max-h-[420px] max-w-full rounded-[var(--radius-card)] object-contain" />
     </div>
   );
 });
@@ -674,7 +675,8 @@ export function Properties({ task, canEdit, perms, scoped, disabled, bare = fals
   const scale = useEstimateScale(task.boardId);
   const on = (f: BoardFeature): boolean => featureOn(disabled, f);
   const done = doneType(status?.type);
-  const mine = (labels ?? []).filter((l) => task.labelIds.includes(l.id));
+  const labelIds = task.labelIds;
+  const mine = useMemo(() => (labels ?? []).filter((l) => labelIds.includes(l.id)), [labels, labelIds]);
   const menu = useBoardsUi((s) => (s.menu?.taskId === task.id ? s.menu.kind : null));
   const req = (k: string): { open?: boolean; onOpenChange?: (v: boolean) => void } => (menu === k ? { open: true, onOpenChange: (v) => !v && useBoardsUi.getState().closeMenu() } : {});
   return (
@@ -699,22 +701,25 @@ export function Properties({ task, canEdit, perms, scoped, disabled, bare = fals
       <Assignees task={task} canEdit={canEdit} cardOnly={scoped && !hasBit(perms, CREATE_TASKS)} req={req('assignee')} stacked={bare} />
       {on(BoardFeature.LABELS) ? (
         <Prop label={t('boards.f.label')}>
-          {mine.map((l) => (
-            <span key={l.id} className="inline-flex h-6 items-center gap-1.5 rounded-full border border-line px-2 text-caption" draggable onDragStart={(e) => e.dataTransfer.setData('application/x-calab-label', l.id)}>
-              <Dot color={l.color} /> {l.name}
-            </span>
-          ))}
-          <LabelMenu
-            boardId={task.boardId}
-            value={task.labelIds}
-            canCreate={hasBit(perms, CREATE_TASKS) && !scoped}
-            onToggle={(l) => void updateTask(task.id, { labelIds: task.labelIds.includes(l) ? task.labelIds.filter((x) => x !== l) : [...task.labelIds, l] })}
-            {...req('label')}
-          >
-            <button type="button" disabled={!canEdit} aria-label={t('boards.addLabel')} className={cx(valueBtn, 'text-muted')} data-testid="prop-labels">
-              <Plus className="size-3.5" aria-hidden /> {mine.length ? null : t('boards.addLabel')}
-            </button>
-          </LabelMenu>
+          <LabelsOverflow
+            labels={mine}
+            size="md"
+            dragLabels
+            className="w-full"
+            trailing={
+              <LabelMenu
+                boardId={task.boardId}
+                value={task.labelIds}
+                canCreate={hasBit(perms, CREATE_TASKS) && !scoped}
+                onToggle={(l) => void updateTask(task.id, { labelIds: task.labelIds.includes(l) ? task.labelIds.filter((x) => x !== l) : [...task.labelIds, l] })}
+                {...req('label')}
+              >
+                <button type="button" disabled={!canEdit} aria-label={t('boards.addLabel')} className={cx(valueBtn, 'text-muted')} data-testid="prop-labels">
+                  <Plus className="size-3.5" aria-hidden /> {mine.length ? null : t('boards.addLabel')}
+                </button>
+              </LabelMenu>
+            }
+          />
         </Prop>
       ) : null}
       {on(BoardFeature.START_DATE) ? (

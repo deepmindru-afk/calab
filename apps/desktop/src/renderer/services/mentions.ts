@@ -19,7 +19,7 @@ export async function loadMentions(older = false): Promise<void> {
   const inbox = useInbox.getState();
   if (inbox.loading) return;
   const before = older ? inbox.items.at(-1)?.id : undefined;
-  const noticesBefore = older ? inbox.notices.at(-1)?.id : undefined;
+  const noticesBefore = older ? inbox.noticesCursor : undefined;
   const mentions = !older || (inbox.hasMore && !!before);
   const notices = !older || (inbox.noticesHasMore && !!noticesBefore);
   if (!mentions && !notices) return;
@@ -30,7 +30,7 @@ export async function loadMentions(older = false): Promise<void> {
   ]);
   const s = useInbox.getState();
   // The notices first: addPage marks the inbox loaded, and a first page sets both «has more».
-  if (n.status === 'fulfilled' && n.value) s.addNotices(n.value.entries, n.value.hasMore, older);
+  if (n.status === 'fulfilled' && n.value) s.addNotices(n.value.entries, n.value.hasMore, older, n.value.nextBefore);
   else if (n.status === 'rejected') log.warn('load task notices failed', n.reason);
   // The list only: badges come from the server-counted read states (READY mention_count), not
   // from this history — seeding them from it badged the open room (review N7).

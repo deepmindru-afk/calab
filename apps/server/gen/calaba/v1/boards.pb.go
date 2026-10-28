@@ -8300,11 +8300,15 @@ func (x *TaskNoticeEntry) GetCreatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
-// GET /api/me/task-notices?before=<id>&limit= — newest first.
+// GET /api/me/task-notices?before=<id>&limit= — newest first. A page scans limit rows of the
+// history and lists those of tasks the caller sees now, so it may hold fewer entries (even none)
+// while has_more: the next page is before=next_before, not the last entry's id.
 type ListTaskNoticesResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Entries       []*TaskNoticeEntry     `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
-	HasMore       bool                   `protobuf:"varint,2,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Entries []*TaskNoticeEntry     `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
+	HasMore bool                   `protobuf:"varint,2,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
+	// With has_more: the cursor of the next page (the last history row this page scanned).
+	NextBefore    string `protobuf:"bytes,3,opt,name=next_before,json=nextBefore,proto3" json:"next_before,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -8351,6 +8355,13 @@ func (x *ListTaskNoticesResponse) GetHasMore() bool {
 		return x.HasMore
 	}
 	return false
+}
+
+func (x *ListTaskNoticesResponse) GetNextBefore() string {
+	if x != nil {
+		return x.NextBefore
+	}
+	return ""
 }
 
 // The task was archived (purged false) or deleted with its board.
@@ -10270,10 +10281,12 @@ const file_calaba_v1_boards_proto_rawDesc = "" +
 	"task_title\x18\x06 \x01(\tR\ttaskTitle\x12-\n" +
 	"\x06notice\x18\a \x01(\v2\x15.calaba.v1.TaskNoticeR\x06notice\x129\n" +
 	"\n" +
-	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"j\n" +
+	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\x8b\x01\n" +
 	"\x17ListTaskNoticesResponse\x124\n" +
 	"\aentries\x18\x01 \x03(\v2\x1a.calaba.v1.TaskNoticeEntryR\aentries\x12\x19\n" +
-	"\bhas_more\x18\x02 \x01(\bR\ahasMore\"{\n" +
+	"\bhas_more\x18\x02 \x01(\bR\ahasMore\x12\x1f\n" +
+	"\vnext_before\x18\x03 \x01(\tR\n" +
+	"nextBefore\"{\n" +
 	"\n" +
 	"TaskDelete\x12!\n" +
 	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\x12\x19\n" +

@@ -1350,10 +1350,14 @@ message TaskNoticeEntry {
   google.protobuf.Timestamp created_at = 8;
 }
 
-// GET /api/me/task-notices?before=<id>&limit= — newest first.
+// GET /api/me/task-notices?before=<id>&limit= — newest first. A page scans limit rows of the
+// history and lists those of tasks the caller sees now, so it may hold fewer entries (even none)
+// while has_more: the next page is before=next_before, not the last entry's id.
 message ListTaskNoticesResponse {
   repeated TaskNoticeEntry entries = 1;
   bool has_more = 2;
+  // With has_more: the cursor of the next page (the last history row this page scanned).
+  string next_before = 3;
 }
 
 enum TaskNoticeKind {

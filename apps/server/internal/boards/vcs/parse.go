@@ -59,8 +59,9 @@ func (u hubUser) handle() string {
 }
 
 type hubRepo struct {
-	FullName string `json:"full_name"`
-	HTMLURL  string `json:"html_url"`
+	FullName      string `json:"full_name"`
+	HTMLURL       string `json:"html_url"`
+	DefaultBranch string `json:"default_branch"`
 }
 
 type hubPush struct {
@@ -72,10 +73,11 @@ type hubPush struct {
 	Pusher     hubUser `json:"pusher"`
 	Sender     hubUser `json:"sender"`
 	Commits    []struct {
-		ID      string  `json:"id"`
-		Message string  `json:"message"`
-		URL     string  `json:"url"`
-		Author  hubUser `json:"author"`
+		ID       string  `json:"id"`
+		Message  string  `json:"message"`
+		URL      string  `json:"url"`
+		Author   hubUser `json:"author"`
+		Distinct *bool   `json:"distinct"` // GitHub: false = the commit was already in the repository
 	} `json:"commits"`
 }
 
@@ -89,7 +91,8 @@ func parseHubPush(provider string, body []byte) (*Event, error) {
 		return nil, nil // tags, deleted branches
 	}
 	ev := &Event{Provider: provider, Repo: clip(p.Repository.FullName, MaxRepo), RepoURL: p.Repository.HTMLURL, Push: true,
-		Branch: branch, BranchCreated: p.Created || p.Before == zeroSHA, Author: p.Pusher.handle()}
+		Branch: branch, BranchCreated: p.Created || p.Before == zeroSHA, Author: p.Pusher.handle(),
+		DefaultBranch: p.Repository.DefaultBranch}
 	if ev.Author == "" {
 		ev.Author = p.Sender.handle()
 	}
@@ -97,7 +100,8 @@ func parseHubPush(provider string, body []byte) (*Event, error) {
 		if c.ID == "" {
 			continue
 		}
-		ev.Commits = append(ev.Commits, Commit{SHA: c.ID, Message: c.Message, URL: c.URL, Author: c.Author.handle()})
+		ev.Commits = append(ev.Commits, Commit{SHA: c.ID, Message: c.Message, URL: c.URL, Author: c.Author.handle(),
+			Old: c.Distinct != nil && !*c.Distinct})
 	}
 	return ev, nil
 }
@@ -161,6 +165,7 @@ func parseHubPR(provider string, body []byte) (*Event, error) {
 type labProject struct {
 	PathWithNamespace string `json:"path_with_namespace"`
 	WebURL            string `json:"web_url"`
+	DefaultBranch     string `json:"default_branch"`
 }
 
 type labPush struct {
@@ -194,7 +199,8 @@ func parseLabPush(body []byte) (*Event, error) {
 		author = p.UserName
 	}
 	ev := &Event{Provider: GitLab, Repo: clip(p.Project.PathWithNamespace, MaxRepo), RepoURL: p.Project.WebURL, Push: true,
-		Branch: branch, BranchCreated: p.Before == zeroSHA, Author: author}
+		Branch: branch, BranchCreated: p.Before == zeroSHA, Author: author,
+		DefaultBranch: p.Project.DefaultBranch}
 	for _, c := range p.Commits {
 		if c.ID == "" {
 			continue

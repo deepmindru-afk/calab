@@ -11,6 +11,7 @@ import { HOME } from '../../stores/dms';
 import { useFreeBusy } from '../../stores/freebusy';
 import { leaveMail, useMailUi } from '../../stores/mailUi';
 import { contextWorkspaceNow, useSections } from '../../stores/sections';
+import { useTaskTabs } from '../../stores/taskTabs';
 import { useUi } from '../../stores/ui';
 import { useWebApps } from '../../stores/webApps';
 import { useWorkspaces } from '../../stores/workspaces';
@@ -25,6 +26,8 @@ export type Mode = 'voice' | 'calendar' | 'boards' | 'disk' | 'wiki' | 'canvas' 
  * workspace icon go through it.
  */
 export function showMode(mode: Mode): void {
+  // A rail click always leaves an opened office file's view (its tab stays; ADR-0143), whichever section it is.
+  useTaskTabs.getState().leaveFile();
   const ui = useUi.getState();
   const boards = useBoardsUi.getState();
   if (mode === 'disk' || mode === 'wiki' || mode === 'canvas' || mode === 'telephony') {
@@ -75,6 +78,7 @@ const isGuest = (wsId: string): boolean => useWorkspaces.getState().byId[wsId]?.
  * used). The open section too: a web app is closed and the section shows its content again.
  */
 export function openSection(section: Section): void {
+  useTaskTabs.getState().leaveFile();
   const ui = useUi.getState();
   if (section === 'mail') {
     if (useWebApps.getState().open) useWebApps.getState().setOpen(null);

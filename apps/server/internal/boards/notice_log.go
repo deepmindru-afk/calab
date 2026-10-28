@@ -20,33 +20,42 @@ import (
 // NoticeLogRetention is how long the inbox keeps a task notice (ADR-0141).
 const NoticeLogRetention = 90 * 24 * time.Hour
 
-// logNotice writes a notice the user is about to get into their notice history (ADR-0141) and
-// returns its id ("" when it could not be written: the live notice still goes out).
-func (s *Service) logNotice(ctx context.Context, taskID uuid.UUID, n notice, tn *v1.TaskNotice) string {
-	id, err := uuid.NewV7()
-	if err != nil {
-		return ""
-	}
-	opt := func(u uuid.UUID) *uuid.UUID {
-		if u == uuid.Nil {
-			return nil
+// logNotices writes the notices of one task change the users are about to get into their
+// notice history (ADR-0141), one statement and one transaction for all recipients, and sets
+// each TaskNotice.Id. A failure leaves the ids empty: the live notices still go out.
+func (s *Service) logNotices(ctx context.Context, taskID uuid.UUID, ns []notice, tns []*v1.TaskNotice) {
+	p := sqlc.InsertTaskNoticesParams{TaskID: taskID}
+	ids := make([]uuid.UUID, len(ns))
+	for i, n := range ns {
+		id, err := uuid.NewV7()
+		if err != nil {
+			return
 		}
-		return &u
+		ids[i] = id
+		tn := tns[i]
+		p.Ids = append(p.Ids, id)
+		p.UserIds = append(p.UserIds, n.user)
+		p.Kinds = append(p.Kinds, int16(tn.GetKind())) //nolint:gosec // enum, < 100
+		p.ActorIds = append(p.ActorIds, n.actor)
+		p.MessageIds = append(p.MessageIds, n.message)
+		p.Texts = append(p.Texts, tn.GetText())
+		p.RuleIds = append(p.RuleIds, n.rule)
+		p.ReRequested = append(p.ReRequested, n.reRequested)
+		p.DueOns = append(p.DueOns, n.dueOn)
+		p.DaysLeft = append(p.DaysLeft, n.daysLeft)
 	}
-	// The same commit admission as the task write that produced the notice: a request-born
-	// notice is admitted for its actor; a background notice (reminders) carries none.
-	err = db.GuardExec(ctx, s.db, func(guarded *sqlc.Queries) error {
-		return guarded.InsertTaskNotice(ctx, sqlc.InsertTaskNoticeParams{
-			ID: id, UserID: n.user, TaskID: taskID, Kind: int16(tn.GetKind()), //nolint:gosec // enum, < 100
-			ActorID: opt(n.actor), MessageID: opt(n.message), Text: tn.GetText(), RuleID: opt(n.rule),
-			ReRequested: n.reRequested, DueOn: n.dueOn, DaysLeft: n.daysLeft,
-		})
+	// The same commit admission as the task write that produced the notices: request-born
+	// notices are admitted for their actor; background notices (reminders) carry none.
+	err := db.GuardExec(ctx, s.db, func(guarded *sqlc.Queries) error {
+		return guarded.InsertTaskNotices(ctx, p)
 	})
 	if err != nil {
 		slog.WarnContext(ctx, "boards: notice log", "task", taskID, "err", err)
-		return ""
+		return
 	}
-	return id.String()
+	for i, tn := range tns {
+		tn.Id = ids[i].String()
+	}
 }
 
 // listNotices: GET /api/me/task-notices?before=&limit= — the caller's task notices (ADR-0141),
@@ -68,6 +77,9 @@ func (s *Service) listNotices(w http.ResponseWriter, r *http.Request) error {
 	out := &v1.ListTaskNoticesResponse{Entries: []*v1.TaskNoticeEntry{}, HasMore: len(rows) > int(p.Limit)}
 	if out.HasMore {
 		rows = rows[:p.Limit]
+		// The cursor is the last scanned row, not the last listed one: a page whose rows are
+		// all of tasks the caller no longer sees must still move the client past them.
+		out.NextBefore = rows[len(rows)-1].ID.String()
 	}
 	if len(rows) == 0 {
 		httpx.Write(w, http.StatusOK, out)

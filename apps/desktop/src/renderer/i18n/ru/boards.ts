@@ -406,6 +406,7 @@ export const ruBoards = {
   'boards.noteOf': 'За что отвечает {name}',
   'boards.removeAssignee': 'Убрать {name}',
   'boards.addLabel': 'Лейбл',
+  'boards.labelsMore': 'Ещё лейблов: +{n}',
   'boards.imageGone': 'Картинка удалена из вложений',
   'boards.attach': 'Прикрепить',
   'boards.removeAttachment': 'Убрать {name}',
