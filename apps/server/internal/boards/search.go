@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -235,59 +234,6 @@ func (s *Service) myTasks(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// search: GET /api/workspaces/{id}/tasks/search?q=&limit=&state= — the tasks the caller sees on
-// every board of the workspace (⌘K, «Мои задачи → Все задачи»); state: open (not in a completed /
-// cancelled status), done (in one) or all (the default).
-func (s *Service) search(w http.ResponseWriter, r *http.Request) error {
-	wsID, err := httpx.PathUUID(r, "id", "workspace")
-	if err != nil {
-		return err
-	}
-	m, err := member(r, wsID)
-	if err != nil {
-		return err
-	}
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	if n := utf8.RuneCountInString(q); n < 1 || n > maxTextQuery {
-		return httpx.Validation("q", "q must be 1..200 characters")
-	}
-	if err := take(r, s.SearchLimit); err != nil {
-		return err
-	}
-	limit := DefaultSearchSize
-	if l := r.URL.Query().Get("limit"); l != "" {
-		n, err := strconv.Atoi(l)
-		if err != nil || n < 1 || n > MaxSearchSize {
-			return httpx.BadRequest("limit must be 1..50")
-		}
-		limit = n
-	}
-	state := r.URL.Query().Get("state")
-	switch state {
-	case "", "all", "open", "done":
-	default:
-		return httpx.BadRequest("state must be open, done or all")
-	}
-	vis, err := VisibleBoards(r.Context(), s.db.Q, wsID, m)
-	if err != nil {
-		return err
-	}
-	out := &v1.SearchTasksResponse{}
-	if vis.Empty() {
-		httpx.Write(w, http.StatusOK, out)
-		return nil
-	}
-	rows, err := searchTasks(r.Context(), s.db.Pool, vis, q, state, limit)
-	if err != nil {
-		return err
-	}
-	if out.Tasks, err = tasksProto(r.Context(), s.db.Q, rows, uid(r)); err != nil {
-		return err
-	}
-	httpx.Write(w, http.StatusOK, out)
-	return nil
-}
-
 // SearchMatch is the task part of unified search (ADR-0062), shared by GET /api/search and
 // tasks/search: the condition over tasks t (JOIN boards b) — words of title and description
 // (searchq tsquery, simple config: tasks_search_idx), the title with typos or as a substring
@@ -314,32 +260,4 @@ func SearchMatch(pq searchq.Query, raw string, a *Args) (cond, keyMatch string, 
 		return "greatest(ts_rank_cd(" + SearchVector + ", to_tsquery('simple', " + ts + ")), word_similarity(" + a.Add(pq.Text) + "::text, t.title))"
 	}
 	return "(" + strings.Join(parts, " OR ") + ")", keyMatch, rank
-}
-
-// doneStatuses is the condition over tasks t of a status of a done type (completed, cancelled).
-const doneStatuses = "t.status_id IN (SELECT st.id FROM board_statuses st WHERE st.type IN ('completed', 'cancelled'))"
-
-// searchTasks finds the visible live tasks by key and words — of a done status (state done),
-// of another (open) or any (all, "") — exact key matches first, then by relevance and recency.
-// A query without a word finds nothing.
-func searchTasks(ctx context.Context, dbtx sqlc.DBTX, vis Visible, q, state string, limit int) ([]taskRow, error) {
-	pq, err := searchq.Parse(q)
-	if err != nil {
-		return nil, nil //nolint:nilerr // only punctuation: no match
-	}
-	var a Args
-	visible := vis.Cond(&a)
-	cond, key, rank := SearchMatch(pq, q, &a)
-	switch state {
-	case "open":
-		cond += " AND NOT " + doneStatuses
-	case "done":
-		cond += " AND " + doneStatuses
-	}
-	order := rank() + " DESC, t.updated_at DESC, t.id DESC"
-	if key != "false" { // a constant cannot be an ORDER BY item
-		order = key + " DESC, " + order
-	}
-	return queryTasks(ctx, dbtx, "WHERE "+visible+" AND t.archived_at IS NULL AND "+cond+
-		" ORDER BY "+order+" LIMIT "+strconv.Itoa(limit), a.Values()...)
 }

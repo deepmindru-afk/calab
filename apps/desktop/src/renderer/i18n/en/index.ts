@@ -53,6 +53,7 @@ import { enTelephonySettings } from './telephonySettings';
 import { enTelephonyContacts } from './telephonyContacts';
 import { enAi } from './ai';
 import { enSmartTask } from './smartTask';
+import { enTaskSearch } from './taskSearch';
 import { enWebApps } from './webapps';
 
 /** English UI strings (ADR-0022): same keys and placeholders as `ru`; glossary docs/i18n-glossary.md. */
@@ -77,6 +78,7 @@ export const en: Dict = {
   ...enTelephonyContacts,
   ...enAi,
   ...enSmartTask,
+  ...enTaskSearch,
   ...enWebApps,
   ...enDm,
   ...enNotes,

@@ -169,6 +169,7 @@ var botRouteGroups = []botRouteGroup{
 	{access: botAllow, why: "messages, DMs (members of shared workspaces, unless blocked), files and search by VIEW_ROOM / SEND_MESSAGES / MANAGE_MESSAGES (ADR-0033, ADR-0062)", routes: []string{
 		"GET /api/rooms/{id}/messages",
 		"GET /api/rooms/{id}/messages/{messageId}",
+		"GET /api/rooms/{id}/messages/{messageId}/readers", // the author only (ADR-0140)
 		"POST /api/rooms/{id}/messages",
 		"POST /api/rooms/{id}/messages/{mid}/forward",
 		"PATCH /api/messages/{id}",
@@ -307,6 +308,7 @@ var botRouteGroups = []botRouteGroup{
 		"GET /api/boards/{id}/rules",
 		"GET /api/rules/{id}/runs",
 		"GET /api/me/tasks",
+		"GET /api/me/task-notices",
 		"GET /api/workspaces/{id}/tasks/search",
 	}},
 	{access: botAllow, why: "board forms: MANAGE_BOARD to manage, the form's access list to submit (a closed form needs the bot in allowedUserIds)", routes: []string{
@@ -461,6 +463,12 @@ var botRouteGroups = []botRouteGroup{
 		"PATCH /api/workspaces/{id}/sip/contacts/{cid}",
 		"DELETE /api/workspaces/{id}/sip/contacts/{cid}",
 		"DELETE /api/workspaces/{id}/sip/calls/{cid}",
+	}},
+	{access: botDeny, why: "ADR-0139: saved task searches are a person's left-panel filters in the app; a bot searches with GET …/tasks/search directly", routes: []string{
+		"GET /api/workspaces/{id}/task-searches",
+		"POST /api/workspaces/{id}/task-searches",
+		"PATCH /api/workspaces/{id}/task-searches/{sid}",
+		"DELETE /api/workspaces/{id}/task-searches/{sid}",
 	}},
 	{access: botDeny, why: "ADR-0137 §3: a personal phone call puts the caller's own LiveKit client into the call's room — a bot has none; bots call a number from a voice room (POST /api/rooms/{id}/calls)", routes: []string{
 		"POST /api/workspaces/{id}/sip/calls",
@@ -905,6 +913,8 @@ var memberClosed = map[string]bool{
 	"PUT /api/disk/items/{id}/permissions":                 true,
 	"PUT /api/workspaces/{id}/disk/settings":               true,
 	"PUT /api/workspaces/{id}/wiki/settings":               true,
+	// ADR-0140: who read the member's messages is other people's reading, not the member's data.
+	"GET /api/rooms/{id}/messages/{messageId}/readers": true,
 }
 
 // onBehalfAllowedFor is onBehalfAllowed for id: a member's consent (ADR-0111) also closes

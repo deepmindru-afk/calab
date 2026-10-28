@@ -253,7 +253,7 @@ function Feed({ workspaceId, room, perms, newMarker }: { workspaceId: string; ro
   useEffect(() => {
     if (!atBottom || !lastSentId || covered) return;
     const mark = (): void => {
-      if (document.hasFocus()) markRead(roomId, lastSentId);
+      if (document.hasFocus()) markRead(roomId, lastSentId, true);
     };
     mark();
     window.addEventListener('focus', mark);

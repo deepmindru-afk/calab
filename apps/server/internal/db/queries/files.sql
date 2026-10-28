@@ -112,3 +112,11 @@ WHERE f.uploader_id = $1 AND f.workspace_id = $2
   AND NOT EXISTS (SELECT 1 FROM disk_items di WHERE di.file_id = f.id)
   AND NOT EXISTS (SELECT 1 FROM wiki_page_files wf WHERE wf.file_id = f.id)
   AND NOT EXISTS (SELECT 1 FROM wiki_pages wc WHERE wc.cover_file_id = f.id);
+
+-- name: SetFileImage :one
+-- The lazy repair of an image file whose upload made no thumbnail (files.backfillThumb): the
+-- sniffed type, the size from the header and the thumbnail, when there is one now.
+UPDATE files SET mime = sqlc.arg('mime'), width = sqlc.narg('width'), height = sqlc.narg('height'),
+    thumbnail_key = coalesce(sqlc.narg('thumbnail_key'), thumbnail_key)
+WHERE id = sqlc.arg('id')
+RETURNING *;

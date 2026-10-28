@@ -45,6 +45,8 @@ export const esChat: DictShape<typeof enChat> = {
   'chat.statusPending': 'Enviando',
   'chat.statusSent': 'Enviado',
   'chat.statusRead': 'Leído',
+  'chat.readBy': 'Visto por',
+  'chat.readByNone': 'Nadie lo ha visto aún',
   'chat.attachment': 'Adjunto',
   'chat.openImage': 'Abrir imagen «{name}»',
   'chat.reactionLabel': 'Reacción {emoji}: {count}',

@@ -129,7 +129,9 @@ import {
   ListBirthdaysResponseSchema,
   ListMemberBirthdaysResponseSchema,
   ListMembersResponseSchema,
+  ListMessageReadersResponseSchema,
   ListMessagesResponseSchema,
+  ListTaskNoticesResponseSchema,
   ListReactionUsersResponseSchema,
   MoveMemberRequestSchema,
   ListSessionsResponseSchema,
@@ -301,6 +303,9 @@ export const api = {
     /** Messages mentioning me in rooms I can view, newest first (cursor `before`, limit ≤ 100). */
     mentions: (p: { limit?: number; before?: string; workspace_id?: string }, signal?: AbortSignal) =>
       call('GET', `/api/me/mentions${qs(p)}`, ListMessagesResponseSchema, undefined, signal),
+    /** My task notices (ADR-0141), newest first, of tasks I see now (cursor `before`, limit ≤ 100). */
+    taskNotices: (p: { limit?: number; before?: string }, signal?: AbortSignal) =>
+      call('GET', `/api/me/task-notices${qs(p)}`, ListTaskNoticesResponseSchema, undefined, signal),
   },
   users: {
     /** My private note about a user (docs/09 #20); empty text = none. 404 = no shared workspace / DM. */
@@ -677,8 +682,12 @@ export const api = {
     /** «Переслать» (ADR-0033): a copy of the message in `toRoomId`, by the caller, with `forward`. */
     forward: (roomId: string, id: string, toRoomId: string) =>
       call('POST', `/api/rooms/${roomId}/messages/${id}/forward`, ForwardMessageResponseSchema, body(ForwardMessageRequestSchema, { toRoomId })),
-    markRead: (roomId: string, messageId: string) =>
-      callEmpty('PUT', `/api/rooms/${roomId}/read`, body(UpdateReadStateRequestSchema, { messageId })),
+    /** `seen` (ADR-0140): the message was on screen — moves the seen marker behind ✓✓ too. */
+    markRead: (roomId: string, messageId: string, seen = false) =>
+      callEmpty('PUT', `/api/rooms/${roomId}/read`, body(UpdateReadStateRequestSchema, { messageId, seen })),
+    /** «Прочитали» (ADR-0140): who saw my message and when — the author only. */
+    readers: (roomId: string, id: string, signal?: AbortSignal) =>
+      call('GET', `/api/rooms/${roomId}/messages/${id}/readers`, ListMessageReadersResponseSchema, undefined, signal),
     /** Full-text search in one room (newest first, cursor `before`). */
     searchRoom: (roomId: string, p: { q: string; before?: string; limit?: number }, signal?: AbortSignal) =>
       call('GET', `/api/rooms/${roomId}/messages${qs(p)}`, ListMessagesResponseSchema, undefined, signal),

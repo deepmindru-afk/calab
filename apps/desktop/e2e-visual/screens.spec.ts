@@ -7,7 +7,7 @@ import { FREE_PLAN_LIMITS, defaultSettings, mockPdf, ts } from '../e2e-support/f
 import { CODE_FIXTURE, IDS, MOCK_GPTUNNEL_CODE, MOCK_GPTUNNEL_WEB, PASSWORD, RECORDING_FIXTURE, slowWebpAnimation, type MockServer } from '../e2e-support/mock-server';
 import { encodePng } from '../e2e-support/png';
 import { expect, test } from './app';
-import { NOW, checkpoint, expectAssigneeStacks, joinVoice, login, seedAssigneeCounts, seedDays, settle } from './harness';
+import { NOW, checkpoint, expectAssigneeStacks, joinVoice, login, seedAssigneeCounts, seedDays, seedLabelOverflow, settle } from './harness';
 import { DAY, seedDay } from './calendarWeb';
 import { startPublisher } from './publisher';
 
@@ -58,6 +58,7 @@ const KEY = new Set([
   'tooltip-lazy',
   'chat-context-menu',
   'room-notify-menu',
+  'inbox-popover',
   'dm-list',
   'nav-badges',
   'dm-archive',
@@ -175,6 +176,7 @@ const KEY = new Set([
   // Task boards (ADR-0042 §5).
   'boards-kanban',
   'boards-kanban-assignees',
+  'boards-status-menu',
   'boards-create-menu',
   'boards-task',
   // «Комментарии | История» of the task panel (ADR-0091).
@@ -182,6 +184,7 @@ const KEY = new Set([
   'boards-task-comments-days',
   'boards-task-history',
   'boards-list',
+  'boards-labels-overflow',
   'boards-filter',
   'boards-settings',
   // Status colour and icon pickers (ADR-0093).
@@ -1154,6 +1157,39 @@ test('quick-switcher', async ({ open, win, mock, shot }) => {
   await expect(win.getByRole('button', { name: 'Подключиться: Переговорка' })).toBeVisible();
   await expect(win.getByRole('button', { name: 'Открыть чат: Переговорка' })).toBeVisible();
   await checkpoint(shot, 'quick-switcher', { keepPointer: true });
+  // ADR-0139: the «Задачи» tab — words, a «Доска» condition, the list with its columns.
+  mock.setClock(NOW.getTime());
+  await win.getByTestId('search-mode-tasks').click();
+  await win.keyboard.type('доск');
+  await win.getByTestId('task-search-filter').click();
+  await win.getByTestId('filter-fields').getByRole('option', { name: 'Доска' }).click();
+  await win.getByTestId('filter-values').getByRole('option', { name: /Разработка/ }).click();
+  await win.keyboard.press('Escape');
+  await expect(win.getByTestId('filter-chip')).toHaveCount(1);
+  await expect(win.getByTestId('task-search-row')).toHaveCount(2);
+  await win.mouse.move(0, 0);
+  await checkpoint(shot, 'quick-switcher-tasks');
+  // A typed key comes first as «Открыть CAL-3».
+  const field = win.getByRole('combobox');
+  await field.press(`${MOD}+a`);
+  await win.keyboard.type('CAL-3');
+  await expect(win.getByTestId('task-search-key')).toContainText('CAL-3');
+  // «Сохранить»: the conditions under a name, a row under «Мои задачи».
+  await field.press(`${MOD}+a`);
+  await win.keyboard.type('доск');
+  await win.getByTestId('task-search-save').click();
+  await win.getByTestId('task-search-save-name').fill('Доски в разработке');
+  await win.getByTestId('task-search-save-submit').click();
+  await expect(win.getByTestId('task-search-save-menu')).toHaveCount(0);
+  await win.keyboard.press('Escape');
+  await expect(win.getByTestId('quick-switcher')).toHaveCount(0);
+  while (await win.getByTestId('toast').count()) await win.getByTestId('toast').first().getByRole('button', { name: 'Закрыть' }).click();
+  await win.getByTestId('section-boards').click();
+  await win.getByTestId('saved-search').filter({ hasText: 'Доски в разработке' }).click();
+  await expect(win.getByTestId('task-search-page')).toBeVisible();
+  await expect(win.getByTestId('task-search-row')).toHaveCount(2);
+  await win.mouse.move(0, 0);
+  await checkpoint(shot, 'boards-saved-search');
 });
 
 test('quick-switcher-filtered', async ({ open, win, mock, shot }) => {
@@ -1171,6 +1207,25 @@ test('chat-context-menu', async ({ open, win, mock, shot }) => {
   await win.getByTestId('message-bubble').filter({ hasText: 'Готово, выдал' }).click({ button: 'right' });
   await expect(win.getByRole('menu')).toBeVisible();
   await checkpoint(shot, 'chat-context-menu');
+  // ADR-0140: my message seen by Борис and Вера (✓✓), the next one by nobody (✓); ✓✓ opens
+  // «Прочитали»; the same list on top of the message's menu.
+  await win.keyboard.press('Escape');
+  await expect(win.getByRole('menu')).toHaveCount(0);
+  const seen = mock.injectMessage({ roomId: IDS.rooms.general, authorId: IDS.users.anna, content: 'Посмотрите макет до обеда.' });
+  mock.injectMessage({ roomId: IDS.rooms.general, authorId: IDS.users.anna, content: 'И ссылку на прототип.' });
+  mock.markRead(IDS.users.boris, IDS.rooms.general, seen.id);
+  mock.markRead(IDS.users.vera, IDS.rooms.general, seen.id);
+  const bubble = win.getByTestId('message-bubble').filter({ hasText: 'Посмотрите макет' });
+  await expect(bubble.getByTestId('read-ticks')).toBeVisible();
+  await expect(win.getByTestId('message-bubble').filter({ hasText: 'И ссылку' }).getByLabel('Отправлено').last()).toBeVisible();
+  await bubble.getByTestId('read-ticks').click();
+  await expect(win.getByTestId('read-by-popover').getByTestId('read-by-row')).toHaveCount(2);
+  await checkpoint(shot, 'chat-read-by');
+  await win.keyboard.press('Escape');
+  await bubble.getByText('Посмотрите макет').click({ button: 'right' });
+  await win.getByTestId('message-read-by').click();
+  await expect(win.getByRole('menu').getByTestId('read-by-row')).toHaveCount(2);
+  await checkpoint(shot, 'chat-read-by-menu');
 });
 
 test('chat-emoji-picker', async ({ open, win, mock, shot }) => {
@@ -1357,6 +1412,24 @@ test('room-notify-menu', async ({ open, win, mock, shot }) => {
   await expect(win.getByRole('menuitemradio', { name: 'Как в пространстве (Только упоминания)' })).toHaveAttribute('aria-checked', 'true');
   await expect(win.getByRole('menuitem', { name: 'До утра' })).toBeVisible();
   await checkpoint(shot, 'room-notify-menu');
+});
+
+// «Упоминания» (ADR-0141, #99): chat mentions and task events together, newest first, each with
+// its source (room · workspace, KEY · title); unread ones carry a dot.
+test('inbox-popover', async ({ open, win, mock, shot }) => {
+  await open();
+  await mainWindow(win, mock);
+  // open() rebuilds the mock: a comment of Вера mentioning me in CAL-3 after it — a MENTIONED
+  // task notice (live, and in the history the popover reloads).
+  const task = mock.boards.taskByKey('CAL-3');
+  if (!task) throw new Error('CAL-3 is not seeded');
+  mock.injectMessage({ roomId: task.task.roomId, authorId: IDS.users.vera, content: `@${IDS.users.anna} проверишь на Mac?` });
+  await win.getByTestId('titlebar').getByRole('button', { name: 'Упоминания', exact: true }).click();
+  const pop = win.getByRole('dialog', { name: 'Упоминания' });
+  await expect(pop.getByText('CAL-3 · Эхо в звонке при включённых колонках')).toBeVisible();
+  await expect(pop.getByText(/разработка · /).first()).toBeVisible();
+  await settle(win);
+  await checkpoint(shot, 'inbox-popover');
 });
 
 test('shell-shortcuts', async ({ open, win, mock, shot }) => {
@@ -2962,6 +3035,24 @@ test('chat-lightbox', async ({ open, win, mock, shot }) => {
   }
   await win.keyboard.press('Escape');
   await expect(box).toHaveCount(0);
+
+  // Owner 28.10: a PNG stored with a wrong type and no thumbnail is a picture too (the original is
+  // drawn in a box of the picture's size), next to a normal PNG (above) and a plain file (a chip).
+  mock.injectMessage({ roomId: IDS.rooms.general, authorId: IDS.users.grigory, content: '', attachments: [IDS.files.pdf] });
+  mock.injectMessage({ roomId: IDS.rooms.general, authorId: IDS.users.vera, content: '', attachments: [IDS.files.untypedPng] });
+  const untyped = win.getByRole('button', { name: 'Открыть изображение «image.png»' });
+  await expect.poll(() => untyped.locator('img').evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth === 960)).toBe(true);
+  await expect(win.getByRole('button', { name: /^Скачать load-test-report\.pdf/ }).last()).toBeVisible();
+  await feedAtBottom(win);
+  await win.mouse.move(0, 0);
+  await checkpoint(shot, 'chat-image-untyped');
+  await untyped.click();
+  await expect(frame).toHaveAttribute('data-state', 'loaded');
+  await expect(box.getByRole('heading', { name: 'image.png' })).toBeVisible();
+  await expect(box.getByRole('button', { name: 'Скачать' })).toBeVisible();
+  await checkpoint(shot, 'chat-lightbox-untyped');
+  await win.keyboard.press('Escape');
+  await expect(box).toHaveCount(0);
 });
 
 // Code blocks (docs/09 #45, docs/08 «Код в сообщениях»): Вера's 420-line log collapsed at 400
@@ -4060,6 +4151,16 @@ test('boards-kanban', async ({ open, win, mock, shot }) => {
   await expectAssigneeStacks(win);
   await checkpoint(shot, 'boards-kanban-assignees', { axe: false });
 
+  // Status picker on a task waiting for approval: the statuses it may not reach carry a second
+  // line («нужно согласование»); one-line and two-line rows keep the same padding and rhythm.
+  await win.getByTestId('task-card').filter({ hasText: 'Ревью: права досок' }).getByTestId('card-status').click();
+  const statusMenu = win.getByTestId('status-menu');
+  await expect(statusMenu.getByTestId('picker-option').first()).toBeVisible();
+  await expect(statusMenu).toContainText('нужно согласование');
+  await checkpoint(shot, 'boards-status-menu', { axe: false });
+  await win.keyboard.press('Escape');
+  await expect(statusMenu).toBeHidden();
+
   // CBF-58: the column's «+» — «Создать задачу», the boards to create in, a separator, category / board.
   await win.getByTestId('section-create-board').click();
   const createMenu = win.getByTestId('boards-create-menu');
@@ -4221,11 +4322,11 @@ test('boards-task', async ({ open, win, mock, shot }) => {
   await expect(win.getByTestId('task-tab').nth(0)).toHaveAttribute('data-active', 'true');
   await panel.getByTestId('task-composer').getByRole('textbox').blur();
 
-  // #89: from the «Все задачи» search the path starts with the query; «×» returns to the same list.
+  // #89: from the «Поиск» tab (ADR-0139) the path starts with the query; «×» returns to the same list.
   await win.getByTestId('my-tasks').click();
-  await win.getByTestId('my-tasks-scope').getByRole('radio', { name: 'Все задачи' }).click();
+  await win.getByTestId('my-tasks-scope').getByRole('radio', { name: 'Поиск' }).click();
   await win.getByTestId('all-tasks-search').fill('эхо');
-  await win.getByTestId('list-row').first().click();
+  await win.getByTestId('task-search-row').first().click();
   await expect(panel).toBeVisible();
   await expect(panel.getByTestId('panel-crumb-search')).toContainText('эхо');
   await win.mouse.move(0, 0);
@@ -4248,6 +4349,19 @@ test('boards-task-comments', async ({ open, win, mock, shot }) => {
   await expect(panel.locator('[data-message-id]')).toHaveCount(2);
   await section.evaluate((el) => el.scrollIntoView({ block: 'start' }));
   await checkpoint(shot, 'boards-task-comments');
+  // ADR-0140: my comment seen by Борис — ✓✓ in the card's corner opens «Прочитали».
+  const cal3 = mock.boards.taskByKey('CAL-3');
+  if (cal3) {
+    const c = mock.injectMessage({ roomId: cal3.task.roomId, authorId: IDS.users.anna, content: 'Проверила на macOS, эха нет.' });
+    mock.markRead(IDS.users.boris, cal3.task.roomId, c.id);
+  }
+  const ticks = panel.locator('[data-message-id]').filter({ hasText: 'Проверила на macOS' }).getByTestId('read-ticks');
+  await expect(ticks).toBeVisible();
+  await ticks.scrollIntoViewIfNeeded();
+  await ticks.click();
+  await expect(win.getByTestId('read-by-popover').getByTestId('read-by-row')).toHaveCount(1);
+  await checkpoint(shot, 'boards-task-comment-read-by');
+  await win.keyboard.press('Escape');
   // #87: another task whose comments span several days: the same pills as in the chat.
   await win.getByTestId('boards-list').getByTestId('board-row').first().click(); // the board again: the panel closes
   await expect(panel).toHaveCount(0);
@@ -4320,6 +4434,58 @@ test('boards-list', async ({ open, win, mock, shot }) => {
   await expect(rows.filter({ hasText: 'CAL-2' })).toHaveCount(1);
 });
 
+/**
+ * Labels past the card width collapse into «+N» (docs/08 «Лейблы»): one row (CAL-1), two rows
+ * (CAL-2), the group on CAL-4; the hover list; the same in the list view and the task panel.
+ */
+test('boards-labels-overflow', async ({ open, win, mock, shot }) => {
+  await open();
+  seedLabelOverflow(mock);
+  await mainWindow(win, mock);
+  await boardsMode(win, mock);
+  const card = (key: string): Locator => win.getByTestId('task-card').filter({ hasText: key });
+  await expect(card('CAL-4').getByTestId('labels-more')).toBeVisible();
+  await expect(card('CAL-1').getByTestId('labels-more')).toHaveCount(0);
+  await expect(card('CAL-2').getByTestId('labels-more')).toHaveCount(0);
+  await checkpoint(shot, 'boards-labels-card');
+  await card('CAL-4').getByTestId('labels-more').scrollIntoViewIfNeeded();
+  await checkpoint(shot, 'boards-labels-card-group');
+  // Hover opens the hidden labels and leaving closes them; Enter on the focused pill opens them, Esc closes.
+  const more = card('CAL-4').getByTestId('labels-more');
+  const list = win.getByTestId('labels-more-list');
+  await more.hover();
+  await expect(list).toBeVisible();
+  await win.mouse.move(0, 0);
+  await expect(list).toHaveCount(0);
+  await more.focus();
+  await win.keyboard.press('Enter');
+  await expect(list).toBeVisible();
+  await expect(list.getByTestId('label-pill')).toHaveCount(6);
+  await checkpoint(shot, 'boards-labels-more', { axe: false });
+  await win.keyboard.press('Escape');
+  await expect(list).toHaveCount(0);
+  await expect(win.getByTestId('kanban')).toBeVisible(); // the board's own Esc did not fire
+
+  // The task panel: the labels row with the «+» after them; the group opens the same list.
+  await card('CAL-4').getByTestId('card-title').click();
+  const panel = win.getByTestId('task-panel');
+  await expect(panel.getByTestId('prop-labels')).toBeVisible();
+  await expect(panel.getByTestId('labels-more')).toBeVisible();
+  await checkpoint(shot, 'boards-labels-task');
+  await panel.getByTestId('labels-more').click();
+  await expect(list).toBeVisible();
+  await checkpoint(shot, 'boards-labels-task-more', { axe: false });
+  await win.keyboard.press('Escape');
+  await expect(list).toHaveCount(0);
+  await win.keyboard.press('Escape');
+  await expect(panel).toHaveCount(0);
+
+  // The list view: one row of labels, the rest in «+N».
+  await win.getByTestId('view-list').click();
+  await expect(win.getByTestId('list-row').filter({ hasText: 'CAL-4' }).getByTestId('labels-more')).toBeVisible();
+  await checkpoint(shot, 'boards-labels-list', { axe: false });
+});
+
 /** «Фильтр» open over a filtered board: a label condition, the field list. */
 test('boards-filter', async ({ open, win, mock, shot }) => {
   await open();
@@ -4333,6 +4499,14 @@ test('boards-filter', async ({ open, win, mock, shot }) => {
   await win.getByTestId('filter-button').click();
   await expect(win.getByTestId('filter-fields')).toBeVisible();
   await checkpoint(shot, 'boards-filter');
+  // ADR-0139: the board's search field — the same search over this board, under the same filter.
+  await win.keyboard.press('Escape');
+  await win.getByTestId('board-search-open').click();
+  await win.getByTestId('board-search-input').fill('доск');
+  await expect(win.getByTestId('task-search-board')).toBeVisible();
+  await expect(win.getByTestId('task-search-row')).toHaveCount(1);
+  await win.mouse.move(0, 0);
+  await checkpoint(shot, 'boards-search');
 });
 
 /** Board settings → «Статусы»: the development template's six statuses. */

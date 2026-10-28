@@ -1,10 +1,8 @@
-import { RoomType, type FileMeta, type Message, type PermissionBits } from '@calaba/protocol';
-import { useRooms } from '../../stores/rooms';
+import { type FileMeta, type Message, type PermissionBits } from '@calaba/protocol';
 import * as ContextMenu from '../../components/radix/context-menu';
-import { AlertCircle, Check, CheckCheck, Clock3, Download, FileText, RotateCw } from 'lucide-react';
+import { AlertCircle, Clock3, Download, FileText, RotateCw } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FocusEvent, type PointerEvent, type ReactNode, type SyntheticEvent } from 'react';
 import { Avatar } from '../../components/Avatar';
-import { MediaImg } from '../../components/MediaImg';
 import { Tip, cx } from '../../components/ui';
 import { t, useLocale } from '../../i18n';
 import { thumbnailPath } from '../../lib/api/endpoints';
@@ -13,11 +11,14 @@ import { fmt, toDate, useTimeFormat } from '../../lib/format';
 import { Markdown } from '../../lib/markdown/Markdown';
 import { firstLink, isEmojiOnly, parseMarkdown } from '../../lib/markdown/parse';
 import { filePreview } from '../../lib/filePreview';
-import { openAttachment } from '../../services/files';
+import { isImageAttachment } from '../../lib/imageAttachment';
+import type { LightboxImage } from '../../lib/lightbox';
+import { AttachmentImg } from '../../components/AttachmentImg';
+import { downloadFile, openAttachment } from '../../services/files';
 import { can } from '../../lib/permissions';
 import { retrySend, setEmbedsHidden, toggleReaction } from '../../services/chat';
 import { messageById, useMessages, type ChatMessage, type PendingUpload } from '../../stores/messages';
-import { useReadReceipt } from '../../stores/readReceipts';
+import { Ticks } from './ReadReceipts';
 import { useSession } from '../../stores/session';
 import { useUi } from '../../stores/ui';
 import { memberName, useFormerInfo, useResolveUnknown, useWorkspaces } from '../../stores/workspaces';
@@ -87,7 +88,8 @@ export function MentionChip({ workspaceId, v, own }: { workspaceId: string; v: s
   );
 }
 
-export const isImage = (f: FileMeta): boolean => f.mime.startsWith('image/') && !!f.thumbnailUrl;
+/** A picture attachment (lib/imageAttachment: by type and name, a server thumbnail is not required). */
+export const isImage = (f: FileMeta): boolean => isImageAttachment(f);
 
 export interface RowProps {
   c: ChatMessage;
@@ -423,7 +425,9 @@ function Bubble({
   const voiceOnly = rows.length === 1 && !!rows[0] && isVoice(rows[0]) && c.status === 'sent' && !hasText && !images.length && !videos.length && !m.reactions.length;
   const width = images.length ? imageBoxWidth(images) : videos.length ? VIDEO_WIDTH : undefined;
 
-  const metaNode = <MetaInfo c={c} own={own} />;
+  const metaNode = <MetaInfo c={c} own={own} workspaceId={workspaceId} />;
+  // The invisible copy that reserves the time's room on the last line: no interactive ticks.
+  const metaSpacer = <MetaInfo c={c} own={own} workspaceId={workspaceId} spacer />;
   const tail = meta.last && !sticker;
 
   const radius = bubbleRadius(own, meta.first, meta.last, tail);
@@ -503,7 +507,7 @@ function Bubble({
             {!link && !files.length && !m.reactions.length ? (
               // Reserve room for the time on the last line (it is drawn absolutely, Telegram-style).
               <span className="invisible ml-2 inline-flex select-none" aria-hidden>
-                {metaNode}
+                {metaSpacer}
               </span>
             ) : null}
           </div>
@@ -568,7 +572,7 @@ function Bubble({
           ) : null}
         </div>
       </ContextMenu.Trigger>
-      <MessageMenu c={c} own={own} roomId={roomId} perms={perms} image={menuImage} />
+      <MessageMenu c={c} own={own} roomId={roomId} workspaceId={workspaceId} perms={perms} image={menuImage} />
     </ContextMenu.Root>
   );
 }
@@ -795,7 +799,7 @@ export function Tail({ own }: { own: boolean }): ReactNode {
   );
 }
 
-function MetaInfo({ c, own }: { c: ChatMessage; own: boolean }): ReactNode {
+function MetaInfo({ c, own, workspaceId, spacer = false }: { c: ChatMessage; own: boolean; workspaceId: string; spacer?: boolean }): ReactNode {
   return (
     <TimeMeta at={toDate(c.msg.createdAt)} edited={!!c.msg.editedAt}>
       {own ? (
@@ -804,27 +808,10 @@ function MetaInfo({ c, own }: { c: ChatMessage; own: boolean }): ReactNode {
         ) : c.status === 'failed' ? (
           <AlertCircle className="size-3.5 text-danger" aria-label={t('chat.failed')} />
         ) : (
-          <Ticks roomId={c.msg.roomId} messageId={c.msg.id} />
+          <Ticks roomId={c.msg.roomId} messageId={c.msg.id} workspaceId={workspaceId} spacer={spacer} />
         )
       ) : null}
     </TimeMeta>
-  );
-}
-
-/**
- * docs/08 «Галочки» (docs/09 #92): ✓ — the server has the message, ✓✓ — someone else read it
- * (the DM peer / another member). A leaf with a boolean selector: a READ_RECEIPT re-renders
- * only the ticks it flips, not the bubble or the feed.
- */
-function Ticks({ roomId, messageId }: { roomId: string; messageId: string }): ReactNode {
-  const read = useReadReceipt(roomId, messageId);
-  // A notes shelf (ADR-0039) has no readers: no ticks at all.
-  const shelf = useRooms((s) => s.byId[roomId]?.type === RoomType.NOTES);
-  if (shelf) return null;
-  return read ? (
-    <CheckCheck className="size-4" aria-label={t('chat.statusRead')} />
-  ) : (
-    <Check className="size-4" aria-label={t('chat.statusSent')} />
   );
 }
 
@@ -906,15 +893,18 @@ function imageBoxPx(files: FileMeta[]): number {
   return Math.max(200, Math.round(h > IMAGE_MAX_H ? (IMAGE_MAX_H * f.width) / f.height : w));
 }
 
-/** The chat thumbnail of an image, with the 1024 px one for 2× screens when it is sharper (docs/09 #62). */
-function Thumb({ f, boxW, boxH }: { f: FileMeta; boxW: number; boxH: number }): ReactNode {
+/** The chat preview of an image, with the 1024 px thumbnail for 2× screens when it is sharper (docs/09 #62). */
+function Thumb({ f, boxW, boxH, onGone }: { f: FileMeta; boxW: number; boxH: number; onGone: () => void }): ReactNode {
   const path = thumbnailPath(f.id);
   const hi = wantsLargeThumb(f.width, f.height, boxW, boxH) ? thumbWidthPath(path, THUMB_LARGE) : undefined;
   // 1× keeps the bare path (= w=512): the same URL as the lightbox placeholder, loaded once.
+  // No thumbnail (owner 28.10): the server makes it on this request, else the original is shown.
   return (
-    <MediaImg
-      path={path}
-      hiDpiPath={hi}
+    <AttachmentImg
+      f={f}
+      thumb={path}
+      hiDpiThumb={hi}
+      onGone={onGone}
       alt={f.name}
       loading="lazy"
       decoding="async"
@@ -924,31 +914,56 @@ function Thumb({ f, boxW, boxH }: { f: FileMeta; boxW: number; boxH: number }): 
   );
 }
 
+/** The Lightbox list of a message's images. */
+const lightboxImages = (files: FileMeta[]): LightboxImage[] => files.map((g) => ({ fileId: g.id, name: g.name, mime: g.mime, width: g.width, height: g.height }));
+
 function ImageGrid({ files, padTop, overlay }: { files: FileMeta[]; padTop: boolean; overlay: ReactNode }): ReactNode {
-  const open = useUi((s) => s.openDialog);
   const single = files.length === 1 ? files[0] : undefined;
-  const aspect = single?.width && single.height ? `${single.width} / ${single.height}` : undefined;
   const boxPx = single ? imageBoxPx(files) : (IMAGE_MAX - 2) / 2; // grid: square cells, gap-0.5
+  const boxH = single ? (single.width && single.height ? (boxPx * single.height) / single.width : boxPx * 0.75) : boxPx;
   return (
     <div className={cx('relative grid gap-0.5', files.length > 1 && 'grid-cols-2', padTop && 'pt-1.5')} style={{ width: '100%' }}>
       {files.map((f, index) => (
-        <button
-          key={f.id}
-          type="button"
-          aria-label={t('chat.openImage', { name: f.name })}
-          onClick={() => open({ kind: 'image', images: files.map((g) => ({ fileId: g.id, name: g.name, mime: g.mime, width: g.width, height: g.height })), index })}
-          {...dragOutAttrs(f)}
-          {...dragOutHandlers}
-          className="block overflow-hidden bg-[color-mix(in_srgb,var(--bubble-accent)_10%,transparent)] focus-visible:outline-offset-[-2px]"
-          style={single ? { aspectRatio: aspect ?? '4 / 3', maxHeight: IMAGE_MAX_H, width: '100%' } : { aspectRatio: '1 / 1' }}
-        >
-          <Thumb f={f} boxW={boxPx} boxH={single ? (single.width && single.height ? (boxPx * single.height) / single.width : boxPx * 0.75) : boxPx} />
-        </button>
+        <ImageTile key={f.id} f={f} files={files} index={index} single={!!single} boxW={boxPx} boxH={boxH} />
       ))}
       {overlay ? (
         <span className="pointer-events-none absolute bottom-1.5 right-1.5 rounded-full bg-[rgb(0_0_0/50%)] px-1.5 py-1 [--bubble-meta:var(--color-on-accent)]">{overlay}</span>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * One picture of a message: the box keeps the picture's proportions before it loads (no jump); a
+ * click opens the Lightbox over the message's pictures. A file whose preview does not load at all
+ * (not a picture after all) stays in its box as a file: icon, name, a click downloads.
+ */
+function ImageTile({ f, files, index, single, boxW, boxH }: { f: FileMeta; files: FileMeta[]; index: number; single: boolean; boxW: number; boxH: number }): ReactNode {
+  const open = useUi((s) => s.openDialog);
+  const [gone, setGone] = useState(false);
+  const onGone = useCallback(() => setGone(true), []);
+  const aspect = f.width && f.height ? `${f.width} / ${f.height}` : undefined;
+  return (
+    <button
+      type="button"
+      aria-label={gone ? `${t('chat.download')} ${f.name}` : t('chat.openImage', { name: f.name })}
+      onClick={() => (gone ? downloadFile(f) : open({ kind: 'image', images: lightboxImages(files), index }))}
+      {...dragOutAttrs(f)}
+      {...dragOutHandlers}
+      className="block overflow-hidden bg-[color-mix(in_srgb,var(--bubble-accent)_10%,transparent)] focus-visible:outline-offset-[-2px]"
+      style={single ? { aspectRatio: aspect ?? '4 / 3', maxHeight: IMAGE_MAX_H, width: '100%' } : { aspectRatio: '1 / 1' }}
+      data-testid="chat-image"
+      data-state={gone ? 'file' : 'image'}
+    >
+      {gone ? (
+        <span className="flex size-full flex-col items-center justify-center gap-1.5 px-3 text-[color:var(--bubble-meta)]">
+          <FileText className="size-6" aria-hidden />
+          <span className="max-w-full truncate text-caption">{f.name}</span>
+        </span>
+      ) : (
+        <Thumb f={f} boxW={boxW} boxH={boxH} onGone={onGone} />
+      )}
+    </button>
   );
 }
 

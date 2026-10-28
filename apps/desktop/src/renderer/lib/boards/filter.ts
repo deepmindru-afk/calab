@@ -285,6 +285,8 @@ function assigneeMatch(have: readonly string[], c: Cond, ctx: MatchCtx): boolean
 
 export function matchCond(t: Task, c: Cond, ctx: MatchCtx): boolean {
   switch (c.field) {
+    case TaskField.BOARD:
+      return setMatch([t.boardId], c, ctx);
     case TaskField.STATUS:
       return setMatch([t.statusId], c, ctx);
     case TaskField.STATUS_TYPE:

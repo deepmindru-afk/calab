@@ -364,6 +364,51 @@ func (q *Queries) ReserveQuota(ctx context.Context, arg ReserveQuotaParams) (int
 	return storage_used_bytes, err
 }
 
+const setFileImage = `-- name: SetFileImage :one
+UPDATE files SET mime = $1, width = $2, height = $3,
+    thumbnail_key = coalesce($4, thumbnail_key)
+WHERE id = $5
+RETURNING id, workspace_id, uploader_id, key, thumbnail_key, name, mime, size, width, height, sha256, created_at, voice_duration_ms, voice_waveform
+`
+
+type SetFileImageParams struct {
+	Mime         string
+	Width        *int32
+	Height       *int32
+	ThumbnailKey *string
+	ID           uuid.UUID
+}
+
+// The lazy repair of an image file whose upload made no thumbnail (files.backfillThumb): the
+// sniffed type, the size from the header and the thumbnail, when there is one now.
+func (q *Queries) SetFileImage(ctx context.Context, arg SetFileImageParams) (File, error) {
+	row := q.db.QueryRow(ctx, setFileImage,
+		arg.Mime,
+		arg.Width,
+		arg.Height,
+		arg.ThumbnailKey,
+		arg.ID,
+	)
+	var i File
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UploaderID,
+		&i.Key,
+		&i.ThumbnailKey,
+		&i.Name,
+		&i.Mime,
+		&i.Size,
+		&i.Width,
+		&i.Height,
+		&i.Sha256,
+		&i.CreatedAt,
+		&i.VoiceDurationMs,
+		&i.VoiceWaveform,
+	)
+	return i, err
+}
+
 const totalStorageBytes = `-- name: TotalStorageBytes :one
 SELECT ((SELECT coalesce(sum(storage_used_bytes), 0) FROM workspaces)
       + (SELECT coalesce(sum(size), 0) FROM files WHERE workspace_id IS NULL))::bigint

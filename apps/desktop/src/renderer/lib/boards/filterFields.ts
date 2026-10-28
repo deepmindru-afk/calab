@@ -16,6 +16,7 @@ import {
   Link2,
   MessageSquare,
   Paperclip,
+  SquareKanban,
   SignalHigh,
   Tag,
   Triangle,
@@ -50,6 +51,8 @@ export type ValueKind =
   | 'bool'
   /** Task approval state (ADR-0049): none / pending / approved / rejected. */
   | 'approval'
+  /** A board of the workspace (the cross-board task search, ADR-0139). */
+  | 'board'
   | 'text';
 
 export interface FieldDef {
@@ -67,9 +70,26 @@ export interface FieldDef {
   hidden?: boolean;
 }
 
+/**
+ * Where a field list is shown (ADR-0139): a board's «Фильтр» (F) and the task search have a
+ * text field of their own (no «Текст» condition); «Доска» only across boards; a rule's «Если»
+ * keeps «Текст» and has no «Доска». Across boards the board-bound fields (status, label,
+ * milestone) need one chosen board.
+ */
+export type FieldScope = 'board' | 'search' | 'rule';
+
+export function fieldInScope(d: FieldDef, scope: FieldScope, oneBoard: boolean): boolean {
+  if (d.hidden) return false;
+  if (d.field === TaskField.BOARD) return scope === 'search';
+  if (d.field === TaskField.TEXT) return scope === 'rule';
+  if (scope === 'search' && !oneBoard && (d.kind === 'status' || d.kind === 'label' || d.kind === 'milestone')) return false;
+  return true;
+}
+
 const { IS, IS_NOT, ANY_OF, NONE_OF, EMPTY, NOT_EMPTY, BEFORE, AFTER, BETWEEN, GT, LT, CONTAINS } = TaskOp;
 
 export const FILTER_FIELDS: readonly FieldDef[] = [
+  { field: TaskField.BOARD, label: 'boards.f.board', icon: SquareKanban, kind: 'board', ops: [IS, IS_NOT], op: IS, multi: true },
   { field: TaskField.STATUS, label: 'boards.f.status', icon: CircleDashed, kind: 'status', ops: [IS, IS_NOT], op: IS, multi: true },
   { field: TaskField.STATUS_TYPE, label: 'boards.f.statusType', icon: CircleDot, kind: 'statusType', ops: [IS, IS_NOT], op: IS, multi: true },
   { field: TaskField.ASSIGNEE, label: 'boards.f.assignee', icon: Users, kind: 'user', ops: [IS, IS_NOT, EMPTY, NOT_EMPTY], op: IS, multi: true },

@@ -126,6 +126,12 @@ func condition(c *v1.TaskCondition, env FilterEnv, a *Args) (string, error) {
 			return "(SELECT count(*) FROM task_labels x WHERE x.task_id = t.id AND x.label_id = ANY(" + a.Add(ids) + "::uuid[])) = " + strconv.Itoa(len(ids)), nil
 		}
 		return exists("SELECT 1 FROM task_labels x WHERE x.task_id = t.id", "x.label_id", c, env, a)
+	case v1.TaskField_TASK_FIELD_BOARD:
+		ids, err := uuids(c.GetValues(), env)
+		if err != nil {
+			return "", err
+		}
+		return inList("t.board_id", a.Add(ids)+"::uuid[]", op, false)
 	case v1.TaskField_TASK_FIELD_CREATOR:
 		ids, err := uuids(c.GetValues(), env)
 		if err != nil {

@@ -280,7 +280,7 @@ SELECT r.id AS room_id, r.created_at AS room_created_at,
                                  coalesce(ds.cleared_before, '00000000-0000-0000-0000-000000000000'::uuid))
            LIMIT 999) x)::integer AS unread_count,
        ds.archived_at, ds.cleared_before,
-       prs.last_read_message_id AS peer_read_message_id
+       prs.seen_message_id AS peer_read_message_id
 FROM dm_members me
 JOIN rooms r ON r.id = me.room_id AND r.archived_at IS NULL
 JOIN dm_members p ON p.room_id = me.room_id AND p.user_id <> me.user_id
@@ -337,8 +337,8 @@ type ListDMsRow struct {
 // (DmSummary.last_message): the client needs no history request per DM. The user's own
 // dm_state (item 51): archived_at, and cleared_before — the preview and the unread count start
 // after it (the DM stays listed; the client hides a cleared DM without newer messages).
-// peer_read_message_id: the peer's read marker for read receipts (docs/09 #92; a primary-key
-// probe; NULL for a bot peer).
+// peer_read_message_id: the peer's seen marker for read receipts (docs/09 #92, ADR-0140; a
+// primary-key probe; NULL for a bot peer or before the peer saw anything).
 func (q *Queries) ListDMs(ctx context.Context, arg ListDMsParams) ([]ListDMsRow, error) {
 	rows, err := q.db.Query(ctx, listDMs, arg.UserID, arg.RoomID, arg.Lim)
 	if err != nil {

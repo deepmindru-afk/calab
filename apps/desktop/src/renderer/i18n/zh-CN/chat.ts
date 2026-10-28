@@ -45,6 +45,8 @@ export const zhChat: DictShape<typeof enChat> = {
   'chat.statusPending': '发送中',
   'chat.statusSent': '已发送',
   'chat.statusRead': '已读',
+  'chat.readBy': '已读成员',
+  'chat.readByNone': '还没有人看过',
   'chat.attachment': '附件',
   'chat.openImage': '打开图片"{name}"',
   'chat.reactionLabel': '表情回应 {emoji}：{count}',

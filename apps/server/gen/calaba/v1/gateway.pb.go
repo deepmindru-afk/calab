@@ -3729,6 +3729,9 @@ type Ready struct {
 	// BILLING_SELF_SERVE): the client asks GET /api/workspaces/{id}/billing for a workspace
 	// without Workspace.billing only when set, so a server with billing off sees no extra request.
 	BillingSelfServe bool `protobuf:"varint,17,opt,name=billing_self_serve,json=billingSelfServe,proto3" json:"billing_self_serve,omitempty"`
+	// ADR-0140: the uuidv7 lower bound of the start of read receipts — own messages with a smaller
+	// id have no ticks (no retroactive «read»); empty — a server before ADR-0140.
+	ReadReceiptsFrom string `protobuf:"bytes,18,opt,name=read_receipts_from,json=readReceiptsFrom,proto3" json:"read_receipts_from,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -3880,6 +3883,13 @@ func (x *Ready) GetBillingSelfServe() bool {
 		return x.BillingSelfServe
 	}
 	return false
+}
+
+func (x *Ready) GetReadReceiptsFrom() string {
+	if x != nil {
+		return x.ReadReceiptsFrom
+	}
+	return ""
 }
 
 // A guest knocks on a room (ADR-0040); to the room's deciders.
@@ -7690,7 +7700,7 @@ const file_calaba_v1_gateway_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\x04R\x05value:\x028\x01\x1a]\n" +
 	"\x15RoomLastMessagesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12.\n" +
-	"\x05value\x18\x02 \x01(\v2\x18.calaba.v1.DmLastMessageR\x05value:\x028\x01\"\xbe\a\n" +
+	"\x05value\x18\x02 \x01(\v2\x18.calaba.v1.DmLastMessageR\x05value:\x028\x01\"\xec\a\n" +
 	"\x05Ready\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1d\n" +
@@ -7714,7 +7724,8 @@ const file_calaba_v1_gateway_proto_rawDesc = "" +
 	"\x0fidentity_access\x18\x0e \x03(\v2\".calaba.v1.WorkspaceIdentityAccessR\x0eidentityAccess\x12>\n" +
 	"\x1bemail_verification_optional\x18\x0f \x01(\bR\x19emailVerificationOptional\x120\n" +
 	"\x14email_invite_pending\x18\x10 \x01(\bR\x12emailInvitePending\x12,\n" +
-	"\x12billing_self_serve\x18\x11 \x01(\bR\x10billingSelfServe\"N\n" +
+	"\x12billing_self_serve\x18\x11 \x01(\bR\x10billingSelfServe\x12,\n" +
+	"\x12read_receipts_from\x18\x12 \x01(\tR\x10readReceiptsFrom\"N\n" +
 	"\x14RoomAdmissionRequest\x126\n" +
 	"\tadmission\x18\x01 \x01(\v2\x18.calaba.v1.RoomAdmissionR\tadmission\"N\n" +
 	"\x14RoomAdmissionDecided\x126\n" +

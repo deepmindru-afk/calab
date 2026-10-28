@@ -186,6 +186,24 @@ describe('thread rows and paging', () => {
     expect(starred).toHaveLength(1);
     expect(starred[0]?.folderId).toBe(`${ACC}.starred`);
   });
+  it('a smart scope pages past the first page over several days (no cap, no gaps)', () => {
+    const s = store();
+    const inbox = s.upsertFolder({ path: 'INBOX', name: 'INBOX', delimiter: '/', parentPath: '', role: 'inbox', specialUse: null });
+    const t0 = 1_700_000_000_000;
+    // 70 alerts, one every 2 hours (~6 days back), plus unrelated mail in between.
+    for (let i = 0; i < 70; i++) {
+      s.insertMessage(msg(inbox, { messageIdHdr: `<alert${String(i)}@sentry>`, from: { name: 'Sentry', address: 'noreply@md.getsentry.com' }, subject: `SERVER-PROD-${String(i)} - Error`, date: t0 - i * 2 * 3600_000 }));
+      s.insertMessage(msg(inbox, { messageIdHdr: `<other${String(i)}@x>`, subject: `Other ${String(i)}`, date: t0 - i * 2 * 3600_000 - 60_000 }));
+    }
+    const scope: Scope = { kind: 'smart', exclude: [], query: JSON.stringify({ match: 'all', conditions: [{ field: 'from', contains: 'sentry' }] }) };
+    const p1 = s.listThreads(scope, { limit: 50 });
+    expect(p1).toHaveLength(50);
+    const last = p1[49];
+    if (!last) throw new Error('no row');
+    const p2 = s.listThreads(scope, { limit: 50, before: { date: last.date, id: last.messageId } });
+    expect(p2).toHaveLength(20);
+    expect([...p1, ...p2].map((r) => r.subject)).toEqual(Array.from({ length: 70 }, (_, i) => `SERVER-PROD-${String(i)} - Error`));
+  });
   it('threadRow finds the current row or null after removal', () => {
     const s = store();
     const inbox = s.upsertFolder({ path: 'INBOX', name: 'INBOX', delimiter: '/', parentPath: '', role: 'inbox', specialUse: null });

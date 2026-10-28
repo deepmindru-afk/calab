@@ -1,5 +1,6 @@
 import { timestampFromMs, timestampMs } from '@bufbuild/protobuf/wkt';
 import { holdNotification } from '../lib/notifyHold';
+import { toSource } from '../lib/notifyClick';
 import type { MessageInitShape } from '@bufbuild/protobuf';
 import {
   AttendeeStatus,
@@ -311,10 +312,7 @@ function remindExternal(minutes: number, ev: WireExternalEvent): void {
 function notifyReminder(text: string, action: string, tag: string, act: () => void): void {
   try {
     const n = holdNotification(new Notification(text, { body: action, tag }));
-    n.onclick = () => {
-      window.focus();
-      act();
-    };
+    n.onclick = toSource(act);
   } catch {
     // notifications unavailable: the toast below still says it
   }

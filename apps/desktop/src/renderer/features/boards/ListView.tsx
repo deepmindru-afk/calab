@@ -15,6 +15,7 @@ import { prefsOf, useBoardsUi, type BoardPrefs } from '../../stores/boardsUi';
 import { myUserId } from '../../stores/session';
 import { memberName } from '../../stores/workspaces';
 import { AssigneeStack } from './AssigneeStack';
+import { LabelsOverflow, stopClick, type LabelItem } from './LabelsOverflow';
 import { AssigneeMenu, DateMenu, LabelMenu, MemberAvatar, PriorityMenu, StatusMenu, useToday } from './menus';
 import { doneType, hasBit, mayArchiveTask, mayEditTask, sortedStatuses, CREATE_TASKS, MANAGE_BOARD } from './model';
 import { ApprovalTag } from './Approvals';
@@ -259,12 +260,16 @@ export function EmptyBoard(): ReactNode {
   return <div className="grid flex-1 place-items-center p-8 text-center text-body text-muted" data-testid="board-empty">{t('boards.empty')}</div>;
 }
 
+const NO_LABELS: readonly LabelItem[] = [];
+
 export const ListRow = memo(function ListRow({ id, boardId, boardLabel, workspaceId, onClick, selecting }: { id: string; boardId: string; boardLabel?: string; workspaceId: string; onClick: (id: string, e: MouseEvent) => void; selecting: boolean }): ReactNode {
   const task = useBoards((s) => s.tasks[id]);
   const perms = useTaskPerms(task);
   const scoped = useBoardScoped(boardId);
   const status = useBoards((s) => (task ? s.boards[boardId]?.statuses.find((x) => x.id === task.statusId) : undefined));
   const labels = useBoards((s) => s.boards[boardId]?.labels);
+  const labelIds = task?.labelIds;
+  const mine = useMemo(() => (labelIds ? (labels ?? []).filter((l) => labelIds.includes(l.id)) : NO_LABELS), [labels, labelIds]);
   const blocked = useBlockedStatuses(task, boardId);
   const selected = useBoardsUi((s) => !!s.selected[id]);
   const focused = useBoardsUi((s) => s.focused === id || s.taskId === id);
@@ -282,7 +287,6 @@ export const ListRow = memo(function ListRow({ id, boardId, boardLabel, workspac
   const names = task.assignees.map((a) => memberName(workspaceId, a.userId)).join(', ');
   const assigneeTip = names ? t('boards.tip.assignees', { names }) : t('boards.tip.noAssignee');
   const dueTip = task.dueOn ? t(isOverdue(task.dueOn, today, done) ? 'boards.tip.dueOverdue' : 'boards.tip.due', { date: formatDue(task.dueOn, today) }) : t('boards.f.dueOn');
-  const mine = (labels ?? []).filter((l) => task.labelIds.includes(l.id));
   const cell = 'grid shrink-0 place-items-center rounded-[var(--radius-icon)] hover:bg-hover disabled:hover:bg-transparent';
   return (
     <TaskContextMenu task={task} canEdit={canEdit} canArchive={mayArchiveTask(task, perms, me)} manage={false}>
@@ -356,24 +360,20 @@ export const ListRow = memo(function ListRow({ id, boardId, boardLabel, workspac
         {on(BoardFeature.CHECKLISTS) ? <ChecklistBadge id={id} slot={COL_CHECKLIST} /> : null}
         {on(BoardFeature.MILESTONES) ? <MilestoneBadge id={id} /> : null}
         {on(BoardFeature.LABELS) && (mine.length || menu === 'label') ? (
-          <LabelMenu
-            boardId={boardId}
-            value={task.labelIds}
-            canCreate={hasBit(perms, CREATE_TASKS) && !scoped}
-            onToggle={(l) => void updateTask(id, { labelIds: task.labelIds.includes(l) ? task.labelIds.filter((x) => x !== l) : [...task.labelIds, l] })}
-            align="end"
-            {...req('label')}
-          >
-            <button type="button" onClick={stop} disabled={!canEdit} className="flex min-w-0 max-w-[40%] shrink items-center gap-1 mobile:hidden">
-              {mine.slice(0, 2).map((l) => (
-                <span key={l.id} className="inline-flex h-5 min-w-0 items-center gap-1 rounded-full border border-line px-1.5 text-micro text-muted">
-                  <Dot color={l.color} />
-                  <span className="truncate">{l.name}</span>
-                </span>
-              ))}
-              {mine.length > 2 ? <span className="text-micro text-muted">+{mine.length - 2}</span> : null}
-            </button>
-          </LabelMenu>
+          canEdit ? (
+            <LabelMenu
+              boardId={boardId}
+              value={task.labelIds}
+              canCreate={hasBit(perms, CREATE_TASKS) && !scoped}
+              onToggle={(l) => void updateTask(id, { labelIds: task.labelIds.includes(l) ? task.labelIds.filter((x) => x !== l) : [...task.labelIds, l] })}
+              align="end"
+              {...req('label')}
+            >
+              <LabelsOverflow labels={mine} rows={1} interactive onClick={stopClick} className="max-w-[min(40%,9rem)] shrink mobile:hidden" />
+            </LabelMenu>
+          ) : (
+            <LabelsOverflow labels={mine} rows={1} onClick={stopClick} className="max-w-[min(40%,9rem)] shrink mobile:hidden" />
+          )
         ) : null}
         <UpdatedAge id={id} slot={COL_UPDATED} />
         {on(BoardFeature.DUE_DATE) ? (

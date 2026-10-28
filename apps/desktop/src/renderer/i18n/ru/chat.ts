@@ -43,6 +43,8 @@ export const ruChat = {
   'chat.statusPending': 'Отправляется',
   'chat.statusSent': 'Отправлено',
   'chat.statusRead': 'Прочитано',
+  'chat.readBy': 'Прочитали',
+  'chat.readByNone': 'Пока никто не прочитал',
   'chat.attachment': 'Вложение',
   'chat.openImage': 'Открыть изображение «{name}»',
   'chat.reactionLabel': 'Реакция {emoji}: {count}',

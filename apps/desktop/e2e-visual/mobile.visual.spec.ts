@@ -5,7 +5,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import { AiState, FormerMemberReason, Plan, RecordingStatus, WorkspaceRole } from '@calaba/protocol';
 import { ts } from '../e2e-support/fixtures';
 import { CANVAS_PUBLIC_CODE, CODE_FIXTURE, IDS, MOCK_GPTUNNEL_WEB, WIKI_PUBLIC_CODE, startMockServer, type MockServer } from '../e2e-support/mock-server';
-import { expectAccessible, expectAssigneeStacks, layoutProblems, NOW, PASSWORD, seedAssigneeCounts, seedDays, settle } from './harness';
+import { expectAccessible, expectAssigneeStacks, layoutProblems, NOW, PASSWORD, seedAssigneeCounts, seedDays, seedLabelOverflow, settle } from './harness';
 import { seedDay } from './calendarWeb';
 
 /**
@@ -465,6 +465,15 @@ test('m-chat-image', async ({ page }) => {
     expect(r.height).toBeLessThanOrEqual(vh * 0.6 + 1);
   }
   await checkpoint(page, 'm-chat-image', { main: true });
+  // Owner 28.10: a PNG stored with a wrong type and no thumbnail still shows as a picture.
+  mock.injectMessage({ roomId: IDS.rooms.general, authorId: IDS.users.vera, content: '', attachments: [IDS.files.untypedPng] });
+  const untyped = page.getByRole('button', { name: 'Открыть изображение «image.png»' });
+  await expect.poll(() => untyped.locator('img').evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth === 960)).toBe(true);
+  await feedToBottom(page);
+  await expect(page.locator('[data-virtuoso-scroller][data-scrolling]')).toHaveCount(0);
+  await page.mouse.move(0, 0);
+  await expectFeedFits(page);
+  await checkpoint(page, 'm-chat-image-untyped', { main: true });
 });
 
 // CBF-66: a Disk folder link in a chat is its own card — name, who shared, what is inside, «Открыть».
@@ -1005,7 +1014,7 @@ test('m-my-tasks', async ({ page }) => {
   await expect(bar.getByRole('radio')).toHaveCount(0);
   await checkpoint(page, 'm-my-tasks');
   await bar.getByTestId('my-tasks-scope').tap();
-  await expect(page.getByRole('menuitemradio')).toHaveCount(5);
+  await expect(page.getByRole('menuitemradio')).toHaveCount(6);
   await checkpoint(page, 'm-my-tasks-picker');
   await page.getByTestId('my-tasks-scope-assigned').tap();
   await expect(page.getByRole('menuitemradio')).toHaveCount(0);
@@ -1014,6 +1023,13 @@ test('m-my-tasks', async ({ page }) => {
   await bar.getByTestId('completion-switch').getByRole('button').tap();
   await expect(page.getByRole('menuitemradio')).toHaveCount(3);
   await page.keyboard.press('Escape');
+  // ADR-0139: the task search on a phone — the same search and filters, cards instead of a table.
+  await bar.getByTestId('my-tasks-scope').tap();
+  await page.getByRole('menuitemradio', { name: 'Поиск' }).tap();
+  await page.getByTestId('all-tasks-search').fill('доск');
+  await expect(page.getByTestId('task-search-row')).toHaveCount(3);
+  await page.getByTestId('all-tasks-search').blur();
+  await checkpoint(page, 'm-task-search');
 });
 
 // Task boards on a phone (ADR-0042 §5): the «Доски» tab, the list by default, the task full screen.
@@ -1178,6 +1194,35 @@ test('m-boards-kanban', async ({ page }) => {
   await expect(page.getByTestId('task-panel')).toHaveCount(0);
 });
 
+// Labels past the card width collapse into «+N» (docs/08 «Лейблы»); a tap opens the hidden ones, the task panel does the same.
+test('m-boards-labels', async ({ page }) => {
+  mock.setClock(NOW.getTime());
+  seedLabelOverflow(mock);
+  await signedIn(page);
+  await tab(page, 'boards');
+  await page.getByTestId('phone-boards').getByTestId('board-row').filter({ hasText: 'Разработка' }).getByRole('button').first().tap();
+  await page.getByTestId('board-more').tap();
+  await page.getByTestId('view-kanban').tap();
+  const kanban = page.getByTestId('kanban');
+  const card = kanban.getByTestId('task-card').filter({ hasText: 'CAL-4' });
+  await card.scrollIntoViewIfNeeded();
+  await expect(card.getByTestId('labels-more')).toBeVisible();
+  await checkpoint(page, 'm-boards-labels');
+  // The card is one touch target (.tap-inert): its «+N» does not catch the tap, the task panel's does.
+  await card.getByTestId('card-title').tap();
+  const panel = page.getByTestId('task-panel');
+  await expect(panel.getByTestId('prop-labels')).toBeVisible();
+  await panel.getByTestId('prop-labels').scrollIntoViewIfNeeded();
+  await expect(panel.getByTestId('labels-more')).toBeVisible();
+  await checkpoint(page, 'm-boards-labels-task');
+  await panel.getByTestId('labels-more').tap();
+  await expect(page.getByTestId('labels-more-list')).toBeVisible();
+  await expect(page.getByTestId('labels-more-list').getByTestId('label-pill')).toHaveCount(await page.getByTestId('labels-more-list').getByTestId('label-pill').count());
+  await checkpoint(page, 'm-boards-labels-more', { snapshot: false });
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('labels-more-list')).toHaveCount(0);
+});
+
 // The status colour picker on a phone (ADR-0093): the shared menu runtime centres it as a card.
 test('m-boards-settings-color', async ({ page }) => {
   mock.setClock(NOW.getTime());
@@ -1261,6 +1306,21 @@ test('m-menu', async ({ page }) => {
   await expect(page.getByRole('menu')).toBeVisible();
   await expectCentredCard(page, page.getByRole('menu'));
   await checkpoint(page, 'm-message-menu');
+  // ADR-0140: my message seen by Борис and Вера (✓✓), the next one by nobody (✓); a long press
+  // on it: «Прочитали» on top of the menu opens the list in place.
+  await page.touchscreen.tap(20, 120);
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  const seen = mock.injectMessage({ roomId: IDS.rooms.general, authorId: IDS.users.anna, content: 'Посмотрите макет до обеда.' });
+  mock.injectMessage({ roomId: IDS.rooms.general, authorId: IDS.users.anna, content: 'И ссылку на прототип.' });
+  mock.markRead(IDS.users.boris, IDS.rooms.general, seen.id);
+  mock.markRead(IDS.users.vera, IDS.rooms.general, seen.id);
+  await feedToBottom(page);
+  const bubble = page.getByTestId('message-bubble').filter({ hasText: 'Посмотрите макет' });
+  await expect(bubble.getByTestId('read-ticks')).toBeVisible();
+  await bubble.getByText('Посмотрите макет').dispatchEvent('contextmenu', { clientX: 120, clientY: 400 });
+  await page.getByTestId('message-read-by').tap();
+  await expect(page.getByRole('menu').getByTestId('read-by-row')).toHaveCount(2);
+  await checkpoint(page, 'm-message-read-by');
 });
 
 // Owner 07.10: a sub-level («+» → «Создать задачу ▸») opens by a tap only — never on hover — as a

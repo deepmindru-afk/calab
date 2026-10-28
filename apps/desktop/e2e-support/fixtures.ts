@@ -177,6 +177,12 @@ export const IDS = {
     stickerOrbit: mockId('file', 11),
     stickerSun2: mockId('file', 12),
     stickerGem2: mockId('file', 13),
+    /**
+     * Owner 28.10: a PNG stored as application/octet-stream without a thumbnail or a size (an
+     * upload whose server thumbnail failed): GET …/thumbnail is 404, the original is a PNG. Not in
+     * any message, injectMessage posts it.
+     */
+    untypedPng: mockId('file', 14),
   },
   /**
    * Sticker packs of «Команда Calab» (ADR-0030): «Calab» (☀️ 💎 🌀, installed by Анна) and
@@ -968,6 +974,10 @@ export function buildState(scenario: Scenario): MockState {
     bytes: portrait,
     thumbnail: { bytes: portraitThumb, mime: 'image/png' },
   });
+  const untyped = encodePng(960, 540, cardPicture([214, 120, 60], [255, 255, 255], [250, 226, 208], 960 / 540));
+  const untypedMeta = fileMeta(IDS.files.untypedPng, IDS.workspaces.main, U.vera, 'image.png', 'application/octet-stream', untyped, ts('2026-01-15T11:34:00Z'));
+  untypedMeta.thumbnailUrl = '';
+  s.files.set(IDS.files.untypedPng, { meta: untypedMeta, bytes: untyped });
   // Kept by the server after GPTunneL's done (docs/09 #47): the card's audio, posted by Борис.
   const meeting = media('meeting-recording.m4a');
   s.files.set(IDS.files.meeting, {

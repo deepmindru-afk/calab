@@ -1,10 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { assistArgv, leadArgv } from '../src/argv.js';
+import { assistArgv, leadArgv, wakeArgv } from '../src/argv.js';
 import { buildChatPrompt } from '../src/chat.js';
 import { resultFromStream } from '../src/claude.js';
 import { childEnv, parseEnvFile } from '../src/config.js';
-
-const BUGBOARD = '/Users/mac/.calab-tools/bugboard.py';
 
 /** Values of a variadic flag: everything after it up to the next `--flag`. */
 function flagValues(argv: string[], flag: string): string[] {
@@ -31,53 +29,78 @@ describe('leadArgv', () => {
   });
 });
 
-describe('assistArgv', () => {
-  const a = assistArgv({ systemPrompt: 'SYS', bugboard: BUGBOARD, home: '/Users/mac', ownerRepo: '/Users/mac/Documents/Calaba' });
+const HANDOFF = '/opt/homebrew/bin/node /Users/mac/.calab-claude-bot/app/handoff.mjs';
+const INBOX = '/Users/mac/.calab-claude-bot/inbox';
+const OWNER = '/Users/mac/Documents/Calaba';
+const DENIED_SAMPLE = ['cat', 'grep', 'find', 'env', 'printenv', 'git', 'gh', 'curl', 'python3', 'node', 'bash', 'security'];
 
-  it('runs Sonnet, never bypasses, loads no settings, MCP, skills or CLAUDE.md', () => {
+function expectSandboxed(a: string[]): void {
+  expect(flag(a, '--permission-mode')).toBe('dontAsk');
+  expect(flag(a, '--permission-prompts')).toBe('none');
+  for (const f of ['--safe-mode', '--strict-mcp-config', '--setting-sources=', '--disable-slash-commands', '--no-session-persistence']) expect(a).toContain(f);
+  expect(a.join(' ')).not.toMatch(/bypassPermissions|dangerously/);
+  expect(flag(a, '--tools')).toBe('Read,Grep,Glob,Bash');
+  // built-in read-only Bash (cat, grep…) and the file tools may not leave the working directory
+  expect(JSON.parse(flag(a, '--settings') ?? '{}')).toEqual({ permissions: { blockReadsOutsideWorkingDirectories: true } });
+  // the prompt goes on stdin: nothing positional after the variadic tool lists
+  expect(a.at(-1)?.startsWith('Glob(')).toBe(true);
+  const allowed = flagValues(a, '--allowedTools');
+  // Bash only through the handoff tool, one fixed prefix per subcommand; never a program directly
+  const prefix = `Bash(${HANDOFF} `;
+  for (const t of allowed.filter((x) => x.startsWith('Bash('))) {
+    expect(t.startsWith(prefix)).toBe(true);
+    expect(t.slice(prefix.length)).toMatch(/^[a-z]+:\*\)$/);
+  }
+  expect(allowed.some((t) => /^(Write|Edit|MultiEdit|WebFetch|WebSearch|Agent|Task)\b/.test(t))).toBe(false);
+  expect(allowed.join(' ')).not.toMatch(/\bgh (pr|issue|api)|python3|bugboard/);
+  const denied = flagValues(a, '--disallowedTools');
+  for (const t of ['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Agent', 'Task']) expect(denied).toContain(t);
+  for (const p of DENIED_SAMPLE) expect(denied).toContain(`Bash(${p}:*)`);
+  for (const p of ['./.env*', './**/.env*', '~/.calab-tools/**', '~/.claude/**', '~/.ssh/**', '~/.kube/**', '~/.config/**', '~/Library/**', `/${OWNER}/**`, `/${INBOX}/**`]) {
+    for (const t of ['Read', 'Grep', 'Glob']) expect(denied).toContain(`${t}(${p})`);
+  }
+  // no mid-rule wildcards in Bash rules: their matching is not what it looks like
+  for (const t of [...allowed, ...denied].filter((x) => x.startsWith('Bash('))) expect(t.slice(5, -3)).not.toContain('*');
+}
+
+describe('assistArgv', () => {
+  const a = assistArgv({ systemPrompt: 'SYS', handoff: HANDOFF, home: '/Users/mac', ownerRepo: OWNER, inboxDir: INBOX });
+
+  it('runs Sonnet sandboxed with its system prompt', () => {
     expect(flag(a, '--model')).toBe('sonnet');
-    expect(flag(a, '--permission-mode')).toBe('dontAsk');
-    expect(flag(a, '--permission-prompts')).toBe('none');
-    expect(a).toContain('--safe-mode');
-    expect(a).toContain('--strict-mcp-config');
-    expect(a).toContain('--setting-sources=');
-    expect(a).toContain('--disable-slash-commands');
-    expect(a.join(' ')).not.toMatch(/bypassPermissions|dangerously/);
     expect(flag(a, '--system-prompt')).toBe('SYS');
-    expect(flag(a, '--tools')).toBe('Read,Grep,Glob,Bash');
+    expectSandboxed(a);
   });
 
-  it('allows reads in docs/ and apps/ and only five board verbs', () => {
-    const allowed = flagValues(a, '--allowedTools');
-    expect(allowed).toEqual([
+  it('allows reads in docs/ and apps/, the board and requests through the handoff tool', () => {
+    expect(flagValues(a, '--allowedTools')).toEqual([
       'Read(./docs/**)',
       'Grep(./docs/**)',
       'Glob(./docs/**)',
       'Read(./apps/**)',
       'Grep(./apps/**)',
       'Glob(./apps/**)',
-      `Bash(python3 ${BUGBOARD} list:*)`,
-      `Bash(python3 ${BUGBOARD} show:*)`,
-      `Bash(python3 ${BUGBOARD} comment:*)`,
-      `Bash(python3 ${BUGBOARD} create:*)`,
-      `Bash(python3 ${BUGBOARD} label:*)`,
+      `Bash(${HANDOFF} add:*)`,
+      `Bash(${HANDOFF} board:*)`,
     ]);
-    expect(allowed.some((t) => /^Bash\((?!python3 \/Users\/mac\/\.calab-tools\/bugboard\.py (list|show|comment|create|label):\*\))/.test(t))).toBe(false);
-    expect(allowed.some((t) => /^(Write|Edit|WebFetch|WebSearch)/.test(t))).toBe(false);
+  });
+});
+
+describe('wakeArgv', () => {
+  const a = wakeArgv({ model: 'opus', handoff: HANDOFF, home: '/Users/mac', ownerRepo: OWNER, inboxDir: INBOX, maxBudgetUsd: 5 });
+
+  it('runs the given model sandboxed, with a budget', () => {
+    expect(flag(a, '--model')).toBe('opus');
+    expect(flag(a, '--max-budget-usd')).toBe('5');
+    expectSandboxed(a);
   });
 
-  it('denies writing, the web, board status changes and secret paths', () => {
-    const denied = flagValues(a, '--disallowedTools');
-    for (const t of ['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Agent', 'Task', 'Bash(python3 * status:*)']) expect(denied).toContain(t);
-    for (const p of ['./.env*', './**/.env*', '~/.calab-tools/**', '~/.claude/**', '~/.ssh/**', '//Users/mac/Documents/Calaba/**']) {
-      expect(denied).toContain(`Read(${p})`);
-      expect(denied).toContain(`Grep(${p})`);
-    }
+  it('allows exactly: repo reads and the handoff tool (requests, chat replies, GitHub, the board)', () => {
+    expect(flagValues(a, '--allowedTools')).toEqual(['Read(./**)', 'Grep(./**)', 'Glob(./**)', ...['add', 'reply', 'chat', 'gh', 'board'].map((v) => `Bash(${HANDOFF} ${v}:*)`)]);
   });
 
-  it('takes the chat on stdin: no positional prompt after the variadic tool lists', () => {
-    const last = a.at(-1) ?? '';
-    expect(last.startsWith('Read(') || last.startsWith('Glob(') || last.startsWith('Grep(')).toBe(true);
+  it("does not deny the runs' own checkout under ~/.calab-claude-bot", () => {
+    expect(flagValues(a, '--disallowedTools').some((t) => t.includes('~/.calab-claude-bot/**'))).toBe(false);
   });
 });
 

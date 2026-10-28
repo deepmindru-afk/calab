@@ -60,7 +60,7 @@ import { parseTipPayload } from './tipOverlayPolicy';
 import { appViewShown, forgetApp, hideApp, navigateApp, openApp, openAppExternal, setAppBounds } from './webApps';
 import { parseAppId, parseBounds } from './webAppPolicy';
 import { openLink } from './ownLink';
-import { getMainWindow, isOwnPage, isShown } from './windows';
+import { getMainWindow, isOwnPage, isShown, showMainWindow } from './windows';
 import { mailRequest } from './mail';
 
 const VISUAL_TEST = process.env['CALABA_VISUAL_TEST'] === '1';
@@ -337,6 +337,13 @@ export function registerIpc(): void {
       if (process.platform === 'darwin') app.dock?.bounce('informational');
       else win.flashFrame(true);
     }
+  });
+
+  // A notification click (ADR-0141): window.focus() in the page neither shows a window the close
+  // button hid nor restores a minimized one. Only the main window asks.
+  handle(IPC.appShowWindow, (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (win && win === getMainWindow()) showMainWindow();
   });
 
   handle(IPC.appSetBadge, (_e, a) => {

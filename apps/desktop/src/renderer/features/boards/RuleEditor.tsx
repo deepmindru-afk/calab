@@ -63,6 +63,7 @@ import { roomsOfWorkspace, useRooms } from '../../stores/rooms';
 import { memberName } from '../../stores/workspaces';
 import { ConditionChips, FilterPopover } from './FilterBar';
 import { ApproverMenu, ChoiceMenu, LabelMenu, type Choice } from './menus';
+import { LabelsOverflow } from './LabelsOverflow';
 import { Dot, PRIORITIES, PRIORITY_LABEL, STATUS_TYPES, STATUS_TYPE_LABEL, StatusIcon } from './visuals';
 
 /**
@@ -250,20 +251,20 @@ function LabelPick({ board, value, onPick }: { board: Board; value: string; onPi
 
 /** Several labels (actions): chips of the chosen ones + the board's label menu. */
 function LabelsPick({ board, value, onChange }: { board: Board; value: readonly string[]; onChange: (ids: string[]) => void }): ReactNode {
-  const chosen = board.labels.filter((l) => value.includes(l.id));
+  const chosen = useMemo(() => board.labels.filter((l) => value.includes(l.id)), [board.labels, value]);
   return (
-    <>
-      {chosen.map((l) => (
-        <span key={l.id} className="inline-flex h-6 items-center gap-1.5 rounded-full border border-line px-2 text-caption">
-          <Dot color={l.color} /> {l.name}
-        </span>
-      ))}
-      <LabelMenu boardId={board.id} value={value} canCreate={false} onToggle={(id) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id])}>
-        <button type="button" className={cx(chipBtn, 'text-muted')} aria-label={t('boards.addLabel')}>
-          <Plus className="size-3.5" aria-hidden /> {chosen.length ? null : t('rules.choose')}
-        </button>
-      </LabelMenu>
-    </>
+    <LabelsOverflow
+      labels={chosen}
+      size="md"
+      className="w-full"
+      trailing={
+        <LabelMenu boardId={board.id} value={value} canCreate={false} onToggle={(id) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id])}>
+          <button type="button" className={cx(chipBtn, 'text-muted')} aria-label={t('boards.addLabel')}>
+            <Plus className="size-3.5" aria-hidden /> {chosen.length ? null : t('rules.choose')}
+          </button>
+        </LabelMenu>
+      }
+    />
   );
 }
 

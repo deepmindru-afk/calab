@@ -45,6 +45,8 @@ export const enChat: DictShape<typeof ruChat> = {
   'chat.statusPending': 'Sending',
   'chat.statusSent': 'Sent',
   'chat.statusRead': 'Read',
+  'chat.readBy': 'Seen by',
+  'chat.readByNone': 'Nobody has seen it yet',
   'chat.attachment': 'Attachment',
   'chat.openImage': 'Open image “{name}”',
   'chat.reactionLabel': 'Reaction {emoji}: {count}',

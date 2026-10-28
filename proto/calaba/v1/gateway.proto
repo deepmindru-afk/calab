@@ -509,6 +509,9 @@ message Ready {
   // BILLING_SELF_SERVE): the client asks GET /api/workspaces/{id}/billing for a workspace
   // without Workspace.billing only when set, so a server with billing off sees no extra request.
   bool billing_self_serve = 17;
+  // ADR-0140: the uuidv7 lower bound of the start of read receipts — own messages with a smaller
+  // id have no ticks (no retroactive «read»); empty — a server before ADR-0140.
+  string read_receipts_from = 18;
 }
 
 // A guest knocks on a room (ADR-0040); to the room's deciders.

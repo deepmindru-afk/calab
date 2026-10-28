@@ -17,7 +17,8 @@ import { CountBadge } from './FilterBar';
 import { PRIORITIES, PRIORITY_LABEL, PriorityIcon } from './visuals';
 import { useToday } from './menus';
 import { CompletionSwitch } from './CompletionSwitch';
-import { AllTasks } from './AllTasks';
+import { BoardSearchResults, TaskSearchPage } from './TaskSearch';
+import { useTaskSearch } from '../../stores/taskSearch';
 import { MY_TASKS, useBoardsUi } from '../../stores/boardsUi';
 import { useSession } from '../../stores/session';
 import { useMemberRoles } from '../../stores/workspaces';
@@ -96,12 +97,16 @@ function Board({ boardId, workspaceId }: { boardId: string; workspaceId: string 
   const kind = useViewKind(boardId);
   const load = useBoards((s) => s.load[boardId]);
   const archive = useBoardsUi((s) => s.archiveOf === boardId);
+  // Text in the board's search field: the search over the board instead of the view (ADR-0139).
+  const searching = useTaskSearch((s) => !!s.boardText[boardId]?.trim());
   if (archive) return <BoardArchive boardId={boardId} />;
   return (
     <>
       <BoardHeader boardId={boardId} workspaceId={workspaceId} />
       <FilterChips boardId={boardId} workspaceId={workspaceId} />
-      {load === 'ready' ? (
+      {searching ? (
+        <BoardSearchResults boardId={boardId} workspaceId={workspaceId} />
+      ) : load === 'ready' ? (
         kind === 'kanban' ? (
           <Kanban boardId={boardId} workspaceId={workspaceId} />
         ) : kind === 'list' ? (
@@ -142,16 +147,26 @@ type MyTab = 'unread' | 'all' | TaskScope;
  */
 function MyTasks({ workspaceId }: { workspaceId: string }): ReactNode {
   const scope = useBoardsUi((s) => s.myScope);
-  const [tab, setTab] = useState<MyTab>(() => (unreadCount(useBoards.getState(), workspaceId) > 0 ? 'unread' : useBoardsUi.getState().myScope));
+  const [tab, setTab] = useState<MyTab>(() => (useTaskSearch.getState().wantPage ? 'all' : unreadCount(useBoards.getState(), workspaceId) > 0 ? 'unread' : useBoardsUi.getState().myScope));
+  // A saved search or ⌘↩ in ⌘K «Задачи» opens the search tab (ADR-0139).
+  const wantPage = useTaskSearch((s) => s.wantPage);
+  useEffect(() => {
+    if (!wantPage) return;
+    // An outside request (a saved search, ⌘↩) switches the local tab once.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTab('all');
+    useTaskSearch.getState().setWantPage(false);
+  }, [wantPage]);
   const unread = useBoards((s) => unreadCount(s, workspaceId));
   const boards = useBoards(useShallow((s) => workspaceBoards(s.boards, workspaceId).filter((b) => hasBit(b.permissions, CREATE_TASKS)).map((b) => `${b.id}\u0000${b.emoji} ${b.name}`)));
   const mobile = useMobile();
   const onTab = useCallback((v: MyTab) => {
     setTab(v);
     if (v !== 'unread' && v !== 'all') useBoardsUi.getState().setMyScope(v);
-  }, []);
+    if (v !== 'all') useTaskSearch.getState().setActiveSaved(workspaceId, '');
+  }, [workspaceId]);
   const tabs = useMemo(
-    (): Array<{ value: MyTab; label: string }> => [{ value: 'unread', label: unread ? t('boards.unreadTabN', { n: unread }) : t('boards.unreadTab') }, ...SCOPES.map((s) => ({ value: s.value, label: t(s.label) })), { value: 'all', label: t('boards.allTasks') }],
+    (): Array<{ value: MyTab; label: string }> => [{ value: 'unread', label: unread ? t('boards.unreadTabN', { n: unread }) : t('boards.unreadTab') }, ...SCOPES.map((s) => ({ value: s.value, label: t(s.label) })), { value: 'all', label: t('ts.tabSearch') }],
     [unread],
   );
   return (
@@ -197,7 +212,7 @@ function MyTasks({ workspaceId }: { workspaceId: string }): ReactNode {
           </>
         )}
       </div>
-      {tab === 'unread' ? <UnreadList workspaceId={workspaceId} /> : tab === 'all' ? <AllTasks workspaceId={workspaceId} onOpen={openFromList} /> : <ScopeList workspaceId={workspaceId} scope={scope} />}
+      {tab === 'unread' ? <UnreadList workspaceId={workspaceId} /> : tab === 'all' ? <TaskSearchPage workspaceId={workspaceId} /> : <ScopeList workspaceId={workspaceId} scope={scope} />}
     </>
   );
 }

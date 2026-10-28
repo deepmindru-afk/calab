@@ -60,6 +60,7 @@ export const IPC = {
   appOpenCheckout: 'app:open-checkout',
   appLegal: 'app:legal',
   appAttention: 'app:attention',
+  appShowWindow: 'app:show-window',
   /** Mentions + unread DM messages → Dock badge / badge count / tray tooltip (docs/09 item 22). */
   appSetBadge: 'app:set-badge',
   /** Renderer theme → nativeTheme.themeSource (the window background follows the app theme). */

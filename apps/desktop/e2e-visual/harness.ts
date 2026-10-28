@@ -243,6 +243,7 @@ export async function layoutProblems(page: Page): Promise<LayoutProblem[]> {
       }
       if (hidden) continue;
       const r = el.getBoundingClientRect();
+      if (el.scrollWidth <= el.clientWidth) continue; // not truncated: a short name is simply short
       if (r.width < Math.min(24, text.length * 6)) out.push({ kind: 'text-squeezed', detail: `${describe(el)}: ${Math.round(r.width)} px wide` });
     }
     // 3. Nothing interactive sticks out of the window.
@@ -374,6 +375,29 @@ export function seedAssigneeCounts(mock: MockServer): void {
   set('CAL-1', [u.anna]);
   set('CAL-2', [u.anna, u.boris]);
   set('CAL-4', [u.anna, u.boris, u.vera, u.grigory, u.dina]);
+}
+
+/**
+ * Labels past the card width (docs/08 «Лейблы»): CAL-1 two (one row), CAL-2 five (two rows),
+ * CAL-4 all eleven (the «+N» group). Written straight into the mock, after open().
+ */
+export function seedLabelOverflow(mock: MockServer): void {
+  const one = mock.boards.taskByKey('CAL-1');
+  if (!one) throw new Error('no CAL-1');
+  const board = one.task.boardId;
+  for (const [name, color] of [['Документация', 0x30d158], ['Бэкенд', 0xff9f0a], ['Фронтенд', 0x64d2ff], ['Мобильное приложение', 0x5e5ce6], ['Безопасность', 0xff375f], ['Производительность', 0xac8e68], ['Релиз', 0xffcc00], ['API', 0x8e8e93]] as const) {
+    mock.boards.createLabel(board, IDS.users.anna, { name, color });
+  }
+  const labels = mock.boards.getBoard(board, IDS.users.anna).labels;
+  const id = (name: string): string => labels.find((l) => l.name === name)?.id ?? '';
+  const set = (key: string, names: string[]): void => {
+    const t = mock.boards.taskByKey(key);
+    if (!t) throw new Error(`no ${key}`);
+    t.task.labelIds = names.map(id);
+  };
+  set('CAL-1', ['Баг', 'Фича']);
+  set('CAL-2', ['Баг', 'Фича', 'Дизайн', 'Бэкенд', 'API']);
+  set('CAL-4', ['Баг', 'Фича', 'Дизайн', 'Документация', 'Бэкенд', 'Фронтенд', 'Мобильное приложение', 'Безопасность', 'Производительность', 'Релиз', 'API']);
 }
 
 /** The three stacks (CAL-1/2/4): one circle height, the same distance from the card's right edge, «+3» on the five. */

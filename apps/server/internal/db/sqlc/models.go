@@ -995,6 +995,11 @@ type ExternalRemindersSent struct {
 	SentAt       time.Time
 }
 
+type FeatureEpoch struct {
+	Name      string
+	StartedAt time.Time
+}
+
 type File struct {
 	ID              uuid.UUID
 	WorkspaceID     *uuid.UUID
@@ -1371,10 +1376,20 @@ type PushIntent struct {
 	CompletedAt     *time.Time
 }
 
+type ReadSpan struct {
+	RoomID  uuid.UUID
+	UptoID  uuid.UUID
+	UserID  uuid.UUID
+	AfterID *uuid.UUID
+	FirstAt time.Time
+	LastAt  time.Time
+}
+
 type ReadState struct {
 	UserID            uuid.UUID
 	RoomID            uuid.UUID
 	LastReadMessageID uuid.UUID
+	SeenMessageID     *uuid.UUID
 }
 
 type Room struct {
@@ -1915,12 +1930,37 @@ type TaskMilestone struct {
 	UpdatedAt   time.Time
 }
 
+type TaskNoticeLog struct {
+	ID          uuid.UUID
+	UserID      uuid.UUID
+	TaskID      uuid.UUID
+	Kind        int16
+	ActorID     *uuid.UUID
+	MessageID   *uuid.UUID
+	Text        string
+	RuleID      *uuid.UUID
+	ReRequested bool
+	DueOn       string
+	DaysLeft    int32
+	CreatedAt   time.Time
+}
+
 type TaskRelation struct {
 	TaskID    uuid.UUID
 	RelatedID uuid.UUID
 	Kind      string
 	CreatedBy *uuid.UUID
 	CreatedAt time.Time
+}
+
+type TaskSearch struct {
+	ID          uuid.UUID
+	WorkspaceID uuid.UUID
+	UserID      uuid.UUID
+	Name        string
+	Query       []byte
+	Position    int32
+	CreatedAt   time.Time
 }
 
 type TaskSubscriber struct {

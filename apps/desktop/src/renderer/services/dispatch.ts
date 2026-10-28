@@ -190,6 +190,7 @@ export function applyDispatch(ev: DispatchEvent): void {
       resyncCanvasComments();
       // Read receipts (docs/09 #92): workspace rooms here, DMs with their summaries (applyDm).
       useReadReceipts.getState().reset();
+      useReadReceipts.getState().setFrom(r.readReceiptsFrom); // ADR-0140: no ticks before it
       for (const pr of r.peerReads) useReadReceipts.getState().set(pr.roomId, pr.lastReadMessageId);
       rooms.setNotifyAll(r.notificationSettings);
       rooms.setWsNotifyAll(r.workspaceNotificationSettings);

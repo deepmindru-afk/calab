@@ -51,6 +51,7 @@ const api: CalabaApi = {
     openCheckout: (url) => ipcRenderer.invoke(IPC.appOpenCheckout, url),
     legal: () => ipcRenderer.invoke(IPC.appLegal),
     attention: () => void ipcRenderer.invoke(IPC.appAttention),
+    showWindow: () => void ipcRenderer.invoke(IPC.appShowWindow),
     setBadge: (n) => void ipcRenderer.invoke(IPC.appSetBadge, n),
     setTheme: (theme) => void ipcRenderer.invoke(IPC.appSetTheme, theme),
     setStrings: (s) => void ipcRenderer.invoke(IPC.appSetStrings, s),

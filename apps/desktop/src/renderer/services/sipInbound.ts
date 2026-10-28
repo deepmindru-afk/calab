@@ -3,6 +3,7 @@ import { t } from '../i18n';
 import { ApiError } from '../lib/api/client';
 import { api } from '../lib/api/endpoints';
 import { holdNotification } from '../lib/notifyHold';
+import { toSource } from '../lib/notifyClick';
 import { log } from '../lib/log';
 import { formatPhone } from '../lib/sip';
 import { phonePartyLabel } from '../lib/sipOutbound';
@@ -79,10 +80,7 @@ function notify(c: SipCall): void {
       silent: true,
       requireInteraction: true,
     }));
-    n.onclick = () => {
-      window.focus();
-      n.close();
-    };
+    n.onclick = toSource(() => n.close());
     notice = n;
   } catch {
     // notifications unavailable

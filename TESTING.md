@@ -2333,3 +2333,12 @@ Stand with a real provider (telephony on, a Caller ID), member A with `PLACE_CAL
 4. «Недавние»: the missed row shows the name; on a phone a tap calls back (desktop: 📞 on hover). With A in a voice room: «Вызов…» (phone) / «Набираем…» in the island, ring-back plays, the room is paused; answer on the second phone → the call band; hang up → back in the room.
 5. Answered call: «Клавиатура» → press 1 2 #; the second phone (or an IVR you call) hears / receives the tones. If not — record it in docs/12 (DTMF line).
 6. «Набор»: type «101» → «Имя · вн. 101», call → internal call; long press «0» → «+»; paste «Тел.: 8 (916) 123-45-67» → «8 916 123-45-67». Member without `PLACE_CALLS`: the note, the call button only for internal numbers.
+
+## Notifications lead to the source; «Упоминания» with task events (ADR-0141, #99)
+
+macOS desktop build, two workspaces, member B in both; A mentions and assigns B.
+
+1. B hides the window with the red button (app in the tray). A writes «@B» in #общий of the second workspace → the notification title is «#общий (Вторая) · A»; click → the window appears, the second workspace opens #общий at that message.
+2. B minimises the window (yellow button). A assigns B a task → «KEY-N · Название», body «A назначил(а) вас»; click → the window restores, the task opens.
+3. Same with the window open but another app in front; and with notifications grouped in the Notification Center (click an older one).
+4. Title bar «Упоминания»: the mention and the task event are listed (dot = unread); after reading them they stay, without the dot; a reload keeps both.

@@ -399,6 +399,7 @@ export const enBoards: DictShape<typeof ruBoards> = {
   'boards.noteOf': 'What {name} is responsible for',
   'boards.removeAssignee': 'Remove {name}',
   'boards.addLabel': 'Label',
+  'boards.labelsMore': '+{n} more labels',
   'boards.imageGone': 'Image removed from attachments',
   'boards.attach': 'Attach',
   'boards.removeAttachment': 'Remove {name}',

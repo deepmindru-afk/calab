@@ -16,10 +16,11 @@ import { DRAG_USER, dragKind } from '../calendar/dragState';
 import { ApprovalTag } from './Approvals';
 import { GitBadge } from './GitLinks';
 import { AssigneeStack } from './AssigneeStack';
+import { LabelsOverflow, stopClick } from './LabelsOverflow';
 import { openInTab, tabClick } from './TaskTabs';
 import { AssigneeMenu, DateMenu, LabelMenu, PriorityMenu, StatusMenu, useToday } from './menus';
 import { doneType, hasBit, mayArchiveTask, mayEditTask, CREATE_TASKS, MANAGE_BOARD } from './model';
-import { Dot, PRIORITY_LABEL, PriorityIcon, StatusIcon, formatDue, isOverdue, PRIORITIES } from './visuals';
+import { PRIORITY_LABEL, PriorityIcon, StatusIcon, formatDue, isOverdue, PRIORITIES } from './visuals';
 import { chordLabel, BOARD_HOTKEYS, type BoardHotkeyId } from './hotkeys';
 import { IS_MAC } from '../../services/hotkeys';
 import { useDisabledFeatures, useFeatureOn } from './useBoardView';
@@ -183,6 +184,7 @@ export const TaskCard = memo(function TaskCard({
           {task.title}
         </span>
       </div>
+      {on(BoardFeature.LABELS) ? <CardLabels task={task} boardId={boardId} canEdit={canEdit} canCreate={hasBit(perms, CREATE_TASKS) && !scoped} req={menuOpen('label')} /> : null}
       <div className="flex min-w-0 flex-wrap items-center gap-1">
         {on(BoardFeature.PRIORITY) ? (
           <PriorityMenu value={task.priority} onPick={(p) => p !== task.priority && void updateTask(id, { priority: p })} {...menuOpen('priority')}>
@@ -191,7 +193,6 @@ export const TaskCard = memo(function TaskCard({
             </button>
           </PriorityMenu>
         ) : null}
-        {on(BoardFeature.LABELS) ? <CardLabels task={task} boardId={boardId} canEdit={canEdit} canCreate={hasBit(perms, CREATE_TASKS) && !scoped} chip={chip} req={menuOpen('label')} /> : null}
         {on(BoardFeature.DUE_DATE) && (task.dueOn || menuReq?.kind === 'due') ? (
           <DateMenu value={task.dueOn} onPick={(d) => void updateTask(id, { dueOn: d })} title={t('boards.f.dueOn')} {...menuOpen('due')}>
             <button type="button" onClick={stop} disabled={!canEdit} className={cx(chip, overdue && 'border-[color-mix(in_srgb,var(--color-red)_45%,transparent)] text-danger-text')} data-testid="card-due">
@@ -271,26 +272,22 @@ export function useBlockedStatuses(task: Task | undefined, boardId: string): Rea
   return useMemo(() => (statuses ? blockedStatusIds({ approvalState: state, statusId }, statuses) : undefined), [statuses, state, statusId]);
 }
 
-function CardLabels({ task, boardId, canEdit, canCreate, chip, req }: { task: Task; boardId: string; canEdit: boolean; canCreate: boolean; chip: string; req: { open?: boolean; onOpenChange?: (v: boolean) => void } }): ReactNode {
+function CardLabels({ task, boardId, canEdit, canCreate, req }: { task: Task; boardId: string; canEdit: boolean; canCreate: boolean; req: { open?: boolean; onOpenChange?: (v: boolean) => void } }): ReactNode {
   const labels = useBoards((s) => s.boards[boardId]?.labels);
-  const mine = (labels ?? []).filter((l) => task.labelIds.includes(l.id));
+  const labelIds = task.labelIds;
+  const mine = useMemo(() => (labels ?? []).filter((l) => labelIds.includes(l.id)), [labels, labelIds]);
   if (mine.length === 0 && !req.open) return null;
+  const row = <LabelsOverflow labels={mine} interactive={canEdit} onClick={stopClick} data-testid="card-labels" />;
+  if (!canEdit) return row;
   return (
     <LabelMenu
       boardId={boardId}
-      value={task.labelIds}
+      value={labelIds}
       canCreate={canCreate}
-      onToggle={(l) => void updateTask(task.id, { labelIds: task.labelIds.includes(l) ? task.labelIds.filter((x) => x !== l) : [...task.labelIds, l] })}
+      onToggle={(l) => void updateTask(task.id, { labelIds: labelIds.includes(l) ? labelIds.filter((x) => x !== l) : [...labelIds, l] })}
       {...req}
     >
-      <button type="button" onClick={(e) => e.stopPropagation()} disabled={!canEdit} className="inline-flex min-w-0 max-w-full items-center gap-1" data-testid="card-labels">
-        {mine.map((l) => (
-          <span key={l.id} className={cx(chip, 'min-w-0')}>
-            <Dot color={l.color} />
-            <span className="truncate">{l.name}</span>
-          </span>
-        ))}
-      </button>
+      {row}
     </LabelMenu>
   );
 }
