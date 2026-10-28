@@ -144,10 +144,14 @@ Rooms on iPhone mix with other apps and survive lock; the ADR-0004 native except
 (remote audio, cues and AEC in one engine). An iPhone with video holds two connections; the server
 learns a companion identity. v1 native gaps: own camera, musician mode, workspace clips, iOS 16.
 
+## Owner decisions (28.10)
+
+1. After a phone call the mic comes back muted.
+2. Bluetooth defaults to HFP: the headset mic works; music from other apps sounds like a phone call.
+3. v1 ships without own camera, musician mode and workspace sound clips on iPhone.
+4. `.mixWithOthers` stays on every route, the speaker included; revisit only if device tests show
+   music leaking into the room past the echo canceller.
+
 ## Open questions
 
-1. Owner: after a phone call the mic comes back muted (proposed) or restored?
-2. Owner: Bluetooth default HFP (headset mic, low-quality music) or a setting for A2DP + phone mic?
-3. Owner: is v1 without own camera, musician mode and workspace sound clips on iPhone acceptable?
-4. Owner: if music on the speaker leaks into the room, drop `.mixWithOthers` on the speaker route?
-5. Lead: companion identity, endpoint, webhook rules and `LIVEKIT_MAX_PARTICIPANTS` headroom.
+1. Lead: companion identity, endpoint, webhook rules and `LIVEKIT_MAX_PARTICIPANTS` headroom.

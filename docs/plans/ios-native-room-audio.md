@@ -1,7 +1,7 @@
 # iOS native room audio — implementation plan
 
 ADR: [0143](../adr/0143-ios-native-room-audio.md). Task: DEV-4955, GitHub #255. Status: proposed;
-the open questions of the ADR change details of R3/R7, not the order of steps.
+the remaining lead question of the ADR changes details of R5/R6, not the order of steps.
 
 Goal: on an iPhone shell built with `CALAB_IOS_NATIVE_ROOM_AUDIO=1`, workspace voice rooms use native
 LiveKit Swift audio that mixes with other apps, handles interruptions and survives lock, while the
@@ -149,7 +149,7 @@ Total ≈ 21 developer days + about 3 device sessions with the owner's iPhone an
 ## Critical path
 
 R0 → R1 (probe) → R2 → R3 → R4 → R6 → R9 ≈ 15 days. R5 runs beside R2–R4 (after ADR-0142 merges),
-R7 and R8 beside R4–R6. The probe's G5 result is the first go/no-go; G8/G9 decide open question 4.
+R7 and R8 beside R4–R6. The probe's G5 result is the first go/no-go; G8/G9 confirm owner decision 4 (mixing on the speaker).
 
 ## Device gates (iPhone, signed Release, desktop peer in the same room)
 
