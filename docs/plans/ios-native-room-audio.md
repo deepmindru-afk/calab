@@ -1,7 +1,7 @@
 # iOS native room audio — implementation plan
 
-ADR: [0143](../adr/0143-ios-native-room-audio.md). Task: DEV-4955, GitHub #255. Status: proposed;
-the remaining lead question of the ADR changes details of R5/R6, not the order of steps.
+ADR: [0143](../adr/0143-ios-native-room-audio.md). Task: DEV-4955, GitHub #255. Status: accepted
+28.10. Order: stage 1 (background and lock) first, stage 2 (the rest) after it.
 
 Goal: on an iPhone shell built with `CALAB_IOS_NATIVE_ROOM_AUDIO=1`, workspace voice rooms use native
 LiveKit Swift audio that mixes with other apps, handles interruptions and survives lock, while the
@@ -36,20 +36,32 @@ shared web keeps UI, REST, permissions, seat state and video. Everything else ke
 
 ## Steps
 
+### Stage 1: background and lock
+
 | # | Goal (one PR) | Layers | Depends | Days | iPhone |
 |---|---|---|---|---|---|
 | R0 | ADR-0143 + this plan | docs | — | 0.5 | — |
 | R1 | Session policy, engine owner and a debug probe | Swift | R0 | 2 | gates G1–G5 |
 | R2 | `roomAudio` bridge contract and capability | TS shared, RN, Swift parsers | R0 | 1.5 | — |
-| R3 | Native room driver behind the build flag | Swift, Expo plugin | R1, R2 | 4 | G6–G9, G14 |
-| R4 | Web voice service selects the native driver | web | R2, R3 | 3 | with R3 build |
+| R3 | Native room driver behind the build flag | Swift, Expo plugin | R1, R2 | 4 | G6, G8, G14 |
+| R4 | Web voice service selects the native driver | web | R2, R3 | 3 | stage 1 run |
+
+Done when an internal TestFlight build with only `CALAB_IOS_NATIVE_ROOM_AUDIO=1` passes G2, G3, G4,
+G6, G8, G14, G16 and G17. In that build a native-audio join shows no cameras or screens (R4 shows
+why), so it stays with internal testers.
+
+### Stage 2: the rest
+
+| # | Goal (one PR) | Layers | Depends | Days | iPhone |
+|---|---|---|---|---|---|
 | R5 | Server companion identity and endpoint | proto, Go | R0, ADR-0144 | 3 | — |
 | R6 | Web companion connection for video and data | web | R4, R5 | 2.5 | G10 |
 | R7 | Live Activity updates and lock-screen mute | Swift, widget | R3 | 2 | G12, G13 |
 | R8 | CallKit coexistence through the engine owner | Swift | R1, R3 | 1.5 | G11, G15 |
 | R9 | Device acceptance run, docs, status | docs | R3–R8 | 1 + 2 device | all |
 
-Total ≈ 21 developer days + about 3 device sessions with the owner's iPhone and a desktop peer.
+Stage 1 ≈ 11 developer days + 1 device session, stage 2 ≈ 10 days + 2 device sessions, with the
+owner's iPhone and a desktop peer.
 
 ### R1. Session policy, engine owner, probe (critical: decides go/no-go early)
 
@@ -90,15 +102,15 @@ Total ≈ 21 developer days + about 3 device sessions with the owner's iPhone an
   `tests/VoiceGateTests.swift` (2-frame open, 400 ms hangover, ptt, open), `tests/ReconnectScheduleTests.swift`
   (worst-case delays + socket/transport timeouts < VOICE_LOST_GRACE 60 s; the SDK default does not
   fit), `plugins/withCallAudio.test.js` (flag on/off, no stale pod line).
-- iPhone: G6–G9, G14 with a local web preview of R4 (no silent web deploy).
+- iPhone: G6, G8, G14 with a local web preview of R4 (no silent web deploy); G7 and G9 in stage 2.
 
 ### R4. Web voice service
 
 - Files: `renderer/lib/media/hostRoomAudio.ts` (`HostRoomAudioSession`, like `HostCallAudioSession`),
   `renderer/services/voice.ts` (room joins choose native when the capability exists: no
   `getUserMedia` audio, no `<audio>`, controls from the store, cues and mic-test levels through
-  native, musician mode and workspace clips hidden with a reason, one foreground fallback to the
-  web path before capture), `renderer/platform/*` (capability exposure),
+  native, musician mode and workspace clips hidden with a reason, cameras and screens replaced by
+  a reason until R6, one foreground fallback to the web path before capture), `renderer/platform/*` (capability exposure),
   `renderer/lib/voiceLogic.ts` only if gate mapping needs it.
 - Tests: `lib/media/hostRoomAudio.test.ts`, `services/voice.test.ts` (one owner per join, no web
   capture, recovery paths skipped, fallback only before capture, state mapping, rejoin on `lost`).
@@ -144,12 +156,12 @@ Total ≈ 21 developer days + about 3 device sessions with the owner's iPhone an
 
 - `docs/mobile/room-audio-testing.md` (scenario and results), `docs/02-media.md` (native exception
   covers rooms; Safari limitation), `docs/mobile/shared-web-status.md`, `TESTING.md` (≤15 lines),
-  ADR-0143 status → accepted for a local opt-in, or revised with the device findings.
+  ADR-0143 status line records the device results; a finding that contradicts it goes to a new ADR.
 
 ## Critical path
 
-R0 → R1 (probe) → R2 → R3 → R4 → R6 → R9 ≈ 15 days. R5 runs beside R2–R4 (after ADR-0144 merges),
-R7 and R8 beside R4–R6. The probe's G5 result is the first go/no-go; G8/G9 confirm product decision 4 (mixing on the speaker).
+Stage 1: R0 → R1 (probe) → R2 → R3 → R4 ≈ 11 days, then the stage 1 device run. Stage 2 starts
+after it: R5 → R6 → R9, with R7 and R8 beside R5–R6. The probe's G5 result is the first go/no-go; G8/G9 confirm product decision 4 (mixing on the speaker).
 
 ## Device gates (iPhone, signed Release, desktop peer in the same room)
 

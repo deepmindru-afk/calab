@@ -1,6 +1,6 @@
 # ADR-0143. iOS: native audio for voice rooms in the phone shell
 
-Status: proposed, 2026-10-28 (DEV-4955, GitHub #255). Extends ADR-0067/0079; amends ADR-0004 (native
+Status: accepted, 2026-10-28 (DEV-4955, GitHub #255); background and lock ship first (Delivery order). Extends ADR-0067/0079; amends ADR-0004 (native
 output exception), ADR-0014 (gate implementation) and ADR-0069 (lock-screen mute). Aligned with
 ADR-0144 (60 s seat grace). Plan: [ios-native-room-audio](../plans/ios-native-room-audio.md).
 
@@ -120,6 +120,18 @@ activate before enabling the engine, deactivate with `.notifyOthersOnDeactivatio
 - Live Activity (ADR-0069): native updates phase and mute between web snapshots; a lock-screen mute
   button (`LiveActivityIntent`) toggles native mute, the server learns it from the track.
 
+## Delivery order
+
+Background and lock come first, the rest follows (28.10).
+- Stage 1, background and lock: session policy and engine owner, bridge, native room driver, web
+  selection. A room keeps two-way audio in background, locked, while music starts, while a Telegram
+  video note is recorded and across a network change. The §6 session policy ships as is, mixing
+  included. Built with the room flag only, without the CallKit flag. A native-audio join shows no
+  cameras or screens yet (the audio-only internal stage of §3), so the build goes to internal
+  testers only.
+- Stage 2, the rest: companion video (§3), Live Activity updates and lock-screen mute (§7), CallKit
+  coexistence (§6), loudness and Bluetooth checks on device, then a build for everyone.
+
 ## Rollout and gates
 
 - Build flag `CALAB_IOS_NATIVE_ROOM_AUDIO=1`, independent from incoming calls; the plugin links the
@@ -144,7 +156,7 @@ Rooms on iPhone mix with other apps and survive lock; the ADR-0004 native except
 (remote audio, cues and AEC in one engine). An iPhone with video holds two connections; the server
 learns a companion identity. v1 native gaps: own camera, musician mode, workspace clips, iOS 16.
 
-## Product decisions proposed with DEV-4955 (28.10, for the lead's review)
+## Product decisions (28.10)
 
 1. After a phone call the mic comes back muted.
 2. Bluetooth defaults to HFP: the headset mic works; music from other apps sounds like a phone call.
@@ -152,6 +164,7 @@ learns a companion identity. v1 native gaps: own camera, musician mode, workspac
 4. `.mixWithOthers` stays on every route, the speaker included; revisit only if device tests show
    music leaking into the room past the echo canceller.
 
-## Open questions
+## Settled in stage 2
 
-1. Lead: companion identity, endpoint, webhook rules and `LIVEKIT_MAX_PARTICIPANTS` headroom.
+Companion details (identity format, endpoint, webhook rules, `LIVEKIT_MAX_PARTICIPANTS` headroom) are
+reviewed with the R5 pull request.
