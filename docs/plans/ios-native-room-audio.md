@@ -24,7 +24,7 @@ shared web keeps UI, REST, permissions, seat state and video. Everything else ke
 
 ## Alignment with parallel work
 
-- ADR-0142 seat grace (`fix/dev-4955-voice-seat-grace`, VOICE_LOST_GRACE 60 s, `connection_lost`):
+- ADR-0144 seat grace (`fix/dev-4955-voice-seat-grace`, VOICE_LOST_GRACE 60 s, `connection_lost`):
   R5 starts after it merges; companion rules sit next to `seatAfterDrop`/`explicitRelease` and never
   feed them. R3's reconnect schedule is tested to end inside the grace: a LiveKit reconnect after
   the grace would recreate the seat through `participant_joined`.
@@ -43,7 +43,7 @@ shared web keeps UI, REST, permissions, seat state and video. Everything else ke
 | R2 | `roomAudio` bridge contract and capability | TS shared, RN, Swift parsers | R0 | 1.5 | — |
 | R3 | Native room driver behind the build flag | Swift, Expo plugin | R1, R2 | 4 | G6–G9, G14 |
 | R4 | Web voice service selects the native driver | web | R2, R3 | 3 | with R3 build |
-| R5 | Server companion identity and endpoint | proto, Go | R0, ADR-0142 | 3 | — |
+| R5 | Server companion identity and endpoint | proto, Go | R0, ADR-0144 | 3 | — |
 | R6 | Web companion connection for video and data | web | R4, R5 | 2.5 | G10 |
 | R7 | Live Activity updates and lock-screen mute | Swift, widget | R3 | 2 | G12, G13 |
 | R8 | CallKit coexistence through the engine owner | Swift | R1, R3 | 1.5 | G11, G15 |
@@ -148,8 +148,8 @@ Total ≈ 21 developer days + about 3 device sessions with the owner's iPhone an
 
 ## Critical path
 
-R0 → R1 (probe) → R2 → R3 → R4 → R6 → R9 ≈ 15 days. R5 runs beside R2–R4 (after ADR-0142 merges),
-R7 and R8 beside R4–R6. The probe's G5 result is the first go/no-go; G8/G9 confirm owner decision 4 (mixing on the speaker).
+R0 → R1 (probe) → R2 → R3 → R4 → R6 → R9 ≈ 15 days. R5 runs beside R2–R4 (after ADR-0144 merges),
+R7 and R8 beside R4–R6. The probe's G5 result is the first go/no-go; G8/G9 confirm product decision 4 (mixing on the speaker).
 
 ## Device gates (iPhone, signed Release, desktop peer in the same room)
 

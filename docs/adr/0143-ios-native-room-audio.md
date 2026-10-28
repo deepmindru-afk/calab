@@ -2,11 +2,11 @@
 
 Status: proposed, 2026-10-28 (DEV-4955, GitHub #255). Extends ADR-0067/0079; amends ADR-0004 (native
 output exception), ADR-0014 (gate implementation) and ADR-0069 (lock-screen mute). Aligned with
-ADR-0142 (60 s seat grace). Plan: [ios-native-room-audio](../plans/ios-native-room-audio.md).
+ADR-0144 (60 s seat grace). Plan: [ios-native-room-audio](../plans/ios-native-room-audio.md).
 
 ## Context
 
-Owner on an iPhone, 28.10: in a room, music, Instagram and other apps are inaudible or their volume
+Reported on an iPhone, 28.10: in a room, music, Instagram and other apps are inaudible or their volume
 "pumps"; starting music interrupts the room; lock/background leads to reconnects and sometimes no
 audio either way afterwards. The shell runs LiveKit JS inside one WKWebView (ADR-0067), so WebKit
 owns the app's AVAudioSession: non-mixable play-and-record, and the mic stays captured while muted
@@ -53,7 +53,7 @@ watch, annotations), never an audio kind; native subscribes screen-share audio w
   room (pending, connected or held) and the identity check, never creates or changes a seat. Grant:
   subscribe (VIEW_ROOM & CONNECT), data, no sources in v1, TTL 10 min; not `hidden` (data needs it).
 - `voice.ParseIdentity` keeps rejecting the suffix (pin with a test); new `ParseCompanion`.
-  Companion join/leave never touches voice state, ADR-0142 grace, cues or SIP `PersonLeft`; one
+  Companion join/leave never touches voice state, ADR-0144 grace, cues or SIP `PersonLeft`; one
   without its session's seat is removed. Every path that removes a device (leave, kick, revoke,
   other device, grace expiry, sweep, reconcile) removes its companion; resync updates its grant.
 - DUPLICATE_IDENTITY: the distinct identity never displaces the native connection; a newer
@@ -144,7 +144,7 @@ Rooms on iPhone mix with other apps and survive lock; the ADR-0004 native except
 (remote audio, cues and AEC in one engine). An iPhone with video holds two connections; the server
 learns a companion identity. v1 native gaps: own camera, musician mode, workspace clips, iOS 16.
 
-## Owner decisions (28.10)
+## Product decisions proposed with DEV-4955 (28.10, for the lead's review)
 
 1. After a phone call the mic comes back muted.
 2. Bluetooth defaults to HFP: the headset mic works; music from other apps sounds like a phone call.
