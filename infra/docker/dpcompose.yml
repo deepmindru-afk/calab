@@ -37,8 +37,7 @@ services:
     #deploy:
     #  resources:
     #    limits: { memory: 512m }
-    command: caddy run --config /etc/caddy/Caddyfile
-    #.behind-proxy
+    command: caddy run --config /etc/caddy/Caddyfile.behind-proxy
     env_file:
       .env
     environment:
