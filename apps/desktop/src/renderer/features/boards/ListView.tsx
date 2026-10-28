@@ -342,7 +342,7 @@ export const ListRow = memo(function ListRow({ id, boardId, boardLabel, workspac
           align="end"
           {...req('assignee')}
         >
-          <button type="button" onClick={stop} disabled={!canEdit} className="flex h-6 min-w-6 shrink-0 items-center justify-end rounded-[var(--radius-icon)] px-0.5 hover:bg-hover disabled:pointer-events-none disabled:hover:bg-transparent" aria-label={t('boards.f.assignee')}>
+          <button type="button" onClick={stop} disabled={!canEdit} className="flex h-6 min-w-6 shrink-0 items-center justify-end rounded-[var(--radius-icon)] px-0.5 disabled:pointer-events-none" aria-label={t('boards.f.assignee')}>
             {task.assignees.length ? <AssigneeStack workspaceId={workspaceId} assignees={task.assignees} /> : <UserRound className="size-4 text-faint" aria-hidden />}
           </button>
         </AssigneeMenu>

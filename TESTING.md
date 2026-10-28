@@ -2067,6 +2067,7 @@ CALABA_WEB_URL=http://127.0.0.1:39571 npx playwright test --config playwright.we
 | C.27 | «Удалить из календаря»: своё событие с участниками, чужое приглашение, вхождение серии («Только это событие»), серия; затем изменить событие у провайдера и удалить в Calab без синхронизации; календарь только для чтения | Текст подтверждения по роли; событие исчезает сразу и у провайдера (участникам — отмена); вхождение — остальные остаются; изменённое — тост «изменилось», событие на месте; read-only — тост; боту / гостю `DELETE /api/me/external-events` — 403 |
 | C.28 | ADR-0104. А и Bob открывают одну встречу (Bob — участник), Carol видит её комнату, Dave — нет (встреча без комнаты). Bob пишет комментарий (Enter), правит его («…» → «Изменить»), А удаляет комментарий Bob; Carol комментирует встречу в своей комнате; curl Dave `GET /api/events/<id>/comments`, гость — то же | Комментарий появляется у всех открытых карточек без перезагрузки (`EVENT_COMMENT_UPSERT`), «Комментарии — N» растёт; «изменено» после правки; у А «…» → «Удалить» на чужом, у Bob «Изменить» только на своём; Dave — 404, гость — 403; у отменённой встречи комментарии видны, поля ввода нет |
 | C.29 | Диалог встречи → «Добавить участников» → ввести `@all` → строка «@all · все участники пространства · N» | Чипы всех участников пространства без гостей и ботов; больше 12 — первые 10 и «+N», рядом с «Участники» число и «Убрать всех»; в пространстве > 99 человек строка неактивна «больше 99 — во встрече до 100 человек» |
+| C.30 | Bug board #85. Настройки → Календарь → «Добавить часовой пояс» → «kolk» → Kolkata; ещё New York, подпись «Нью-Йорк», ↑; третий добавить нельзя. День и неделя; диалог новой встречи; второе устройство того же аккаунта; телефон 375 px | Слева от основной шкалы две приглушённые колонки в строках сетки (Kolkata — «…:30»), в шапке подпись и «UTC+5:30»; пилюля даты в строке полуночи пояса («+1 д» в неделе); линия «сейчас» проходит через колонки; в диалоге — время встречи в обоих поясах; на втором устройстве те же пояса; × убирает колонку; у коллеги без поясов календарь прежний |
 
 Автотесты: `docs/20-calendar-testing.md` (Go-интеграционные `internal/app/events_*_integration_test.go`, unit десктопа, Playwright e2e против мока, прод-smoke).
 
@@ -2342,3 +2343,16 @@ macOS desktop build, two workspaces, member B in both; A mentions and assigns B.
 2. B minimises the window (yellow button). A assigns B a task → «KEY-N · Название», body «A назначил(а) вас»; click → the window restores, the task opens.
 3. Same with the window open but another app in front; and with notifications grouped in the Notification Center (click an older one).
 4. Title bar «Упоминания»: the mention and the task event are listed (dot = unread); after reading them they stay, without the dot; a reload keeps both.
+
+## Office files in ONLYOFFICE (ADR-0143, #98)
+
+A Document Server per docs/ops/office-onlyoffice-deploy.md, `OFFICE_ENABLED=true`; desktop app, members A («Правка») and B («Просмотр» on folder «Отчёты»), a call going on.
+
+1. A: Disk → «+» shows Папка, Документ, Таблица, Презентация, Загрузить файлы → «Таблица»: «Новая таблица.xlsx» opens at once as a tab in the title bar; the island (mute, the self panel) stays, the editor's status bar is above it.
+2. Type in a cell, Ctrl+S → «Все изменения сохранены»; the Disk row shows the new size, «История» an edit entry; download it and open in Excel / LibreOffice and with openpyxl.
+3. «Создать → Таблица» again → «Новая таблица (2).xlsx». B opens the first one: view only, the row shows «Редактирует A» while A has it open.
+4. B: «+» in «Отчёты» is absent (no write); in the root it creates a «Документ» — Russian text is not underlined.
+5. A sends an xlsx in chat; B opens it: view only, «Сохранить в Диск» → a new Disk item opens editable. A legacy .doc: «Сохранить как .docx» makes a copy next to it.
+6. Close a tab with unsaved changes → the three-button dialog. Hide the window for 5 minutes, show it → the editor opens again.
+7. Phone: «Создать → Документ» → the file is in the list with the note «Править его можно на компьютере»; opening it views only.
+8. `OFFICE_ENABLED=false` + rollout: after a reconnect the office items and the editor are gone, xlsx opens its card as before.

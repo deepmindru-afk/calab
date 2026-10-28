@@ -8,29 +8,41 @@ export function leadArgv(prompt: string): string[] {
 /** Read-only paths of the assistant's checkout (relative to its cwd). */
 export const ASSIST_READ_PATHS = ['./docs/**', './apps/**'] as const;
 
-/** The handoff tool's subcommands each mode may call (`handoff` = "<node> <…/handoff.mjs>"). */
-export const ASSIST_HANDOFF_VERBS = ['add', 'board'] as const;
-export const WAKE_HANDOFF_VERBS = ['add', 'reply', 'chat', 'gh', 'board'] as const;
+/** Built-in tools that exist in the sandboxed runs: file reads only. Everything else goes through MCP. */
+export const SANDBOX_BUILTINS = 'Read,Grep,Glob';
 
 /**
- * Settings passed inline (`--settings`): the file tools and Claude Code's built-in read-only Bash commands
- * (cat, head, grep, find…) may not read outside the working directory. Without it those commands run
- * without a prompt in every mode, on any path a Read deny rule does not name.
+ * Settings passed inline (`--settings`): the file tools may not read outside the working directory, and no
+ * auto-memory (it would load the owner's project memory). Not `--safe-mode`: it also drops the servers of
+ * `--mcp-config` (checked live with Claude Code 2.1.312), and the runs' tools are an MCP server.
  */
-export const SANDBOX_SETTINGS = JSON.stringify({ permissions: { blockReadsOutsideWorkingDirectories: true } });
+export const SANDBOX_SETTINGS = JSON.stringify({ permissions: { blockReadsOutsideWorkingDirectories: true }, autoMemoryEnabled: false });
 
 /**
- * One rule per fixed command: the handoff tool, which parses its own arguments (src/tools.ts). No `gh`,
- * `python3` or any other program directly: Bash prefix rules are not a boundary (`gh pr comment:*` also
- * admits `-R other/repo` and `--body-file ~/.ssh/…`; `python3 * status:*` matches `python3 -c …`).
+ * Built-in tools denied by name on top of `--tools` (defense in depth). No shell at all: Bash prefix rules
+ * are not a boundary, and a deny such as `Bash(node:*)` also matched the absolute node of the old
+ * `handoff.mjs` allow rule, so every wake run had all its tools refused (28.10).
  */
-function handoffRules(handoff: string, verbs: readonly string[]): string[] {
-  return verbs.map((v) => `Bash(${handoff} ${v}:*)`);
-}
-
-export function assistAllowedTools(handoff: string): string[] {
-  return [...ASSIST_READ_PATHS.flatMap((p) => [`Read(${p})`, `Grep(${p})`, `Glob(${p})`]), ...handoffRules(handoff, ASSIST_HANDOFF_VERBS)];
-}
+export const DENIED_BUILTINS = [
+  'Bash',
+  'BashOutput',
+  'KillShell',
+  'Monitor',
+  'Write',
+  'Edit',
+  'MultiEdit',
+  'NotebookEdit',
+  'WebFetch',
+  'WebSearch',
+  'Agent',
+  'Task',
+  'TodoWrite',
+  'Skill',
+  'SlashCommand',
+  'ExitPlanMode',
+  'ListMcpResourcesTool',
+  'ReadMcpResourceTool',
+] as const;
 
 /** Paths no sandboxed run may read: secrets, the owner's checkout and session data, the inbox. */
 function secretReads(home: string, ownerRepo: string, inboxDir: string): string[] {
@@ -52,39 +64,19 @@ function secretReads(home: string, ownerRepo: string, inboxDir: string): string[
   ];
 }
 
-/**
- * Bash programs no sandboxed run may call, even inside `$(…)` or a pipe (deny rules match nested
- * commands): Claude Code runs its built-in read-only set (cat, head, grep, find, ls…) without a prompt,
- * and the rest are readers, interpreters or network tools a manipulated run could exfiltrate with.
- */
-export const DENIED_PROGRAMS = [
-  ...['cat', 'head', 'tail', 'less', 'more', 'grep', 'egrep', 'fgrep', 'rg', 'find', 'ls', 'stat', 'file', 'wc', 'du', 'diff', 'cmp'],
-  ...['strings', 'xxd', 'od', 'hexdump', 'base64', 'sed', 'awk', 'cut', 'sort', 'uniq', 'tr', 'tee', 'nl', 'rev', 'column'],
-  ...['env', 'printenv', 'set', 'export', 'declare', 'ps', 'lsof', 'security', 'defaults', 'plutil', 'sqlite3', 'mdfind', 'mdls'],
-  ...['git', 'gh', 'curl', 'wget', 'nc', 'ssh', 'scp', 'rsync', 'python', 'python3', 'node', 'npx', 'pnpm', 'npm', 'bash', 'sh', 'zsh'],
-  ...['osascript', 'open', 'pbcopy', 'pbpaste', 'cp', 'mv', 'ln', 'dd', 'tar', 'zip', 'unzip', 'xargs', 'eval', 'exec', 'source'],
-] as const;
-
 export function sandboxDisallowedTools(home: string, ownerRepo: string, inboxDir: string): string[] {
-  return [
-    'Write',
-    'Edit',
-    'MultiEdit',
-    'NotebookEdit',
-    'WebFetch',
-    'WebSearch',
-    'Agent',
-    'Task',
-    ...DENIED_PROGRAMS.map((p) => `Bash(${p}:*)`),
-    ...secretReads(home, ownerRepo, inboxDir).flatMap((p) => [`Read(${p})`, `Grep(${p})`, `Glob(${p})`]),
-  ];
+  return [...DENIED_BUILTINS, ...secretReads(home, ownerRepo, inboxDir).flatMap((p) => [`Read(${p})`, `Grep(${p})`, `Glob(${p})`])];
 }
 
-/** Flags common to the sandboxed runs: no settings, MCP, skills or CLAUDE.md; refuse whatever is not allowed. */
-function sandboxFlags(maxBudgetUsd: number): string[] {
+/**
+ * Flags common to the sandboxed runs: no settings, skills or slash commands, no MCP servers but the runs'
+ * own (`--strict-mcp-config` + `--mcp-config`), only Read/Grep/Glob of the built-ins; refuse the rest.
+ */
+function sandboxFlags(maxBudgetUsd: number, mcpConfig: string): string[] {
   return [
-    '--safe-mode',
     '--strict-mcp-config',
+    '--mcp-config',
+    mcpConfig,
     '--setting-sources=',
     '--settings',
     SANDBOX_SETTINGS,
@@ -96,28 +88,41 @@ function sandboxFlags(maxBudgetUsd: number): string[] {
     'none',
     '--max-budget-usd',
     String(maxBudgetUsd),
+    '--tools',
+    SANDBOX_BUILTINS,
   ];
 }
 
+export interface SandboxOpts {
+  /** JSON for `--mcp-config` (src/mcp.ts `mcpConfig`). */
+  mcpConfig: string;
+  /** The run's MCP tools, `mcp__calab__…` (src/mcp.ts `mcpToolNames`). */
+  mcpTools: readonly string[];
+  home: string;
+  ownerRepo: string;
+  inboxDir: string;
+}
+
+export function assistAllowedTools(mcpTools: readonly string[]): string[] {
+  return [...ASSIST_READ_PATHS.flatMap((p) => [`Read(${p})`, `Grep(${p})`, `Glob(${p})`]), ...mcpTools];
+}
+
 /**
- * The Sonnet assistant: only Read/Grep/Glob/Bash exist (`--tools`), Bash only for the handoff tool (board
- * reads, comments, new tasks, labels; requests to the lead), reads only in docs/ and apps/ of its own
- * checkout. The chat goes on stdin.
+ * The Sonnet assistant: Read/Grep/Glob of docs/ and apps/ of its own checkout and its MCP tools (board
+ * reads, comments, new tasks, labels; requests to the lead). The chat goes on stdin.
  */
-export function assistArgv(opts: { systemPrompt: string; handoff: string; home: string; ownerRepo: string; inboxDir: string; maxBudgetUsd?: number }): string[] {
+export function assistArgv(opts: SandboxOpts & { systemPrompt: string; maxBudgetUsd?: number }): string[] {
   return [
     '-p',
     '--model',
     'sonnet',
     '--output-format',
     'json',
-    ...sandboxFlags(opts.maxBudgetUsd ?? 0.5),
+    ...sandboxFlags(opts.maxBudgetUsd ?? 0.5, opts.mcpConfig),
     '--system-prompt',
     opts.systemPrompt,
-    '--tools',
-    'Read,Grep,Glob,Bash',
     '--allowedTools',
-    ...assistAllowedTools(opts.handoff),
+    ...assistAllowedTools(opts.mcpTools),
     '--disallowedTools',
     ...sandboxDisallowedTools(opts.home, opts.ownerRepo, opts.inboxDir),
   ];
@@ -125,15 +130,16 @@ export function assistArgv(opts: { systemPrompt: string; handoff: string; home: 
 
 // ---- wake runs: the lead woken by the poller, on untrusted input, so never bypassPermissions ----
 
-export function wakeAllowedTools(handoff: string): string[] {
-  return ['Read(./**)', 'Grep(./**)', 'Glob(./**)', ...handoffRules(handoff, WAKE_HANDOFF_VERBS)];
+export function wakeAllowedTools(mcpTools: readonly string[]): string[] {
+  return ['Read(./**)', 'Grep(./**)', 'Glob(./**)', ...mcpTools];
 }
 
 /**
  * A wake run: the lead on `model` in a clean checkout of main (not the owner's), `dontAsk` with an explicit
- * allowlist (repo reads and the handoff tool only). The prompt goes on stdin (the tool lists are variadic).
+ * allowlist (repo reads and the run's MCP tools; no shell). The prompt goes on stdin (the tool lists are
+ * variadic).
  */
-export function wakeArgv(opts: { model: string; handoff: string; home: string; ownerRepo: string; inboxDir: string; maxBudgetUsd: number }): string[] {
+export function wakeArgv(opts: SandboxOpts & { model: string; maxBudgetUsd: number }): string[] {
   return [
     '-p',
     '--model',
@@ -141,11 +147,9 @@ export function wakeArgv(opts: { model: string; handoff: string; home: string; o
     '--output-format',
     'stream-json',
     '--verbose',
-    ...sandboxFlags(opts.maxBudgetUsd),
-    '--tools',
-    'Read,Grep,Glob,Bash',
+    ...sandboxFlags(opts.maxBudgetUsd, opts.mcpConfig),
     '--allowedTools',
-    ...wakeAllowedTools(opts.handoff),
+    ...wakeAllowedTools(opts.mcpTools),
     '--disallowedTools',
     ...sandboxDisallowedTools(opts.home, opts.ownerRepo, opts.inboxDir),
   ];

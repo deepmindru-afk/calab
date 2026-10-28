@@ -36,6 +36,8 @@ export type Dialog =
   | { kind: 'image'; images: LightboxImage[]; index: number; inChat?: { roomId: string; messageId: string }; diskItemIds?: string[] }
   /** The PDF viewer of an API file (ADR-0103): Chromium's built-in viewer in a blob: frame, «Скачать». */
   | { kind: 'pdf'; file: { id: string; name: string; size: bigint }; diskItemId?: string }
+  /** Closing a file tab with unsaved changes (ADR-0143): save and close, discard, cancel. */
+  | { kind: 'office-unsaved'; tabId: string }
   /**
    * A meeting recording opened from a search hit at a segment (ADR-0062 §4): the player and the
    * summary from its card message (messageId, '' = gone), the transcript.

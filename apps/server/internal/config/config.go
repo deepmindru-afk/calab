@@ -236,6 +236,9 @@ type Config struct {
 
 	// Balance billing (ADR-0080 v5): BILLING_* and STRIPE_* (config/billing.go).
 	Billing Billing
+
+	// Office editing in ONLYOFFICE Docs (ADR-0143, spike): OFFICE_* (config/office.go).
+	Office Office
 }
 
 // BotLimits returns the effective bot limits (defaults for 0).
@@ -453,6 +456,9 @@ func (c *Config) Validate() error {
 		errs = append(errs, errors.New("RECORDINGS_PATH must be set and RECORDING_EGRESS_DIR an absolute path (STORAGE_DRIVER=fs)"))
 	}
 	if err := c.Billing.validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.Office.validate(c.JWTSecret); err != nil {
 		errs = append(errs, err)
 	}
 	if c.BotRatePerSec < 0 || c.BotRatePerSec > 10000 || c.BotMessagesPerMin < 0 || c.BotMessagesPerMin > 100000 {

@@ -11,6 +11,7 @@ import { fmt, toDate, useTimeFormat } from '../../lib/format';
 import { Markdown } from '../../lib/markdown/Markdown';
 import { firstLink, isEmojiOnly, parseMarkdown } from '../../lib/markdown/parse';
 import { filePreview } from '../../lib/filePreview';
+import { officeOpens } from '../disk/office/bridge';
 import { isImageAttachment } from '../../lib/imageAttachment';
 import type { LightboxImage } from '../../lib/lightbox';
 import { AttachmentImg } from '../../components/AttachmentImg';
@@ -969,15 +970,16 @@ function ImageTile({ f, files, index, single, boxW, boxH }: { f: FileMeta; files
 
 function FileRow({ f }: { f: FileMeta }): ReactNode {
   // A PDF opens in the viewer (ADR-0103, its header has «Скачать»); anything else is saved.
-  const pdf = filePreview(f, useUi.getState().phone.on) === 'pdf';
+  const office = officeOpens(f.name);
+  const pdf = office || filePreview(f, useUi.getState().phone.on) === 'pdf';
   const download = (): void => openAttachment(f, [f]);
   return (
     <div className="group/file flex min-w-[min(220px,100%)] items-center gap-3 py-1">
-      <Tip label={t('chat.download')}>
+      <Tip label={office ? t('disk.open') : t('chat.download')}>
         <button
           type="button"
           onClick={download}
-          aria-label={`${t('chat.download')} ${f.name}`}
+          aria-label={`${office ? t('disk.open') : t('chat.download')} ${f.name}`}
           className="grid size-11 shrink-0 place-items-center rounded-full bg-[var(--bubble-chip-bg)] text-[color:var(--bubble-chip-fg)]"
         >
           <FileText className={cx('size-5', !pdf && 'group-hover/file:hidden')} aria-hidden />

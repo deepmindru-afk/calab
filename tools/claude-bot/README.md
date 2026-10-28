@@ -10,9 +10,9 @@ A small launchd daemon for the bot «Mr.Claude» (board «Calab bugs&features»)
   starts no CLI for `/check`.
 - **Chat assistant** (off by default, `CLAUDE_BOT_ASSISTANT=on`): a DM or a mention in a task chat is answered
   by `claude -p --model sonnet` (`assistant-prompt.md`): the last 20 messages on stdin as untrusted data;
-  tools only `Read/Grep/Glob` of docs/ and apps/ of its own checkout, `handoff.mjs board list|show|comment|create|label`
-  and `handoff.mjs add`; `dontAsk` refuses the rest; no settings, MCP, skills or CLAUDE.md. When it is off,
-  DMs and mentions wake the lead instead.
+  tools only `Read/Grep/Glob` of docs/ and apps/ of its own checkout and the MCP tools `board_list|show|comment|create|label`
+  and `inbox_add` (see «Run tools»); no shell; `dontAsk` refuses the rest. When it is off, DMs and mentions wake
+  the lead instead.
 
 The prompts are read at each run from `<lead repo>/tools/claude-bot/` (editing them on main takes effect at
 once), falling back to the installed copy.
@@ -36,17 +36,12 @@ A change waits 60 s for more to arrive (at most 5 min), then one run starts: `cl
 $CLAUDE_BOT_WAKE_MODEL` (default `opus`) with `wake-prompt.md`, in the **clean checkout of main**
 (`CLAUDE_BOT_ASSIST_REPO`, refreshed hourly), never the owner's checkout. The prompt lists the changes as
 metadata only (keys, titles, who, counts) and the run looks up the details itself. It is **not**
-`bypassPermissions`: `dontAsk` with an allowlist of Read/Grep/Glob of that checkout and one Bash prefix per
-`handoff.mjs` subcommand (`add|reply|chat|gh|board`); no `gh`, `python3` or any other program directly
-(Bash prefix rules are not a boundary: `gh pr comment:*` also admits `-R other/repo` or `--body-file
-~/.ssh/…`). `handoff.mjs gh|board` parses its own arguments into one fixed command each (`src/tools.ts`: the
-configured repo only, no `api`, no file arguments; board statuses only Todo / Waiting for reply / Closed),
-runs it with execFile in a clean env, redacts every text it posts, and caps a run at 8 comments, 3 new tasks
-and 20 triage edits. Text comes only from a heredoc (`< file` is refused). `--settings` turns on
-`blockReadsOutsideWorkingDirectories` (Claude Code runs `cat`/`grep`/`find` without a prompt otherwise),
-common readers, interpreters and network tools are denied, and so are `.env*`, `~/.calab-tools`, `~/.claude`,
-`~/.ssh`, `~/.kube`, `~/.config`, `~/Library`, the owner's checkout and the inbox. Chat answers go through
-`handoff.mjs reply chat-N` and the daemon posts them (redacted) to that chat. Code work goes to the inbox.
+`bypassPermissions`: `dontAsk`, built-in tools only `Read/Grep/Glob` of that checkout (`--tools`), **no shell**
+(`Bash`, `Write`, `Edit`, `WebFetch`, `Task`… are denied by name), and the run's own MCP server for everything
+else (see «Run tools»). Reads of `.env*`, `~/.calab-tools`, `~/.claude`, `~/.ssh`, `~/.kube`, `~/.config`,
+`~/Library`, the owner's checkout and the inbox are denied; `--settings` turns on
+`blockReadsOutsideWorkingDirectories` and turns auto-memory off. Chat answers go through `chat_reply` and the
+daemon posts them (redacted) to that chat. Code work goes to the inbox.
 
 One run at a time, ≥ `CLAUDE_BOT_COOLDOWN_MIN` (10) between starts, timeout `CLAUDE_BOT_WAKE_TIMEOUT_MIN` (30),
 at most `CLAUDE_BOT_WAKE_DAILY_CAP` (8) a day, of which at most `CLAUDE_BOT_WAKE_OUTSIDER_CAP` (2) may be
@@ -55,6 +50,46 @@ cannot use up the day; their changes wait for the next wake with a board change,
 ~/.calab-claude-bot/quiet` (remove the file to resume; no restart needed). Changes keep waiting and wake the bot
 afterwards. After a run the poller takes a new baseline, so the run's own comments and replies do not wake it
 again. Transcript: `wake-<time>.log` in the log directory; poller state: `~/.calab-claude-bot/state.json`.
+After each run `daemon.log` gets one line `wake outcome: tools: N call(s), N ok, N denied, N failed`, and
+`WARNING every tool call was denied — the run could do nothing` when that is the case (28.10: every run had all
+its tools refused and nobody noticed).
+
+### Board sweep
+
+The poller only wakes on changes, so a task that sat in Todo before the daemon started, or was never triaged,
+would never be looked at. A model-free sweep (`src/sweep.ts`) runs at the first poll after **10:00** and after
+**15:00** (`CLAUDE_BOT_TZ`; not in quiet hours or with the quiet file, not when waking is off): Todo tasks
+that lack a type label (bug/feature), lack a priority, or whose last comment is not the bot's join the next wake
+as `sweep:#N` (≤ 15 per sweep, ≤ 30 comment-author lookups). They go through the same debounce, cooldown and
+daily cap as any change (they are board changes, so the outsiders' cap does not apply). State in `state.json`
+(`sweep`): after a successful wake every task it looked at is remembered with its signature (status, comments,
+labels, priority) and is not swept again until it changes; entries a wake has not taken yet (cap, cooldown, a
+failed run) stay pending, and the 15:00 sweep re-checks the rest.
+
+### Run tools (MCP)
+
+The wake run and the assistant reach GitHub, the board, the inbox and their chat messages only through a
+small stdio MCP server, `mcp.mjs` (`src/mcp.ts`, plain JSON-RPC: `initialize`, `tools/list`, `tools/call`),
+which claude starts from `--strict-mcp-config --mcp-config <json>` with the inbox directory and the run's ticket
+in its env. Tools (`mcp__calab__…`): `gh_pr_view|pr_diff|pr_checks|pr_list|issue_view|issue_list|run_list|run_view`,
+`gh_pr_comment|gh_issue_comment`, `board_list|show|author|comment|create|label|priority|status|ask_owner`,
+`inbox_add`, `chat_read`, `chat_reply`. Each has a closed, typed schema and maps onto one fixed command of
+`src/tools.ts`: the configured repo only, no `api`, no file arguments, board statuses only Todo / Waiting for
+reply / Closed, execFile in a clean env, every posted text redacted, ≤ 8 comments, 3 new tasks and 20 triage
+edits per run. The ticket the daemon writes decides which tools the server offers in that run and who a request
+is recorded for (the run itself, or with `from: "chat-N"` that message's author, who passed the gate); the model
+never names a requester, path or program.
+
+Why not Bash: prefix rules are not a boundary, and their matching refused the tool itself — the deny
+`Bash(node:*)` also matches `/opt/homebrew/…/node …/handoff.mjs …` and deny beats allow, so every wake run ended
+with all its calls denied. Not `--safe-mode` either: it also drops the `--mcp-config` servers.
+
+Check by hand (no writes: a throwaway inbox and a ticket with read verbs only, so the server lists nothing
+else): build, write `<dir>/.tickets/<32 hex>/ticket.json` as `issueTicket` does (`tools.allow`:
+`["board.list","gh.pr-list","gh.pr-view"]`), then run `claude -p` with `wakeArgv(...)` from
+`~/.calab-claude-bot/repo` and a prompt that asks it to call `board_list`, `gh_pr_list` and Bash. Expected: the
+`init` line lists `Glob, Grep, Read` and the three `mcp__calab__…` tools with the server `connected`, both calls
+return data, and there is no Bash.
 
 **Cost.** Each wake is a full Opus run on the owner's Claude account and uses its limits (and up to
 `CLAUDE_BOT_WAKE_BUDGET_USD`, default 5, per run). To spend less: `CLAUDE_BOT_WAKE_MODEL=sonnet`, a longer
@@ -68,8 +103,7 @@ Requests from the wake runs (and the chat assistant) for the interactive lead: o
 {userId, name}`, `roomId`, `taskKey` (`#85`), `kind` (request|bug|question), `text` (≤ 2000 chars, redacted),
 `status` (new|done) and a `note` when done.
 
-The runs write only through `handoff.mjs add [--kind K] [--task N] [--from chat-N]` with the text on stdin;
-it prints the id. The directory and the requester come from a ticket the daemon issues per run (env
+The runs write only through the MCP tool `inbox_add {kind?, task?, from?, text}`; it returns the id. The directory and the requester come from a ticket the daemon issues per run (env
 `CALAB_HANDOFF_DIR`, `CALAB_HANDOFF_TICKET`): the requester is the run itself, or with `--from chat-N` the
 author of that message, who passed the workspace gate. No path, file name or identity comes from the model;
 writes are atomic (temp file + link), ≤ 5 per person per hour, ≤ 5 per run, ≤ 50 pending.
@@ -127,11 +161,17 @@ launchctl print gui/$UID/io.calab.claude-bot | head -20                         
 tail -f ~/Library/Logs/calab-claude-bot/daemon.log
 ```
 
-`KeepAlive` restarts it after any exit, at most once per 30 s (`ThrottleInterval`). Stopping the agent also
+`KeepAlive` restarts it after any exit, at most once per 30 s (`ThrottleInterval`). Crash guard
+(`src/guard.ts`): an uncaught exception or unhandled rejection is logged as `warning: …` (redacted) and the
+daemon keeps running; if the gateway is not `ready` again within 2 min, or more than 20 errors come within
+10 min, it logs `exiting (launchd restarts the daemon): <why>` and exits 1. (The 28.10 crash loop was the SDK
+closing a still-connecting socket without an error listener; fixed in `packages/bot-sdk` too.) Stopping the agent also
 kills a wake run in progress. The logs are not rotated: clean `~/Library/Logs/calab-claude-bot` now and then.
 
 ## Development
 
 `pnpm -F @calaba/claude-bot typecheck|lint|test|build`. Tests cover the gate, the run lock, the rate
-limit, redaction, the three claude command lines (allowed and denied tools), the handoff writer and reader
-(forged requester, path traversal, size and rate limits), the poller's diffing and the wake policy.
+limit, redaction, the three claude command lines (no Bash; only the MCP tools and Read/Grep/Glob), the MCP
+server (tool list per ticket, valid and invalid input, refused verbs, caps, redaction, forged requester), the
+handoff writer and reader (path traversal, size and rate limits), the poller's diffing, the sweep, the wake
+policy and outcome line, and the crash guard.

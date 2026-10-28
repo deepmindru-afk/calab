@@ -6,7 +6,7 @@ import { CreateButton } from '../../components/CreateButton';
 import { Button, IconButton, Modal, cx } from '../../components/ui';
 import { t, useLocale } from '../../i18n';
 import { isExternalKey } from '../../lib/calendar/external';
-import { addDays, dayEnd, dayStart, monthOf } from '../../lib/calendar/time';
+import { HOUR, addDays, dayEnd, dayStart, monthOf } from '../../lib/calendar/time';
 import { dateTimeFormat } from '../../lib/format';
 import { haptics } from '../../lib/haptics';
 import { useMobile } from '../../lib/mobile';
@@ -32,6 +32,7 @@ import { GUTTER, HOUR_PX, HourLines, HourScale, NowLine } from './gridParts';
 import { MonthPicker } from './MonthPicker';
 import { PeopleBar } from './PeopleBar';
 import { WeekGrid } from './WeekView';
+import { ZoneHeads, ZoneScales, useZonesSig } from './ZoneAxis';
 
 export { HOUR_PX };
 /** A day swipe never starts this close to the screen's left edge (the shell's / Safari's «back»). */
@@ -72,6 +73,7 @@ function DayGrid({ workspaceId }: { workspaceId: string }): ReactNode {
   const scroller = useRef<HTMLDivElement>(null);
   const grid = useRef<HTMLDivElement>(null);
   const creatable = calendarAvailable(workspaceId);
+  const zones = useZonesSig();
 
   const days = useMemo(() => [day], [day]);
   const { data, people } = useCalendarDays(workspaceId, days);
@@ -109,10 +111,11 @@ function DayGrid({ workspaceId }: { workspaceId: string }): ReactNode {
         <CalendarHeader workspaceId={workspaceId} day={day} days={days} today={today} creatable={creatable} view="day" />
       )}
       {mobile ? null : <FilterRow workspaceId={workspaceId} people={people} />}
-      <AllDayRow workspaceId={workspaceId} keys={d?.allDay ?? []} day={day} onDown={drag.onBlockDown} />
+      <AllDayRow workspaceId={workspaceId} keys={d?.allDay ?? []} day={day} zones={zones} onDown={drag.onBlockDown} />
       <div ref={scroller} className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden" data-testid="day-scroller" {...swipe}>
         <div className="relative flex" style={{ height: 24 * HOUR_PX + 16 }}>
-          <HourScale />
+          {zones ? <ZoneScales sig={zones} day={day} nowDay={day === today ? day : ''} /> : null}
+          <HourScale primary={!!zones} />
           <div
             ref={grid}
             className="relative mr-2 mt-2 flex-1 touch-pan-y"
@@ -286,7 +289,7 @@ function PeopleSheet({ workspaceId, onClose }: { workspaceId: string; onClose: (
 }
 
 /** All-day meetings above the grid; a drop target that makes a dragged meeting all-day. */
-function AllDayRow({ workspaceId, keys, day, onDown }: { workspaceId: string; keys: readonly string[]; day: string; onDown: BlockDown }): ReactNode {
+function AllDayRow({ workspaceId, keys, day, zones, onDown }: { workspaceId: string; keys: readonly string[]; day: string; zones: string; onDown: BlockDown }): ReactNode {
   // Always there (Apple Calendar): a stable grid under a drag, and a visible drop target.
   const dropping = useDayDrag((s) => s.allDay && !s.locked && s.mode === 'move');
   return (
@@ -295,6 +298,7 @@ function AllDayRow({ workspaceId, keys, day, onDown }: { workspaceId: string; ke
       className={cx('flex shrink-0 items-start gap-0 border-b border-line py-1 pr-2', dropping && 'bg-[color-mix(in_srgb,var(--color-accent)_14%,transparent)]')}
       data-testid="allday-row"
     >
+      {zones ? <ZoneHeads sig={zones} at={dayStart(day) + 12 * HOUR} /> : null}
       <span className={cx(GUTTER, 'shrink-0 self-center pr-2 text-right text-micro leading-3 text-faint')}>{t('cal.allDayRow')}</span>
       <div className="flex min-h-6 min-w-0 flex-1 flex-col gap-0.5">
         {keys.map((k) =>

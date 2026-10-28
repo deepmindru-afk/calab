@@ -1,8 +1,7 @@
-// The only way a sandboxed run reaches GitHub and the board: `handoff.mjs gh …` and `handoff.mjs board …`.
-// Claude Code's Bash rules are prefix patterns, not a boundary (a prefix allow on `gh pr comment` or
-// `python3 bugboard.py comment` also admits `-R other/repo`, `--body-file ~/.ssh/…`, `python3 -c … status`),
-// so every call is parsed here into one fixed shape, run with execFile (no shell) in a clean env, and
-// every write is redacted and counted against a per-run cap. What a run may call comes from its ticket.
+// The only way a sandboxed run reaches GitHub and the board: the typed tools of the runs' MCP server
+// (src/mcp.ts), which map onto the verbs here. The runs have no shell; every call is parsed into one fixed
+// shape, run with execFile (no shell) in a clean env, and every write is redacted and counted against a
+// per-run cap. What a run may call comes from its ticket.
 import { readFileSync } from 'node:fs';
 import { parseEnvFile } from './config.js';
 import { cleanText, HandoffError, readTicket, reserveWrite } from './inbox.js';
@@ -14,8 +13,14 @@ export const GH_WRITE = ['pr-comment', 'issue-comment'] as const;
 export const BOARD_READ = ['list', 'show', 'author'] as const;
 export const BOARD_WRITE = ['comment', 'create', 'label', 'priority', 'status', 'ask-owner'] as const;
 
-export const WAKE_TOOL_VERBS: readonly string[] = [...GH_READ, ...GH_WRITE].map((v) => `gh.${v}`).concat([...BOARD_READ, ...BOARD_WRITE].map((v) => `board.${v}`));
-export const ASSIST_TOOL_VERBS: readonly string[] = ['board.list', 'board.show', 'board.comment', 'board.create', 'board.label'];
+/** The inbox writer and the chat of the run's messages (src/inbox.ts), as ticket verbs of the MCP tools. */
+export const HANDOFF_VERBS = ['inbox.add', 'chat.read', 'chat.reply'] as const;
+
+export const WAKE_TOOL_VERBS: readonly string[] = [...GH_READ, ...GH_WRITE]
+  .map((v) => `gh.${v}`)
+  .concat([...BOARD_READ, ...BOARD_WRITE].map((v) => `board.${v}`))
+  .concat(HANDOFF_VERBS);
+export const ASSIST_TOOL_VERBS: readonly string[] = ['board.list', 'board.show', 'board.comment', 'board.create', 'board.label', 'inbox.add'];
 
 /** Per-run caps of writes, by bucket. */
 export const WRITE_CAPS = { comment: 8, create: 3, triage: 20 } as const;
@@ -177,14 +182,6 @@ export function toolEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   out.GH_NO_UPDATE_NOTIFIER = '1';
   out.NO_COLOR = '1';
   return out;
-}
-
-/**
- * Text comes only from a heredoc or a pipe. A shell heredoc is a pipe or an already unlinked temp file;
- * `< ~/.ssh/id_ed25519` is a regular file with a link, so a redirect cannot post a local file.
- */
-export function stdinAllowed(st: { isFIFO(): boolean; isFile(): boolean; nlink: number }): boolean {
-  return st.isFIFO() || (st.isFile() && st.nlink === 0);
 }
 
 export const MAX_OUTPUT = 300_000;

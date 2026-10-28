@@ -12,7 +12,7 @@ export function parseQuiet(s: string): { from: number; to: number } | null {
   return { from, to };
 }
 
-function hourIn(now: Date, timeZone: string | undefined): number {
+export function hourIn(now: Date, timeZone: string | undefined): number {
   const h = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hourCycle: 'h23', ...(timeZone ? { timeZone } : {}) }).format(now);
   return Number(h);
 }

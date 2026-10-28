@@ -183,6 +183,10 @@ export const IDS = {
      * any message, injectMessage posts it.
      */
     untypedPng: mockId('file', 14),
+    /** Office files (ADR-0143), in no message: injectMessage / a task's attachments use them. */
+    sheet: mockId('file', 40),
+    slides: mockId('file', 41),
+    legacyDoc: mockId('file', 42),
   },
   /**
    * Sticker packs of «Команда Calab» (ADR-0030): «Calab» (☀️ 💎 🌀, installed by Анна) and
@@ -984,6 +988,14 @@ export function buildState(scenario: Scenario): MockState {
     meta: fileMeta(IDS.files.meeting, IDS.workspaces.main, U.boris, 'Переговорка 2026-01-15 12-00.m4a', 'audio/mp4', meeting, ts('2026-01-15T12:43:00Z')),
     bytes: meeting,
   });
+  // Office files (ADR-0143): the bytes are never opened (the stub editor draws a fake document).
+  const officeFile = (id: string, name: string, mime: string): void => {
+    const bytes = Buffer.from('PK mock office file');
+    s.files.set(id, { meta: fileMeta(id, IDS.workspaces.main, U.vera, name, mime, bytes, ts('2026-01-15T11:40:00Z')), bytes });
+  };
+  officeFile(IDS.files.sheet, 'График отпусков 2026.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  officeFile(IDS.files.slides, 'Питч для инвесторов.pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
+  officeFile(IDS.files.legacyDoc, 'Договор (старый).doc', 'application/msword');
   // ---- sticker packs (ADR-0030)
   const stickerFile = (id: string, name: string, bytes: Buffer): void => {
     s.files.set(id, { meta: fileMeta(id, IDS.workspaces.main, U.anna, name, 'image/webp', bytes, ts('2026-01-12T10:00:00Z'), { width: 160, height: 160 }), bytes });

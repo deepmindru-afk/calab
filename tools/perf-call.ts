@@ -25,6 +25,13 @@
  * `--boards`: the kanban (ADR-0042) open during the call; Борис renames CAL-2 every 3 s (TASK_UPDATE to
  * the board): one TaskCard per event should render.
  *
+ * `--disk`: the Disk (ADR-0094, a list) open during the call; every 3 s someone opens or closes the budget
+ * sheet in the office editor («Редактирует Имя», a DISK_ITEM_UPSERT): one Row per event should render.
+ * `--office`: the office editor on in the mock (ADR-0143; GET /api/office/capabilities at READY) — with
+ * the same scene the numbers must equal the run without it. `--office-closed` (with `--disk`): before
+ * the window the budget sheet is opened in the editor (the stub) and its tab closed — nothing of the
+ * editor may stay running.
+ *
  * `--telephony`: «Телефония → Недавние» (ADR-0137) open, without a voice call; every 3 s a journal event
  * (SIP_JOURNAL_ENTRY): a new call rings me, it is answered, it ends — in turn. One RecentsRow per
  * event should render (a new row: the list too); without live calls the section runs no timer.
@@ -122,6 +129,11 @@ const FINDTIME = argv.includes('--findtime');
 const CALENDAR = argv.includes('--calendar') || FINDTIME;
 /** `--boards`: the kanban (ADR-0042) open during the call; another user renames a task every 3 s (TASK_UPDATE). */
 const BOARDS = argv.includes('--boards');
+/** `--disk`: the Disk open during the call; the budget's «Редактирует» flips every 3 s (DISK_ITEM_UPSERT). */
+const DISK = argv.includes('--disk');
+/** `--office`: the office editor on (ADR-0143); `--office-closed`: an editor opened and closed before the window. */
+const OFFICE_CLOSED = argv.includes('--office-closed');
+const OFFICE = argv.includes('--office') || OFFICE_CLOSED;
 /** `--telephony`: «Недавние» open during the call; a journal event every 3 s (SIP_JOURNAL_ENTRY). */
 const TELEPHONY_CALL = argv.includes('--telephony-call');
 const TELEPHONY = argv.includes('--telephony') || TELEPHONY_CALL;
@@ -455,6 +467,7 @@ const round = (x: number, d = 1): number => Math.round(x * 10 ** d) / 10 ** d;
 
 async function main(): Promise<void> {
   const mock = await startMockServer({ port: PORT, scenario: 'data', quiet: true } as never);
+  if (OFFICE) mock.setOffice(true);
   const userData = mkdtempSync(join(tmpdir(), 'calaba-perfcall-'));
   const wav = join(userData, 'silence.wav');
   silentWav(wav);
@@ -518,6 +531,10 @@ async function main(): Promise<void> {
       await page.getByText('Голос подключён').first().waitFor({ timeout: 30_000 });
     } else if (!TELEPHONY) {
       await aside.getByRole('button', { name: /Созвон/ }).first().click();
+      // A voice room opens its chat first; «Войти в голос» joins (harness.ts joinVoice).
+      const join = page.getByRole('region', { name: 'Созвон' }).getByRole('button', { name: 'Войти в голос', exact: true });
+      await join.or(page.getByText('Голос подключён').first()).first().waitFor({ timeout: 15_000 });
+      if (await join.isVisible()) await join.click();
       await page.getByText('Голос подключён').first().waitFor({ timeout: 30_000 });
       await aside.getByRole('button', { name: /общий/ }).first().click();
       await page.getByRole('heading', { name: 'общий' }).first().waitFor();
@@ -546,8 +563,23 @@ async function main(): Promise<void> {
         await page.getByTestId('busy-column').nth(2).waitFor({ timeout: 15_000 });
       }
     }
+    if (DISK) {
+      await page.getByTestId('section-disk').click();
+      await page.getByTestId('disk-tile').or(page.getByTestId('disk-row')).first().waitFor({ timeout: 15_000 });
+      if (OFFICE_CLOSED) {
+        // The budget sheet in the editor (the mock's stub Document Server), then its tab closed.
+        await page.getByTestId('disk-tile').or(page.getByTestId('disk-row')).filter({ hasText: 'Бюджет 2026.xlsx' }).first().dblclick();
+        await page.locator('[data-testid="office-view"][data-state="saved"]').waitFor({ timeout: 30_000 });
+        await page.getByTestId('file-tab-close').click();
+        await page.getByTestId('office-view').waitFor({ state: 'detached', timeout: 30_000 });
+        await page.getByTestId('section-disk').click();
+        await page.getByTestId('disk-tile').or(page.getByTestId('disk-row')).first().waitFor({ timeout: 15_000 });
+        const frames = await page.evaluate(() => document.querySelectorAll('iframe').length);
+        process.stdout.write(`office closed: iframes left ${frames}, page frames ${page.frames().length}\n`);
+      }
+    }
     if (BOARDS) {
-      await page.getByTestId('boards-button').click();
+      await page.getByTestId('section-boards').click(); // the rail's «Доски» (was the column's boards-button)
       await page.getByTestId('kanban').waitFor({ timeout: 15_000 });
       await page.getByTestId('task-card').first().waitFor({ timeout: 15_000 });
     }
@@ -673,6 +705,11 @@ async function main(): Promise<void> {
         const cal2 = mock.boards.taskByKey('CAL-2')?.task.id ?? '';
         let n = 0;
         timers.push(setInterval(() => mock.updateTaskAs(IDS.users.boris, cal2, { title: `Тёмная тема ${++n}` }), 3000));
+      }
+      if (DISK) {
+        const budget = [...mock.disk.items.values()].find((i) => i.name === 'Бюджет 2026.xlsx')?.id ?? '';
+        let n = 0;
+        timers.push(setInterval(() => mock.disk.setEditors(budget, n++ % 2 ? [] : [IDS.users.vera]), 3000));
       }
       if (TELEPHONY) {
         let step = 0;

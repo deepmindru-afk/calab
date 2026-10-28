@@ -687,7 +687,8 @@ func (s *Service) UploadAvatar(w http.ResponseWriter, r *http.Request, uid uuid.
 //   - a sticker (ADR-0030): members of its workspace, or VIEW_ROOM in a room where a live
 //     message shows it;
 //   - a file attached to a live message: VIEW_ROOM in that room;
-//   - a file of the Disk (ADR-0094, in the trash too): DISK_VIEW on its item (perm.ComputeDiskItem).
+//   - a file of the Disk (ADR-0094, in the trash too) or a previous version of one (ADR-0143):
+//     DISK_VIEW on its item (perm.ComputeDiskItem).
 func (s *Service) CanRead(r *http.Request, f sqlc.File) (bool, error) {
 	ctx := r.Context()
 	id := auth.MustFromContext(ctx)
@@ -755,6 +756,23 @@ func (s *Service) CanRead(r *http.Request, f sqlc.File) (bool, error) {
 	} else {
 		// A file of the Disk (ADR-0094 §7), in the trash too: DISK_VIEW on its item.
 		if item, err := s.db.Q.GetDiskItemByFile(ctx, &f.ID); err == nil {
+			m, err := res.Member(ctx, item.WorkspaceID, uid)
+			if err == nil {
+				ch, err := diskacl.Load(ctx, s.db.Q, []uuid.UUID{item.ID})
+				if err != nil {
+					return false, err
+				}
+				if ch.Bits(m, &item.ID).Has(perm.DiskView) {
+					return true, nil
+				}
+			} else if err := candidate(err); err != nil {
+				return false, err
+			}
+		} else if !db.IsNotFound(err) {
+			return false, err
+		}
+		// A previous version of a Disk file (ADR-0143): DISK_VIEW on its item, like the current one.
+		if item, err := s.db.Q.GetDiskItemByVersionFile(ctx, f.ID); err == nil {
 			m, err := res.Member(ctx, item.WorkspaceID, uid)
 			if err == nil {
 				ch, err := diskacl.Load(ctx, s.db.Q, []uuid.UUID{item.ID})

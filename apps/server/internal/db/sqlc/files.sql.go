@@ -238,6 +238,7 @@ WHERE f.created_at < $1
   AND NOT EXISTS (SELECT 1 FROM messages mi WHERE mi.kind = 'system' AND mi.payload ? 'roomIcon'
                     AND mi.payload -> 'roomIcon' ->> 'fileId' = f.id::text AND mi.deleted_at IS NULL)
   AND NOT EXISTS (SELECT 1 FROM disk_items di WHERE di.file_id = f.id)
+  AND NOT EXISTS (SELECT 1 FROM disk_file_versions dv WHERE dv.file_id = f.id)
   AND NOT EXISTS (SELECT 1 FROM wiki_page_files wf WHERE wf.file_id = f.id)
   AND NOT EXISTS (SELECT 1 FROM wiki_pages wc WHERE wc.cover_file_id = f.id)
   AND NOT EXISTS (SELECT 1 FROM sip_ivr_menus im WHERE im.prompt_file_id = f.id OR im.notice_file_id = f.id)
@@ -251,7 +252,8 @@ LIMIT 500
 // (ADR-0061), room picture or its live system message (ADR-0092; deleted messages are never
 // purged, so a deleted one must not keep the file), not a file of the Disk (ADR-0094; trashed
 // ones included: the trash counts in the quota until deleted forever), not a picture or cover of
-// a wiki page (ADR-0096; trashed pages included), not the prompt of a voice menu (ADR-0117),
+// a wiki page (ADR-0096; trashed pages included), not a previous version of a Disk file
+// (ADR-0143), not the prompt of a voice menu (ADR-0117),
 // older than the cutoff.
 func (q *Queries) ListOrphanFiles(ctx context.Context, createdAt time.Time) ([]File, error) {
 	rows, err := q.db.Query(ctx, listOrphanFiles, createdAt)
@@ -444,6 +446,7 @@ WHERE f.uploader_id = $1 AND f.workspace_id = $2
   AND NOT EXISTS (SELECT 1 FROM workspace_sounds ss WHERE ss.file_id = f.id)
   AND NOT EXISTS (SELECT 1 FROM achievements ac WHERE ac.file_id = f.id)
   AND NOT EXISTS (SELECT 1 FROM disk_items di WHERE di.file_id = f.id)
+  AND NOT EXISTS (SELECT 1 FROM disk_file_versions dv WHERE dv.file_id = f.id)
   AND NOT EXISTS (SELECT 1 FROM wiki_page_files wf WHERE wf.file_id = f.id)
   AND NOT EXISTS (SELECT 1 FROM wiki_pages wc WHERE wc.cover_file_id = f.id)
 `

@@ -22,6 +22,10 @@ export interface BoardItem {
   comments: number;
   createdBy: string;
   roomId: string;
+  /** Label names (absent in snapshots taken before the sweep existed). */
+  labels?: string[];
+  /** TaskPriority: 0 = none … 4 = urgent. */
+  priority?: number;
 }
 
 export interface Snapshot {

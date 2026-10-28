@@ -6,6 +6,7 @@
     "Author": "alice",
     "Push": false,
     "Branch": "",
+    "DefaultBranch": "",
     "BranchCreated": false,
     "Commits": null,
     "PR": {

@@ -348,8 +348,8 @@ Docker compose в этом документе — тестовый стенд и
 После зелёного `ci` релизного тега `v*` workflow `images` собирает `apps/server/Dockerfile` на том же коммите
 (версия сервера — тег, как у `release.sh`), рядом собирает веб-клиент и лендинг теми же командами, что
 `release.sh`, в образ `infra/docker/web-image` (Caddy, его конфиг «за прокси» и статика) и пушит оба
-образа в прод-реестр. Ключей в GitHub нет: OIDC-токен job'а меняется на короткий IAM-токен сервисного
-аккаунта, которому разрешён только пуш в репозитории calab этого реестра. Затем workflow создаёт GitHub
+образа в прод-реестр Harbor `cr.shds.io/calab` (VK Cloud) роботом Harbor, которому разрешён только пуш в
+проект calab (секреты репо `HARBOR_USER`/`HARBOR_PASSWORD`). Затем workflow создаёт GitHub
 Deployment `calab-prod` с digest обоих образов в payload: API и веб релиза выкатываются вместе.
 
 - В кластер workflow не ходит. Выкатку делает кластер сам: забирает заявку, проверяет её и меняет образ по
@@ -357,8 +357,8 @@ Deployment `calab-prod` с digest обоих образов в payload: API и �
   для коммитов из `main`.
 - История заявок — вкладка Deployments репо. По [операторскому preflight](plans/identity-v2-operator-preflight.md) текущий consumer не публикует GitHub deployment statuses, выкатывает компоненты последовательно и при ошибке может оставить смешанные версии. Требуются Kubernetes readiness и фактические digests API/web плюс version smoke; успешная заявка/CronJob сами по себе не подтверждают выкатку.
 - Откат — только на согласованный identity-aware digest с совместимой БД, ключами и platform config. После активации identity нельзя перезапускать старый успешный `images`, если он возвращает pre-identity бинарник. Down guard миграции не защищает от image-only rollback.
-- `YC_REGISTRY` и `YC_CI_SA_ID` — секреты репо: публичные логи их маскируют. Это не ключи, но внутренние id в
-  открытых логах не нужны.
+- `cr.shds.io` публично указывает на внутренний адрес VK, поэтому job'ы прописывают вход VK в `/etc/hosts`;
+  снаружи открыты только проекты calab и gpu.
 - Конфиг Caddy едет в образе веба: `Caddyfile.behind-proxy` (TLS снимает прокси перед ним, HTTP на
   `BEHIND_PROXY_PORT`, по умолчанию 8080; API — `API_UPSTREAM`; без `rtc.`/`turn.`) и общий с `Caddyfile` стенда
   `sites.caddy`. Правка `infra/docker/caddy/` попадает в прод с релизом; хосты и адреса — env кластера:
@@ -367,7 +367,7 @@ Deployment `calab-prod` с digest обоих образов в payload: API и �
   `images` проверяет конфиг в собранном образе (`caddy validate` на тестовых хостах) до пуша.
 - Прогоны идут строго по одному (`concurrency`), поэтому заявки создаются в порядке коммитов.
 - Агенты входящих — job `agents` того же workflow: `apps/server/Dockerfile.sipreg` и `Dockerfile.ivr` →
-  `<YC_REGISTRY>/sipreg:<sha>` и `<YC_REGISTRY>/ivr:<sha>` (и копии `cr.shds.io/calab/sipreg|ivr:<sha>`), digest — в
+  `cr.shds.io/calab/sipreg:<sha>` и `cr.shds.io/calab/ivr:<sha>`, digest — в
   summary прогона. В заявку `calab-prod` не входят и релиз не держат: девопс выкатывает их сам (одна реплика
   каждого, по digest), см. п. 6–7 «Телефония» выше.
 
@@ -645,6 +645,26 @@ authority/policy. Не отключать enforcement автоматически
 - **Сбои:** бакет не отвечает — API ничего не решает о записи: конец egress разбирается снова при reconcile (каждые 15 с), но не дольше 30 мин после остановки — потом запись `failed` (`recorder_failed`), чтобы комната не оставалась «записывается» (объект, если он есть, janitor уберёт через 7 дней); отправка в GPTunneL повторяется по обычному расписанию. Egress не смог загрузить файл (сеть, права) — после его конца объекта нет, карточка «Запись не удалась». Ключ API без права на список бакета получает на отсутствующий объект 403 вместо 404 — для записей это «бакет не отвечает» (см. «Права ключа» выше).
 - **Уборка:** janitor удаляет объекты записей по базе, как файлы на volume. «Бесхозные» `.mp4` в бакете он не ищет: `blob.Store` не умеет листинг, а листать весь бакет файлов ради `.mp4` каждый час дороже пользы. Остаются только объекты записей пространства, удалённого раньше, чем janitor убрал запись (до 7 дней после неё), — docs/12.
 - **Проверка:** `go test ./internal/recording/ ./internal/rtc/` (unit: оба режима, запрос к egress через twirp-сервер из `livekit/protocol`), `go test -tags integration -run TestRecordingBucket ./internal/app/` (запись в бакете: загрузка, повтор при недоступном бакете, объекта нет).
+
+### Редактор документов ONLYOFFICE (ADR-0143)
+
+Правка xlsx/docx/pptx (и odt/ods/odp/rtf/csv/txt) Диска в окне Calab, просмотр pdf и старых doc/xls/ppt, «Создать → Документ / Таблица / Презентация» в Диске. По умолчанию выключено: без `OFFICE_ENABLED=true` маршруты `/api/office/*` и `POST /api/workspaces/{id}/office/*` отвечают 404, `GET /api/office/capabilities` — `enabled: false`; клиент читает флаг оттуда при каждом READY (своего переключателя сборки нет), прячет «Открыть» в редакторе и пункты «Создать». Document Server — отдельный сервис (один инстанс, Community не кластеризуется). **Как поднять его в кластере — [docs/ops/office-onlyoffice-deploy.md](ops/office-onlyoffice-deploy.md)** (методичка для девопса: тома, NetworkPolicy, ingress, порядок выкатки, приёмка); почему так — ADR-0143 «Развёртывание».
+
+| Переменная | По умолчанию | Что |
+|---|---|---|
+| `OFFICE_ENABLED` | `false` | включает редактор |
+| `OFFICE_DOCS_URL` | — (обязательна при включении) | origin Document Server для браузера (`https://docs.<домен>`): его `api.js`, рамка, `postMessage` |
+| `OFFICE_DOCS_INTERNAL_URL` | = `OFFICE_DOCS_URL` | как API ходит к Document Server (in-cluster `http://onlyoffice.<ns>.svc`): сохранённые и сконвертированные файлы, `/converter`, `/command`. URL из callback принимается только на этих двух origin и скачивается через внутренний |
+| `OFFICE_API_URL` | = `PUBLIC_APP_URL` | как Document Server ходит к API: ссылки на файл и callback (in-cluster адрес API) |
+| `OFFICE_JWT_SECRET` | — (≥ 32 байт при включении) | общий секрет с `JWT_SECRET` контейнера Document Server (HS256 в обе стороны); только в Secret кластера |
+| `OFFICE_THEME_DARK`, `OFFICE_THEME_LIGHT` | `default-dark`, `default-light` | `uiTheme` редактора по теме приложения; по желанию `OFFICE_THEME_DARK=theme-calab-dark` — цвета Calab (`infra/office/themes/theme-calab-dark.json`, смонтировать в `web-apps/apps/common/main/resources/themes`); открытый редактор следует смене темы приложения |
+| `OFFICE_FILE_URL_TTL` | `5m` | срок ссылки, по которой Document Server забирает файл (30 с … 1 ч) |
+| `OFFICE_MAX_SIZE_MB` | `100` | больше — файл не открывается в редакторе, сохранение больше — отклоняется |
+| `OFFICE_SESSION_TTL` | `24h` | сессия совместной правки в Valkey без открытий и callback'ов (1 … 168 ч) |
+
+Хост-страница `infra/office/calab-editor.html` + `calab-editor.js` монтируется read-only в `web-apps/apps/calab/` Document Server (там же, где её ждёт клиент и Electron). Шаблоны «Создать» (`apps/server/internal/office/templates/blank.{docx,xlsx,pptx}`) встроены в API, отдельного монтирования нет.
+
+Ключи Valkey: `office:s:<item>` (сессия, TTL), `office:live` (элементы с сессией), `rl:office-*` (лимиты; `rl:office-config:` считает и «Создать»). Логи: `office: open|callback|saved|drop|converted|created` — id пользователя, элемента, файла, ключ, статус, размер и sha256; содержимое не логируется.
 
 ## Наблюдаемость
 

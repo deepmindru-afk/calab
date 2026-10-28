@@ -60,6 +60,10 @@ const (
 	// scopeCanvasComment: /api/canvas/comments/{id} (ADR-0127 wave 4), the workspace of the
 	// comment's canvas.
 	scopeCanvasComment
+	// scopeOffice: GET /api/office/config (ADR-0143) — ?item= is a Disk item (its workspace, like
+	// scopeDiskItem); ?file= is an attachment, checked like scopeFile reads (files.CanRead in the
+	// handler under this exact policy context).
+	scopeOffice
 )
 
 // billingRecoveryRoutes: workspace routes besides scopeBilling the owner (and a BILLING_TOPUP /
@@ -539,6 +543,17 @@ var identityRoutes = map[string]identityScope{
 	"GET /api/public/disk/{code}":                scopePublic,
 	"GET /api/public/disk/{code}/content":        scopePublic,
 	"GET /api/public/disk/{code}/thumbnail":      scopePublic,
+	"POST /api/workspaces/{id}/disk/import":      scopeWorkspace,
+	// Office editing (ADR-0143): the config resolves its target from ?item= / ?file=
+	// (scopeOffice); the file and callback URLs are the Document Server's, authenticated by our
+	// URL token and its JWT.
+	"GET /api/office/capabilities":             scopeAggregate,
+	"GET /api/office/config":                   scopeOffice,
+	"POST /api/disk/items/{id}/office/convert": scopeDiskItem,
+	"POST /api/workspaces/{id}/office/convert": scopeWorkspace,
+	"POST /api/workspaces/{id}/office/create":  scopeWorkspace,
+	"GET /api/office/file/{token}":             scopePublic,
+	"POST /api/office/callback/{token}":        scopePublic,
 	// Wiki (ADR-0096 §8). The sync socket authenticates in-band (the token frame, like the
 	// gateway) and applies the workspace policy itself (wiki.Authenticator); the public link
 	// routes are anonymous like the Disk's, with auth.CheckPublicCapability in the handler.
@@ -702,6 +717,13 @@ func identityGate(q *sqlc.Queries, a *auth.Service, planActive func(ctx context.
 			next.ServeHTTP(w, r)
 			return
 		}
+		if scope == scopeOffice {
+			if r.URL.Query().Get("item") == "" {
+				next.ServeHTTP(w, r) // ?file=: the handler's files.CanRead checks every reference
+				return
+			}
+			scope = scopeDiskItem
+		}
 		var err error
 		mutation := auth.MutationOptions{}
 		switch scope {
@@ -807,6 +829,9 @@ func identityTarget(r *http.Request, q *sqlc.Queries, sc identityScope) (uuid.UU
 	raw := r.PathValue("id")
 	if sc == scopeApp {
 		raw = r.PathValue("appId")
+	}
+	if r.Pattern == "GET /api/office/config" {
+		raw = r.URL.Query().Get("item")
 	}
 	id, err := uuid.Parse(raw)
 	if err != nil {
@@ -999,6 +1024,8 @@ func IdentityRouteClass(pattern string) string {
 		return "canvas_item"
 	case scopeCanvasComment:
 		return "canvas_comment"
+	case scopeOffice:
+		return "office"
 	default:
 		return "specialized"
 	}
