@@ -20,8 +20,7 @@ x-logging: &logging
     max-size: "50m"
     max-file: "5"
 
-# Explicit project name: volumes/containers are calaba_*, and --remove-orphans
-# never touches other compose projects on a shared host.
+# Explicit project name: volumes/containers are calaba_*, and --remove-orphans never touches other compose projects on a shared host.
 name: calaba
 
 services:
@@ -31,8 +30,8 @@ services:
     #  dockerfile: Caddyfile.behind-proxy
     #network_mode: host
     restart: unless-stopped
-    <<: *hardening
-    cap_add: [NET_BIND_SERVICE]    # 80/443 as root without other capabilities
+    #<<: *hardening
+    #cap_add: [NET_BIND_SERVICE]    # 80/443 as root without other capabilities
     tmpfs: [/tmp]
     #deploy:
     #  resources:
@@ -59,7 +58,7 @@ services:
       - ../../web:/srv/web:ro              # <repo root on host>/web = web client static (sync.sh: apps/desktop/dist-web or placeholder)
       - ../../releases:/srv/releases:ro    # <repo root on host>/releases = /download/* (sync.sh: apps/desktop/dist-release)
       - ../../landing:/srv/landing:ro      # <repo root on host>/landing = LANDING_HOST static (sync.sh: apps/landing/out)
-    logging: *logging
+    #logging: *logging
 
   #livekit:
   #  image: livekit/livekit-server:v1.13@sha256:6fd3b7088874c4d119160dd688798dfec852bc014786d392caad15f6f63912a3
@@ -155,7 +154,7 @@ services:
     profiles: [ivr]
     network_mode: host
     restart: unless-stopped
-    <<: *hardening
+    #<<: *hardening
     tmpfs: [/tmp]                  # the prompt cache (≤ 200 MB, refetched after a restart)
     env_file:
       .env
@@ -164,12 +163,12 @@ services:
       - IVR_AGENT_TOKEN=${IVR_AGENT_TOKEN:-}
       - LIVEKIT_URL=${LIVEKIT_URL}
       #ws://127.0.0.1:7880
-    deploy:
-      resources:
-        limits: { cpus: "1", memory: 256m }
+    #deploy:
+    #  resources:
+    #    limits: { cpus: "1", memory: 256m }
     #depends_on:
     #  livekit: { condition: service_started }
-    logging: *logging
+    #logging: *logging
 
   # SIP registration agent of inbound calls (ADR-0121): SIPREG_AGENT_TOKEN in .env (with
   # SIP_ENABLED=1) adds the compose profile "sipreg" (deploy.sh). It registers the workspaces'
@@ -200,13 +199,11 @@ services:
   #    sip: { condition: service_started }
   #  logging: *logging
 
-  # One-shot: recordings_data belongs to the API user (distroless nonroot 65532), which creates
-  # a world-writable directory per workspace for the egress user (1001) and deletes the files.
-  # Reuses the Valkey image (already pulled) for its shell. FOWNER: from the second deploy on,
-  # /out belongs to 65532 and root may chmod it only with this capability.
+  # One-shot: recordings_data belongs to the API user (distroless nonroot 65532), which creates a world-writable directory per workspace for the egress user (1001) and deletes the files. Reuses the Valkey image (already pulled) for its shell. FOWNER: from the second deploy on, /out belongs to 65532 and root may chmod it only with this capability.
   recordings-init:
-    image: valkey/valkey:9-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
-    network_mode: none
+    image: valkey/valkey:latest
+    #9-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
+    #network_mode: none
     restart: "no"
     user: "0:0"
     security_opt: ["no-new-privileges:true"]
@@ -217,7 +214,7 @@ services:
     entrypoint: ["sh", "-c", "chmod 0755 /out && chown 65532:65532 /out"]
     volumes:
       - recordings_data:/out
-    logging: *logging
+    #logging: *logging
 
   api:
     build:
@@ -230,6 +227,8 @@ services:
         COMMIT: ${CALABA_COMMIT:-unknown}
     #network_mode: host
     restart: unless-stopped
+    expose:
+      - 3000:3000
     env_file:
       .env
     environment:
@@ -303,14 +302,14 @@ services:
       - IVR_AGENT_TOKEN=${IVR_AGENT_TOKEN:-}
       - SIPREG_AGENT_TOKEN=${SIPREG_AGENT_TOKEN:-}
       - SIP_INBOUND_ALLOWED_ADDRESSES=${SIP_INBOUND_ALLOWED_ADDRESSES:-}
-    <<: *hardening                 # distroless nonroot (65532); writes only to /data/files, /data/recordings
+    #<<: *hardening                 # distroless nonroot (65532); writes only to /data/files, /data/recordings
     tmpfs: [/tmp]
     volumes:
       - files_data:/data/files
       - recordings_data:/data/recordings
-    deploy:
-      resources:
-        limits: { memory: 1g }
+    #deploy:
+    #  resources:
+    #    limits: { memory: 1g }
     healthcheck:   # distroless has no curl: the binary probes its own /readyz (postgres + valkey)
       test: ["CMD", "/server", "healthcheck"]
       interval: 10s
@@ -339,6 +338,8 @@ services:
       - POSTGRES_DB=postgres
     #ports:
     #  - "127.0.0.1:5432:5432"
+    expose:
+      - 5432:5432
     volumes:
       - pg_data:/var/lib/postgresql   # PG 18 images keep PGDATA in a versioned subdir here
     healthcheck:
@@ -357,7 +358,7 @@ services:
   valkey:
     image: valkey/valkey:9-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
     restart: unless-stopped
-    <<: *hardening
+    #<<: *hardening
     user: "999:1000"               # valkey
     tmpfs: [/tmp]
     env_file:
@@ -374,21 +375,22 @@ services:
         pw=$$(printf '%s' "$$REDIS_PASSWORD" | sed 's/[\\"]/\\&/g')   # escape \ and " for the config
         printf 'requirepass "%s"\n' "$$pw" > /tmp/auth.conf
         exec valkey-server /tmp/auth.conf --save 60 1 --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction
-    ports:
-      - "127.0.0.1:6379:6379"
+    expose:
+      - 6379:6379
+    #ports:
+    #  - "127.0.0.1:6379:6379"
     volumes:
-      # New volume: Valkey does not read Redis 7.4 persistence files (RDB 12). Only transient
-      # state lives here (revocation markers, limits, voice, presence, gateway buffers).
+      # New volume: Valkey does not read Redis 7.4 persistence files (RDB 12). Only transient state lives here (revocation markers, limits, voice, presence, gateway buffers).
       - valkey_data:/data
-    deploy:
-      resources:
-        limits: { memory: 768m }
+    #deploy:
+    #  resources:
+    #    limits: { memory: 768m }
     healthcheck:
       test: ["CMD-SHELL", "VALKEYCLI_AUTH=\"$$REDIS_PASSWORD\" valkey-cli ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 10
-    logging: *logging
+    #logging: *logging
 
 volumes:
   caddy_data:
