@@ -478,6 +478,7 @@ func New(d Deps) *App {
 	boardSvc.FormUploadFormLimit = redisx.NewRateLimiter(d.Redis, "rl:form-upload-f:", 60, 60) // and 60 per minute per form
 	boardSvc.CreateLimit = redisx.NewRateLimiter(d.Redis, "rl:task-create:", 60, 60)           // 60 at once, one per second
 	boardSvc.SearchLimit = redisx.NewRateLimiter(d.Redis, "rl:task-search:", 30, 60)           // ⌘K: 30 at once, one per second
+	boardSvc.ReleaseLimit = redisx.NewRateLimiter(d.Redis, "rl:board-release:", 30, 30)        // CI releases: 30 per minute per board
 	msgHandlers.TaskHook = boardSvc.TaskHook
 	msgHandlers.TaskCommentHook = boardSvc.TaskCommentHook
 	boardHooks := boardSvc.EnableWebhooks(d.Redis, []byte(d.Config.JWTSecret), whOpts) // same delivery options as bots
@@ -602,6 +603,9 @@ func New(d Deps) *App {
 	calSvc.ExternalReminders = cdSvc.DueReminders                                        // ADR-0045 amendment 3: one sweep, one EVENT_REMINDER
 	cdSvc.AllowsCalDAV, calSvc.AllowsCalDAV = planSvc.AllowsCalDAV, planSvc.AllowsCalDAV // Free has no CalDAV (ADR-0024)
 	cdSvc.Routes(mux, private)
+	calSvc.WidgetRoutes(mux, private, authSvc,
+		redisx.NewRateLimiter(d.Redis, "rl:calendar-widget-issue:", 10, 1),
+		redisx.NewRateLimiter(d.Redis, "rl:calendar-widget-read:", 12, 2), cdSvc.WidgetEvents)
 	// Telephony (ADR-0046): phone lines join rooms through the LiveKit SIP API.
 	var lkSIP rtc.SIP
 	var lkRooms rtc.LiveKit

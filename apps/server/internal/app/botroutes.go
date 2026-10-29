@@ -92,6 +92,9 @@ var botRouteGroups = []botRouteGroup{
 	{access: botPublic, why: "the SIP registration agent (ADR-0121): its own bearer token (SIPREG_AGENT_TOKEN), never a user's or a bot's", routes: []string{
 		"GET /api/internal/sipreg-agent",
 	}},
+	{access: botPublic, why: "calendar widgets (ADR-0145): the handler accepts only a purpose-bound widget grant for a live human session, never a user's access token or a bot token", routes: []string{
+		"GET /api/calendar-widget",
+	}},
 	{access: botPublic, why: "signed deliveries of LiveKit, the payment providers and the repository hosting; public offers and the checkout return page", routes: []string{
 		"POST /api/rtc/webhook",
 		"POST /api/billing/stripe/webhook",
@@ -309,6 +312,8 @@ var botRouteGroups = []botRouteGroup{
 		"DELETE /api/task-milestones/{id}",
 		"GET /api/boards/{id}/rules",
 		"GET /api/rules/{id}/runs",
+		"POST /api/boards/{id}/releases", // board task #101: a CI bot with EDIT_TASKS
+		"GET /api/boards/{id}/releases",
 		"GET /api/me/tasks",
 		"GET /api/me/task-notices",
 		"GET /api/workspaces/{id}/tasks/search",
@@ -406,6 +411,7 @@ var botRouteGroups = []botRouteGroup{
 		"GET /api/boards/{id}/git",
 		"PUT /api/boards/{id}/git",
 		"DELETE /api/boards/{id}/git",
+		"PATCH /api/boards/{id}/git",
 		"GET /api/boards/{id}/webhook",
 		"PUT /api/boards/{id}/webhook",
 		"DELETE /api/boards/{id}/webhook",
@@ -693,6 +699,7 @@ var botRouteGroups = []botRouteGroup{
 		"GET /api/workspaces/{id}/members/birthdays",
 		"PATCH /api/workspaces/{id}/members/{userId}/birthday",
 		"GET /api/me/events/today",
+		"POST /api/me/calendar-widget",
 		"GET /api/me/caldav",
 		"POST /api/me/caldav",
 		"PUT /api/me/caldav",
@@ -783,6 +790,7 @@ var botAudited = map[string]bool{
 	"DELETE /api/rules/{id}":                                              true,
 	"PUT /api/boards/{id}/git":                                            true,
 	"DELETE /api/boards/{id}/git":                                         true,
+	"PATCH /api/boards/{id}/git":                                          true,
 	"PUT /api/boards/{id}/webhook":                                        true,
 	"DELETE /api/boards/{id}/webhook":                                     true,
 	"PUT /api/boards/{id}/permissions":                                    true,

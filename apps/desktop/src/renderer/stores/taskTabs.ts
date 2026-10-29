@@ -21,6 +21,11 @@ export interface TaskTab {
   /** A file tab: the Disk item it edits, or (view only) the plain API file. Exactly one is set. */
   itemId?: string;
   fileId?: string;
+  /**
+   * A task tab opened with Ctrl/⌘-click or «Открыть в новой вкладке» (#105): held for its task until
+   * closed, a plain open never replaces it. Only an explicit false is the «preview» tab a plain open reuses; absent counts as pinned.
+   */
+  pinned?: boolean;
   /** When it was last the open task (ms): the oldest one is dropped past {@link MAX_TABS}. */
   at: number;
 }
@@ -49,26 +54,32 @@ function fit(tabs: TaskTab[], keep: string): TaskTab[] {
 
 /**
  * A task became the open one (a plain open): an existing tab just becomes current; otherwise it
- * replaces the current tab in place (browser: the current tab navigates) or, with no current tab,
- * is appended. With no tabs at all nothing is created — a single task needs no strip.
+ * replaces the unpinned «preview» tab in place (browser: the current tab navigates; the current
+ * one when it is unpinned) or, when every task tab is pinned (#105), is appended as the new preview.
+ * With no tabs at all nothing is created — a single task needs no strip. File tabs are never replaced.
  */
 export function reduceActivate(s: TabsState, entry: TaskTab): TabsState {
   const have = s.tabs.findIndex((x) => x.id === entry.id);
   if (have >= 0) return { tabs: s.tabs.map((x, i) => (i === have ? { ...x, at: entry.at } : x)), cur: entry.id };
   if (s.tabs.length === 0) return s.cur === null ? s : { tabs: s.tabs, cur: null };
-  const at = s.cur ? s.tabs.findIndex((x) => x.id === s.cur && x.kind !== 'file') : -1;
-  if (at >= 0) return { tabs: s.tabs.map((x, i) => (i === at ? entry : x)), cur: entry.id };
-  return { tabs: fit([...s.tabs, entry], entry.id), cur: entry.id };
+  const preview = (x: TaskTab): boolean => x.kind !== 'file' && x.pinned === false;
+  let at = s.tabs.findIndex((x) => x.id === s.cur && preview(x));
+  if (at < 0) at = s.tabs.findIndex(preview);
+  const fresh = { ...entry, pinned: false };
+  if (at >= 0) return { tabs: s.tabs.map((x, i) => (i === at ? fresh : x)), cur: entry.id };
+  return { tabs: fit([...s.tabs, fresh], entry.id), cur: entry.id };
 }
 
 /**
- * «Открыть в новой вкладке»: appended in the background (the open task stays open). The task that
- * is open right now (`open`) joins the strip first when it is not there yet, so it is not lost.
+ * «Открыть в новой вкладке»: appended in the background (the open task stays open) and pinned to its
+ * task (#105). The task that is open right now (`open`) joins the strip first when it is not there
+ * yet, so it is not lost, and is pinned too; a task that already has a preview tab pins it.
  */
 export function reduceAdd(s: TabsState, entry: TaskTab, open?: TaskTab): TabsState {
   let tabs = s.tabs;
-  if (open && !tabs.some((x) => x.id === open.id)) tabs = [...tabs, open];
-  if (!tabs.some((x) => x.id === entry.id)) tabs = [...tabs, entry];
+  for (const e of open ? [open, entry] : [entry]) {
+    tabs = tabs.some((x) => x.id === e.id) ? tabs.map((x) => (x.id === e.id && x.kind !== 'file' ? { ...x, pinned: true } : x)) : [...tabs, { ...e, pinned: true }];
+  }
   return { tabs: fit(tabs, open?.id ?? entry.id), cur: s.cur };
 }
 
@@ -114,7 +125,8 @@ export function sanitizeTabs(raw: unknown): TabsState {
       else if (typeof v.fileId === 'string' && v.fileId) tabs.push({ ...base, kind: 'file', fileId: v.fileId });
       continue;
     }
-    tabs.push(base);
+    // Stored before the flag existed: every such tab was opened with ⌘, so it stays pinned.
+    tabs.push({ ...base, pinned: v.pinned !== false });
   }
   const cur = typeof o.cur === 'string' && tabs.some((x) => x.id === o.cur) ? o.cur : null;
   return { tabs: fit(tabs, ''), cur };

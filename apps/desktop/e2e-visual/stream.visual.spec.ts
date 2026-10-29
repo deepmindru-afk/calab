@@ -15,7 +15,8 @@ import { startPublisher, type Publisher } from './publisher';
  *
  * Annotations (ADR-0028): -g "stream-annotate" — the viewer's pen and «Очистить» reach the
  * presenter, the presenter's pointer and stroke show on the stage (the shot); the presenter's
- * side (-g "stream-annotate-presenter") — viewers' pointers on my own stream and the switch.
+ * side (-g "stream-annotate-presenter") — viewers' pointers on my own stream, «X указывает» in my
+ * stream's panel (the shot) and the switch.
  */
 
 test.describe.configure({ mode: 'parallel' });
@@ -212,7 +213,7 @@ test('stream-annotate', async ({ open, win, shot }) => {
   }
 });
 
-test('stream-annotate-presenter', async ({ open, win }) => {
+test('stream-annotate-presenter', async ({ open, win, shot }) => {
   await open();
   await inVoice(win);
   await openPicker(win, true);
@@ -222,6 +223,7 @@ test('stream-annotate-presenter', async ({ open, win }) => {
   if ((await win.getByTestId('stream-stage').count()) === 0) await win.getByTestId('stream-pip').getByRole('button', { name: 'Развернуть' }).first().click();
   // Борис watches my stream and points at it (a member with SPEAK).
   const boris = await startPublisher({ userId: IDS.users.boris, name: 'Борис Петров', roomId: IDS.rooms.meeting, source: 'none', data: true });
+  let ping: NodeJS.Timeout | null = null;
   try {
     await expect.poll(() => boris.remoteScreenSid(), { timeout: 30_000 }).not.toBe('');
     const sid = await boris.remoteScreenSid();
@@ -235,6 +237,16 @@ test('stream-annotate-presenter', async ({ open, win }) => {
         return inkAt(win, 'stream-stage', 0.5, 0.5);
       }, { timeout: 10_000 })
       .toBe(true);
+    // Issue #102: the panel says who points and, with no overlay here (visual tests), offers the
+    // preview; kept alive for a steady shot. The hint under the switch comes back when quiet.
+    const status = win.getByTestId('my-stream-annot-status');
+    ping = setInterval(() => void send({ streamSid: sid, kind: AnnotKind.POINTER, points: [0.5, 0.5] }).catch(() => undefined), 300);
+    await expect(status).toContainText('указывает на экран');
+    await expect(status.getByRole('button', { name: 'Показать' })).toBeVisible();
+    await checkpoint(shot, 'stream-annotate-presenter');
+    clearInterval(ping);
+    ping = null;
+    await expect(status).toHaveText('Рисунки видны в превью вашего стрима', { timeout: 10_000 });
     // Not a live stream / malformed: ignored.
     await send({ streamSid: 'TR_gone', kind: AnnotKind.POINTER, points: [0.2, 0.2] });
     // The switch in my stream's panel: off → Борис is told, his pointer is ignored.
@@ -249,6 +261,7 @@ test('stream-annotate-presenter', async ({ open, win }) => {
     await toggle.click();
     await expect.poll(async () => (await annotsOf(boris)).some((m) => m.kind === AnnotKind.POLICY && m.allow)).toBe(true);
   } finally {
+    if (ping) clearInterval(ping);
     await boris.stop();
     await win.getByRole('button', { name: 'Остановить показ' }).first().click().catch(() => undefined);
   }

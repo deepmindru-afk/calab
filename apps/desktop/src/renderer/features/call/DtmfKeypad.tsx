@@ -5,24 +5,42 @@ import { Button, Modal, cx } from '../../components/ui';
 import { t } from '../../i18n';
 import { sendDtmf } from '../../services/sipOutbound';
 import { usePersonalActive } from '../../stores/sipOutbound';
+import { playKeyClick } from '../../lib/sounds';
 import { Keypad } from '../telephony/keypad/Keypad';
 
 /**
  * The tone keypad of a phone call (ADR-0137 §3.7, §6–§7): a bank's menu, an extension — the
- * digits go to the line as SipDTMF data packets (voice.publishDtmf; livekit/sip v1.14 forwards them
- * to the provider as RFC 2833). Data, not sound: the echo rules (docs/02) are untouched. Only on an
- * answered personal call: the inbound call's token has no data grant yet (docs/12), so it is
- * hidden there. Desktop: «Клавиатура» in the island → a popover; phone: the band's 44 px round
+ * digits go to the line as SipDTMF data packets addressed to that line only (voice.publishDtmf;
+ * livekit/sip v1.14 forwards them to the provider as RFC 2833). Data, not sound: the echo rules
+ * (docs/02) are untouched. A voice room's phone line has its own «Клавиатура» with the same pad
+ * (voice/Sip.tsx). Here: only on an answered personal call: the inbound call's token has no data
+ * grant yet (docs/12), so it is hidden there. Desktop: «Клавиатура» in the island → a popover; phone: the band's 44 px round
  * button (in the camera's place) → a centred card. The typed digits live in the card (a leaf).
  */
 
-function DtmfPad(): ReactNode {
+/**
+ * The keypad card's body: what was sent so far and the 3×4 keys. `send` puts one key on the line
+ * (false = not now: nothing is shown or clicked). A sent key ticks (lib/sounds playKeyClick, a
+ * plain <audio>) besides the Keypad's haptic. `title`: which line («Тоновый набор: +7 …»).
+ * Mounted only while its card is open; the typed digits live here (a leaf).
+ */
+export function DtmfPad({ send, title }: { send: (k: string) => boolean; title?: string }): ReactNode {
   const [typed, setTyped] = useState('');
-  const onKey = useCallback((k: string) => {
-    if (sendDtmf(k)) setTyped((s) => (s + k).slice(-24));
-  }, []);
+  const onKey = useCallback(
+    (k: string) => {
+      if (!send(k)) return;
+      playKeyClick();
+      setTyped((s) => (s + k).slice(-24));
+    },
+    [send],
+  );
   return (
     <div className="flex flex-col items-center gap-3" data-testid="dtmf-pad">
+      {title ? (
+        <span className="max-w-full truncate text-caption tabular-nums text-muted" data-testid="dtmf-for">
+          {title}
+        </span>
+      ) : null}
       <output className="flex h-8 w-full items-center justify-center truncate text-[22px] tabular-nums tracking-[0.08em] text-fg" aria-live="polite" aria-label={t('telc.dtmf.sent')} data-testid="dtmf-typed">
         {typed}
       </output>
@@ -56,7 +74,7 @@ export function DtmfRow({ roomId, className }: { roomId: string; className?: str
             aria-label={t('telc.dtmf')}
             data-testid="dtmf-popover"
           >
-            <DtmfPad />
+            <DtmfPad send={sendDtmf} />
           </Popover.Content>
         </Popover.Portal>
       </Popover.Root>
@@ -76,7 +94,7 @@ export function DtmfButton({ roomId, className }: { roomId: string; className: s
       {open && active ? (
         <Modal open onClose={() => setOpen(false)} title={t('telc.dtmf')}>
           <div className="flex justify-center pb-2">
-            <DtmfPad />
+            <DtmfPad send={sendDtmf} />
           </div>
         </Modal>
       ) : null}

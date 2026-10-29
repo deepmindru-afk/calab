@@ -18,6 +18,11 @@ const appTheme = (): 'dark' | 'light' => (document.documentElement.dataset['them
 
 /** The Document Server does not say hello (unreachable, blocked): the frame gives up after this. */
 const HELLO_TIMEOUT_MS = 15_000;
+/**
+ * It said hello but the document is not shown yet: on the first open the editor's JS and fonts
+ * (~12 MB, cached afterwards) take 10–30 s on a slow link, so this budget is wider.
+ */
+const READY_TIMEOUT_MS = 90_000;
 /** Leaving a file with changes pending: how long the editor gets to save before the edits are kept on screen. */
 export const SAVE_WAIT_MS = 8_000;
 /** A hidden window with nothing unsaved keeps the editor this long, then lets it go (docs/14: a hidden window runs nothing). */
@@ -69,9 +74,11 @@ function useOfficeConfig(src: OfficeSource, attempt: number): Load {
  */
 function EditorFrame({ cfg, title, loading, onEvent, onConn }: { cfg: OfficeConfigResponse; title: string; loading: boolean; onEvent: (e: HostEvent) => void; onConn: (c: HostConnection | null) => void }): ReactNode {
   const ref = useRef<HTMLIFrameElement>(null);
+  const greeted = useRef(false);
   const origin = originOf(cfg.docsUrl);
   useEffect(() => {
     const frame = ref.current;
+    greeted.current = false;
     if (!frame || !origin) return;
     let conn: HostConnection | null = null;
     let live = true;
@@ -84,7 +91,9 @@ function EditorFrame({ cfg, title, loading, onEvent, onConn }: { cfg: OfficeConf
         onEvent({ name: 'error', code: 'origin' });
         return;
       }
-      conn = connectHost(window, frame, origin, cfg.configJson, onEvent);
+      conn = connectHost(window, frame, origin, cfg.configJson, onEvent, () => {
+        greeted.current = true;
+      });
       onConn(conn);
       frame.src = cfg.hostUrl;
     });
@@ -101,8 +110,15 @@ function EditorFrame({ cfg, title, loading, onEvent, onConn }: { cfg: OfficeConf
   }, [cfg, origin, onEvent, onConn]);
   useEffect(() => {
     if (!loading) return;
-    const id = window.setTimeout(() => onEvent({ name: 'error', code: 'timeout' }), HELLO_TIMEOUT_MS);
-    return () => window.clearTimeout(id);
+    const timeout = (): void => onEvent({ name: 'error', code: 'timeout' });
+    const hello = window.setTimeout(() => {
+      if (!greeted.current) timeout();
+    }, HELLO_TIMEOUT_MS);
+    const ready = window.setTimeout(timeout, READY_TIMEOUT_MS);
+    return () => {
+      window.clearTimeout(hello);
+      window.clearTimeout(ready);
+    };
   }, [loading, onEvent]);
   return <iframe ref={ref} title={title} data-testid="office-frame" referrerPolicy="no-referrer" allow="clipboard-read; clipboard-write" className="size-full border-0 bg-elev" />;
 }

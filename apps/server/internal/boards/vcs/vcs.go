@@ -46,6 +46,11 @@ const (
 	EventPRMerged      = "PR_MERGED"
 	EventPRClosed      = "PR_CLOSED"
 	EventCommitPushed  = "COMMIT_PUSHED"
+	// Board task #101: drafts, review requests and approvals.
+	EventPRDraftOpened     = "PR_DRAFT_OPENED"     // a draft opened or reopened (never PR_OPENED)
+	EventPRReady           = "PR_READY"            // a draft marked ready for review
+	EventPRReviewRequested = "PR_REVIEW_REQUESTED" // a reviewer was added
+	EventPRApproved        = "PR_APPROVED"         // a reviewer approved
 )
 
 // Bounds of what one delivery may produce.
@@ -58,6 +63,7 @@ const (
 	MaxAuthor   = 100
 	MaxRepo     = 300
 	MaxRef      = 300
+	MaxSeen     = 50    // one-shot event keys remembered per link (Link.Once)
 	maxKeysText = 20000 // runes of a text searched for keys
 )
 
@@ -157,8 +163,21 @@ type PullRequest struct {
 	State  string // open | merged | closed
 	Branch string // the source branch
 	Author string
-	// Event: EventPROpened / EventPRMerged / EventPRClosed, or "" for an edit (title / body).
-	Event string
+	// Event: EventPROpened / EventPRMerged / EventPRClosed / EventPRDraftOpened / EventPRReady /
+	// EventPRReviewRequested / EventPRApproved, or "" for an edit (title / body / draft flag).
+	Event  string
+	Draft  bool   // a draft (GitLab Draft / WIP, GitHub draft, Gitea draft or a «WIP:» title)
+	Target string // the target branch
+	Actor  string // who made the event (the approver, who requested a review…); "" = Author
+	// Users: the reviewers added (review requested) or the approver (approved).
+	Users []string
+	// Once: keys of one-shot events («approved:alice», «review:bob»): the event fires only for a
+	// key the link has not seen (a redelivery or a second «approved» of GitLab does nothing).
+	// Forget: keys dropped (unapproved, a reviewer removed), so the event may fire again.
+	Once, Forget []string
+	// SHAs: the merge, squash and head commits of a merged pull request (SHAs form), matched
+	// against the commits of a board release.
+	SHAs []string
 }
 
 // keyRE: a task key anywhere in a text (ADR-0060 §4). Letters of any case are matched here;
@@ -268,7 +287,7 @@ func pushedCommits(ev *Event) []Commit {
 }
 
 // Link is one task_git_links row a delivery writes for task Number (Event: the rule trigger it
-// fires, "" = none).
+// fires, "" = none; Apply decides the final one against the stored row).
 type Link struct {
 	Number int32
 	Kind   string
@@ -278,6 +297,16 @@ type Link struct {
 	State  string
 	Author string
 	Event  string
+	// Mention: a key named only in a pull request's description — linked, never fires.
+	Mention bool
+	Draft   bool
+	Branch  string // the branch (a pull request's source branch, a push's branch)
+	Target  string // a pull request's target branch
+	Actor   string // who made the event
+	Users   []string
+	Once    []string
+	Forget  []string
+	SHAs    []string // a merged pull request's commits (PullRequest.SHAs)
 }
 
 // Links turns an event into the links of the board's tasks (key boardKey): a new branch whose
@@ -307,31 +336,139 @@ func Links(ev *Event, boardKey string) []Link {
 				drive = append(drive, n)
 			}
 		}
+		actor := pr.Actor
+		if actor == "" {
+			actor = pr.Author
+		}
+		base := Link{Kind: KindPR, Ref: strconv.FormatInt(pr.Number, 10), Title: pr.Title, URL: pr.URL, State: pr.State,
+			Author: pr.Author, Draft: pr.Draft, Branch: clip(pr.Branch, MaxRef), Target: clip(pr.Target, MaxRef), Actor: clip(actor, MaxAuthor)}
 		for _, n := range drive {
-			add(Link{Number: n, Kind: KindPR, Ref: strconv.FormatInt(pr.Number, 10), Title: pr.Title, URL: pr.URL,
-				State: pr.State, Author: pr.Author, Event: pr.Event})
+			l := base
+			l.Number, l.Event, l.Users, l.Once, l.Forget, l.SHAs = n, pr.Event, pr.Users, pr.Once, pr.Forget, pr.SHAs
+			add(l)
 		}
 		for _, n := range Keys(pr.Body, boardKey) {
 			if !slices.Contains(drive, n) {
-				add(Link{Number: n, Kind: KindPR, Ref: strconv.FormatInt(pr.Number, 10), Title: pr.Title, URL: pr.URL,
-					State: pr.State, Author: pr.Author})
+				l := base
+				l.Number, l.Mention = n, true
+				add(l)
 			}
 		}
 	case ev.Push:
 		if ev.BranchCreated {
 			for _, n := range KeysFold(ev.Branch, boardKey) {
 				add(Link{Number: n, Kind: KindBranch, Ref: ev.Branch, Title: ev.Branch, URL: branchURL(ev), Author: ev.Author,
-					Event: EventBranchCreated})
+					Event: EventBranchCreated, Branch: clip(ev.Branch, MaxRef), Actor: clip(ev.Author, MaxAuthor)})
 			}
 		}
 		for _, c := range pushedCommits(ev) {
 			first, _, _ := strings.Cut(strings.TrimSpace(c.Message), "\n")
 			for _, n := range Keys(c.Message, boardKey) {
-				add(Link{Number: n, Kind: KindCommit, Ref: c.SHA, Title: first, URL: c.URL, Author: c.Author, Event: EventCommitPushed})
+				add(Link{Number: n, Kind: KindCommit, Ref: c.SHA, Title: first, URL: c.URL, Author: c.Author, Event: EventCommitPushed,
+					Branch: clip(ev.Branch, MaxRef), Actor: clip(ev.Author, MaxAuthor)})
 			}
 		}
 	}
 	return out
+}
+
+// Prior is the stored row of a link before a delivery (Found false: the link is new).
+type Prior struct {
+	Found             bool
+	State, Title, URL string
+	Draft             bool
+	Seen              []string
+	SHAs              []string
+}
+
+// Apply decides what link l of a delivery does to its stored row p: the rule event it fires
+// ("" = none), the one-shot keys to store and whether the row changes at all (false: a repeat —
+// nothing is written or journaled). A redelivery changes nothing, so it fires nothing:
+//   - a branch fires BRANCH_CREATED only when new;
+//   - a pull request fires when its state, title, URL or draft flag changes (opened, merged…);
+//   - PR_READY fires when a stored draft stops being one, also when the host sends a plain edit
+//     (Gitea: «WIP:» removed from the title), and never for a pull request that was not a draft;
+//   - one-shot events (approved, review requested) fire for a key of Once not yet seen.
+func Apply(p Prior, l Link) (event string, seen []string, changed bool) {
+	event = l.Event
+	seen = slices.Clone(p.Seen)
+	if len(l.Once) > 0 {
+		fresh := false
+		for _, k := range l.Once {
+			if !slices.Contains(seen, k) {
+				seen, fresh = append(seen, k), true
+			}
+		}
+		if !fresh {
+			event = ""
+		}
+	}
+	seen = slices.DeleteFunc(seen, func(k string) bool { return slices.Contains(l.Forget, k) })
+	if len(seen) > MaxSeen {
+		seen = seen[len(seen)-MaxSeen:]
+	}
+	if seen == nil {
+		seen = []string{}
+	}
+	switch {
+	case p.Found && event == EventBranchCreated:
+		event = ""
+	case l.Kind != KindPR:
+	case event == EventPRReady && (l.Draft || (p.Found && !p.Draft)):
+		event = "" // already ready (a redelivery), or a draft again
+	case event == "" && p.Found && p.Draft && !l.Draft && l.State == StateOpen:
+		event = EventPRReady
+	}
+	changed = !p.Found || p.State != l.State || p.Title != l.Title || p.URL != l.URL || p.Draft != l.Draft || !slices.Equal(seen, p.Seen) ||
+		(len(l.SHAs) > 0 && !slices.Equal(l.SHAs, p.SHAs))
+	if !changed || l.Mention {
+		event = ""
+	}
+	return event, seen, changed
+}
+
+// OnceKey is the one-shot key of event kind ("approved", "review") by user.
+func OnceKey(kind, user string) string { return kind + ":" + strings.ToLower(clip(user, MaxAuthor)) }
+
+// BranchMatch reports whether branch matches one of patterns (none = any branch): an exact name
+// or a glob where «*» is any run of characters, «/» included («release/*» is release/1.2 and
+// release/1.2/hotfix), and «?» one character. An empty branch matches only no patterns.
+func BranchMatch(patterns []string, branch string) bool {
+	if len(patterns) == 0 {
+		return true
+	}
+	for _, p := range patterns {
+		if glob(p, branch) {
+			return true
+		}
+	}
+	return false
+}
+
+// glob matches s against pattern p (* and ?), iteratively with one backtrack point: linear in
+// practice, no regexp compiled per event.
+func glob(p, s string) bool {
+	pr, sr := []rune(p), []rune(s)
+	pi, si, star, mark := 0, 0, -1, 0
+	for si < len(sr) {
+		switch {
+		case pi < len(pr) && (pr[pi] == '?' || pr[pi] == sr[si]):
+			pi++
+			si++
+		case pi < len(pr) && pr[pi] == '*':
+			star, mark = pi, si
+			pi++
+		case star >= 0:
+			pi, mark = star+1, mark+1
+			si = mark
+		default:
+			return false
+		}
+	}
+	for pi < len(pr) && pr[pi] == '*' {
+		pi++
+	}
+	return pi == len(pr)
 }
 
 func branchURL(ev *Event) string {
@@ -372,4 +509,37 @@ func clip(s string, n int) string {
 		return s
 	}
 	return string([]rune(s)[:n])
+}
+
+// SafeURL is safeURL for callers outside the package: an http(s) address of at most MaxURL
+// characters, else "".
+func SafeURL(s string) string { return safeURL(s) }
+
+// NoteKey is the Seen key of a pull request link whose backlink note was posted (board task
+// #101): one note per merge request and task, never again on a redelivery.
+const NoteKey = "note:calab"
+
+// ValidSHA reports a full commit id: 40 (SHA-1) or 64 (SHA-256) lowercase hex characters.
+func ValidSHA(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for i := range len(s) {
+		if c := s[i]; (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// SHAs keeps the full commit ids of ss (lower-cased), without empties and duplicates, in order.
+func SHAs(ss ...string) []string {
+	var out []string
+	for _, s := range ss {
+		s = strings.ToLower(strings.TrimSpace(s))
+		if ValidSHA(s) && !slices.Contains(out, s) {
+			out = append(out, s)
+		}
+	}
+	return out
 }

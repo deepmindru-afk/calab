@@ -274,4 +274,11 @@ export const esShell: DictShape<typeof enShell> = {
   'mobile.pinFull': 'Primero desfija uno',
   'mobile.reorder': 'Arrastrar «{name}»',
   'mobile.unpin': 'Desfijar «{name}»',
+  'island.toggle': 'Perfil y llamada: {name}',
+  'island.region': 'Perfil y llamada',
+  'island.inCall': 'en una llamada',
+  'island.muted': 'micrófono silenciado',
+  'island.deafened': 'sonido desactivado',
+  'settings.islandCollapse': 'Isla: plegar en el avatar fuera de «Equipo»',
+  'settings.islandCollapseHint': 'En las demás pantallas solo queda tu avatar abajo a la izquierda: pasa el cursor para activar el micrófono, cambiar tu estado o controlar la llamada',
 } as const;

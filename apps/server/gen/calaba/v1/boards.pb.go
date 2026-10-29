@@ -569,6 +569,8 @@ func (ApproverState) EnumDescriptor() ([]byte, []int) {
 // IS_NOT / NONE_OF. APPROVER_PENDING: user ids or "me" — an approver whose vote is still
 // pending («Ждут моего согласования»); EMPTY / NOT_EMPTY: nobody's / somebody's vote pending.
 // BOARD (ADR-0139): board ids with IS / IS_NOT (the cross-board task search).
+// RELEASE (board task #101): release ids with IS / ANY_OF / IS_NOT / NONE_OF; EMPTY / NOT_EMPTY:
+// in no release / in some release.
 type TaskField int32
 
 const (
@@ -596,6 +598,7 @@ const (
 	TaskField_TASK_FIELD_APPROVAL_STATE   TaskField = 21
 	TaskField_TASK_FIELD_APPROVER_PENDING TaskField = 22
 	TaskField_TASK_FIELD_BOARD            TaskField = 23
+	TaskField_TASK_FIELD_RELEASE          TaskField = 24
 )
 
 // Enum value maps for TaskField.
@@ -625,6 +628,7 @@ var (
 		21: "TASK_FIELD_APPROVAL_STATE",
 		22: "TASK_FIELD_APPROVER_PENDING",
 		23: "TASK_FIELD_BOARD",
+		24: "TASK_FIELD_RELEASE",
 	}
 	TaskField_value = map[string]int32{
 		"TASK_FIELD_UNSPECIFIED":      0,
@@ -651,6 +655,7 @@ var (
 		"TASK_FIELD_APPROVAL_STATE":   21,
 		"TASK_FIELD_APPROVER_PENDING": 22,
 		"TASK_FIELD_BOARD":            23,
+		"TASK_FIELD_RELEASE":          24,
 	}
 )
 
@@ -2682,7 +2687,10 @@ type Task struct {
 	// Watchers (ADR-0076): members who see the card - an explicit role, always also subscribed.
 	// A watcher who does not see the board sees this task (VIEW_BOARD on it: view, comment,
 	// subscribe). Sorted by user id. See PUT / DELETE /api/tasks/{id}/watchers.
-	WatcherIds    []string `protobuf:"bytes,47,rep,name=watcher_ids,json=watcherIds,proto3" json:"watcher_ids,omitempty"`
+	WatcherIds []string `protobuf:"bytes,47,rep,name=watcher_ids,json=watcherIds,proto3" json:"watcher_ids,omitempty"`
+	// Releases (board task #101): one per environment the task was deployed to (the first release
+	// of that environment that carried it), newest first. In every task form.
+	Releases      []*TaskRelease `protobuf:"bytes,48,rep,name=releases,proto3" json:"releases,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3046,6 +3054,13 @@ func (x *Task) GetWatcherIds() []string {
 	return nil
 }
 
+func (x *Task) GetReleases() []*TaskRelease {
+	if x != nil {
+		return x.Releases
+	}
+	return nil
+}
+
 // One entry of the task journal (ADR-0042 §1): written on every change, never edited.
 // kind: "created" | "status" | "assignees" | "priority" | "labels" | "dates" | "estimate" |
 // "parent" | "milestone" | "relation" | "title" | "description" | "archived" | "restored" |
@@ -3064,8 +3079,11 @@ func (x *Task) GetWatcherIds() []string {
 // {"from_status_id", "status_id", "approved", "quorum", "rejected"} (the "status" entry is
 // written as well). "git" (ADR-0060 §4): after {"event":
 // the RuleGitEvent name without its prefix, "kind": "branch" | "pr" | "commit", "provider",
-// "repo", "ref", "title", "url", "state", "commits": [{"sha", "title", "url"}] of a push};
-// before {"state", "title"} of a pull request that changed.
+// "repo", "ref", "title", "url", "state", "commits": [{"sha", "title", "url"}] of a push,
+// "branch", "author" (who made the event); a pull request also "target_branch", "draft",
+// "users" (reviewers added / the approver)}; before {"state", "title", "draft"} of a pull
+// request that changed. "release" (board task #101): the task entered a release, after
+// {"release_id", "name", "environment", "sha", "url"} (actor = who posted the release).
 // Snapshots (ADR-0091): "description" — {"length", "text"} before and after; "attachments" —
 // {"file_ids", "files": [{"file_id", "name", "size", "mime"}]}; "labels" — {"label_ids",
 // "labels": [{"id", "name", "color"}]}; "milestone" — {"milestone_id", "name"}; "parent" —
@@ -8828,6 +8846,83 @@ func (x *TaskChecklistDelete) GetChecklistDone() uint32 {
 	return 0
 }
 
+// The release of an environment a task entered (board task #101; see BoardRelease).
+type TaskRelease struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ReleaseId     string                 `protobuf:"bytes,1,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`                            // "4929cf3", "1287"
+	Environment   string                 `protobuf:"bytes,3,opt,name=environment,proto3" json:"environment,omitempty"`              // "prod", "stage"
+	Url           string                 `protobuf:"bytes,4,opt,name=url,proto3" json:"url,omitempty"`                              // the pipeline, "" = none
+	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"` // when the task entered it
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaskRelease) Reset() {
+	*x = TaskRelease{}
+	mi := &file_calaba_v1_boards_proto_msgTypes[97]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskRelease) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskRelease) ProtoMessage() {}
+
+func (x *TaskRelease) ProtoReflect() protoreflect.Message {
+	mi := &file_calaba_v1_boards_proto_msgTypes[97]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskRelease.ProtoReflect.Descriptor instead.
+func (*TaskRelease) Descriptor() ([]byte, []int) {
+	return file_calaba_v1_boards_proto_rawDescGZIP(), []int{97}
+}
+
+func (x *TaskRelease) GetReleaseId() string {
+	if x != nil {
+		return x.ReleaseId
+	}
+	return ""
+}
+
+func (x *TaskRelease) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *TaskRelease) GetEnvironment() string {
+	if x != nil {
+		return x.Environment
+	}
+	return ""
+}
+
+func (x *TaskRelease) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+func (x *TaskRelease) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
 // A branch, pull / merge request or commit whose name, title, body or message mentions the task
 // key (FNG-12). Unique per (task, kind, provider, repo, ref); ≤ 50 per task (old commits go
 // first). Links are written only by the board's Git webhook.
@@ -8851,7 +8946,7 @@ type TaskGitLink struct {
 
 func (x *TaskGitLink) Reset() {
 	*x = TaskGitLink{}
-	mi := &file_calaba_v1_boards_proto_msgTypes[97]
+	mi := &file_calaba_v1_boards_proto_msgTypes[98]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8863,7 +8958,7 @@ func (x *TaskGitLink) String() string {
 func (*TaskGitLink) ProtoMessage() {}
 
 func (x *TaskGitLink) ProtoReflect() protoreflect.Message {
-	mi := &file_calaba_v1_boards_proto_msgTypes[97]
+	mi := &file_calaba_v1_boards_proto_msgTypes[98]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8876,7 +8971,7 @@ func (x *TaskGitLink) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskGitLink.ProtoReflect.Descriptor instead.
 func (*TaskGitLink) Descriptor() ([]byte, []int) {
-	return file_calaba_v1_boards_proto_rawDescGZIP(), []int{97}
+	return file_calaba_v1_boards_proto_rawDescGZIP(), []int{98}
 }
 
 func (x *TaskGitLink) GetId() string {
@@ -8979,7 +9074,7 @@ type TaskGitLinksUpdate struct {
 
 func (x *TaskGitLinksUpdate) Reset() {
 	*x = TaskGitLinksUpdate{}
-	mi := &file_calaba_v1_boards_proto_msgTypes[98]
+	mi := &file_calaba_v1_boards_proto_msgTypes[99]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8991,7 +9086,7 @@ func (x *TaskGitLinksUpdate) String() string {
 func (*TaskGitLinksUpdate) ProtoMessage() {}
 
 func (x *TaskGitLinksUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_calaba_v1_boards_proto_msgTypes[98]
+	mi := &file_calaba_v1_boards_proto_msgTypes[99]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9004,7 +9099,7 @@ func (x *TaskGitLinksUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskGitLinksUpdate.ProtoReflect.Descriptor instead.
 func (*TaskGitLinksUpdate) Descriptor() ([]byte, []int) {
-	return file_calaba_v1_boards_proto_rawDescGZIP(), []int{98}
+	return file_calaba_v1_boards_proto_rawDescGZIP(), []int{99}
 }
 
 func (x *TaskGitLinksUpdate) GetWorkspaceId() string {
@@ -9053,7 +9148,7 @@ type SetBoardOrderRequest_BoardPosition struct {
 
 func (x *SetBoardOrderRequest_BoardPosition) Reset() {
 	*x = SetBoardOrderRequest_BoardPosition{}
-	mi := &file_calaba_v1_boards_proto_msgTypes[99]
+	mi := &file_calaba_v1_boards_proto_msgTypes[100]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9065,7 +9160,7 @@ func (x *SetBoardOrderRequest_BoardPosition) String() string {
 func (*SetBoardOrderRequest_BoardPosition) ProtoMessage() {}
 
 func (x *SetBoardOrderRequest_BoardPosition) ProtoReflect() protoreflect.Message {
-	mi := &file_calaba_v1_boards_proto_msgTypes[99]
+	mi := &file_calaba_v1_boards_proto_msgTypes[100]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9112,7 +9207,7 @@ type SetBoardOrderRequest_CategoryPosition struct {
 
 func (x *SetBoardOrderRequest_CategoryPosition) Reset() {
 	*x = SetBoardOrderRequest_CategoryPosition{}
-	mi := &file_calaba_v1_boards_proto_msgTypes[100]
+	mi := &file_calaba_v1_boards_proto_msgTypes[101]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9124,7 +9219,7 @@ func (x *SetBoardOrderRequest_CategoryPosition) String() string {
 func (*SetBoardOrderRequest_CategoryPosition) ProtoMessage() {}
 
 func (x *SetBoardOrderRequest_CategoryPosition) ProtoReflect() protoreflect.Message {
-	mi := &file_calaba_v1_boards_proto_msgTypes[100]
+	mi := &file_calaba_v1_boards_proto_msgTypes[101]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9166,7 +9261,7 @@ type BoardWebhookEvent_BoardRef struct {
 
 func (x *BoardWebhookEvent_BoardRef) Reset() {
 	*x = BoardWebhookEvent_BoardRef{}
-	mi := &file_calaba_v1_boards_proto_msgTypes[101]
+	mi := &file_calaba_v1_boards_proto_msgTypes[102]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9178,7 +9273,7 @@ func (x *BoardWebhookEvent_BoardRef) String() string {
 func (*BoardWebhookEvent_BoardRef) ProtoMessage() {}
 
 func (x *BoardWebhookEvent_BoardRef) ProtoReflect() protoreflect.Message {
-	mi := &file_calaba_v1_boards_proto_msgTypes[101]
+	mi := &file_calaba_v1_boards_proto_msgTypes[102]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9228,7 +9323,7 @@ type BoardWebhookEvent_Actor struct {
 
 func (x *BoardWebhookEvent_Actor) Reset() {
 	*x = BoardWebhookEvent_Actor{}
-	mi := &file_calaba_v1_boards_proto_msgTypes[102]
+	mi := &file_calaba_v1_boards_proto_msgTypes[103]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9240,7 +9335,7 @@ func (x *BoardWebhookEvent_Actor) String() string {
 func (*BoardWebhookEvent_Actor) ProtoMessage() {}
 
 func (x *BoardWebhookEvent_Actor) ProtoReflect() protoreflect.Message {
-	mi := &file_calaba_v1_boards_proto_msgTypes[102]
+	mi := &file_calaba_v1_boards_proto_msgTypes[103]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9289,7 +9384,7 @@ type BoardWebhookEvent_Change struct {
 
 func (x *BoardWebhookEvent_Change) Reset() {
 	*x = BoardWebhookEvent_Change{}
-	mi := &file_calaba_v1_boards_proto_msgTypes[103]
+	mi := &file_calaba_v1_boards_proto_msgTypes[104]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9301,7 +9396,7 @@ func (x *BoardWebhookEvent_Change) String() string {
 func (*BoardWebhookEvent_Change) ProtoMessage() {}
 
 func (x *BoardWebhookEvent_Change) ProtoReflect() protoreflect.Message {
-	mi := &file_calaba_v1_boards_proto_msgTypes[103]
+	mi := &file_calaba_v1_boards_proto_msgTypes[104]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9349,7 +9444,7 @@ type BoardWebhookEvent_CommentAttachment struct {
 
 func (x *BoardWebhookEvent_CommentAttachment) Reset() {
 	*x = BoardWebhookEvent_CommentAttachment{}
-	mi := &file_calaba_v1_boards_proto_msgTypes[104]
+	mi := &file_calaba_v1_boards_proto_msgTypes[105]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9361,7 +9456,7 @@ func (x *BoardWebhookEvent_CommentAttachment) String() string {
 func (*BoardWebhookEvent_CommentAttachment) ProtoMessage() {}
 
 func (x *BoardWebhookEvent_CommentAttachment) ProtoReflect() protoreflect.Message {
-	mi := &file_calaba_v1_boards_proto_msgTypes[104]
+	mi := &file_calaba_v1_boards_proto_msgTypes[105]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9413,7 +9508,7 @@ type BoardWebhookEvent_Comment struct {
 
 func (x *BoardWebhookEvent_Comment) Reset() {
 	*x = BoardWebhookEvent_Comment{}
-	mi := &file_calaba_v1_boards_proto_msgTypes[105]
+	mi := &file_calaba_v1_boards_proto_msgTypes[106]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9425,7 +9520,7 @@ func (x *BoardWebhookEvent_Comment) String() string {
 func (*BoardWebhookEvent_Comment) ProtoMessage() {}
 
 func (x *BoardWebhookEvent_Comment) ProtoReflect() protoreflect.Message {
-	mi := &file_calaba_v1_boards_proto_msgTypes[105]
+	mi := &file_calaba_v1_boards_proto_msgTypes[106]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9494,7 +9589,7 @@ type BoardWebhookEvent_Rule struct {
 
 func (x *BoardWebhookEvent_Rule) Reset() {
 	*x = BoardWebhookEvent_Rule{}
-	mi := &file_calaba_v1_boards_proto_msgTypes[106]
+	mi := &file_calaba_v1_boards_proto_msgTypes[107]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9506,7 +9601,7 @@ func (x *BoardWebhookEvent_Rule) String() string {
 func (*BoardWebhookEvent_Rule) ProtoMessage() {}
 
 func (x *BoardWebhookEvent_Rule) ProtoReflect() protoreflect.Message {
-	mi := &file_calaba_v1_boards_proto_msgTypes[106]
+	mi := &file_calaba_v1_boards_proto_msgTypes[107]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9699,7 +9794,7 @@ const file_calaba_v1_boards_proto_rawDesc = "" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1d\n" +
 	"\n" +
 	"related_id\x18\x02 \x01(\tR\trelatedId\x12/\n" +
-	"\x04kind\x18\x03 \x01(\x0e2\x1b.calaba.v1.TaskRelationKindR\x04kind\"\xed\x0e\n" +
+	"\x04kind\x18\x03 \x01(\x0e2\x1b.calaba.v1.TaskRelationKindR\x04kind\"\xa1\x0f\n" +
 	"\x04Task\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x19\n" +
 	"\bboard_id\x18\x02 \x01(\tR\aboardId\x12\x16\n" +
@@ -9760,7 +9855,8 @@ const file_calaba_v1_boards_proto_rawDesc = "" +
 	"\x12milestone_progress\x18- \x01(\v2 .calaba.v1.TaskMilestoneProgressR\x11milestoneProgress\x12*\n" +
 	"\x11task_milestone_id\x18. \x01(\tR\x0ftaskMilestoneId\x12\x1f\n" +
 	"\vwatcher_ids\x18/ \x03(\tR\n" +
-	"watcherIds\"\xd3\x02\n" +
+	"watcherIds\x122\n" +
+	"\breleases\x180 \x03(\v2\x16.calaba.v1.TaskReleaseR\breleases\"\xd3\x02\n" +
 	"\fTaskActivity\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12\x19\n" +
@@ -10321,7 +10417,15 @@ const file_calaba_v1_boards_proto_rawDesc = "" +
 	"\atask_id\x18\x03 \x01(\tR\x06taskId\x12!\n" +
 	"\fchecklist_id\x18\x04 \x01(\tR\vchecklistId\x12'\n" +
 	"\x0fchecklist_total\x18\x05 \x01(\rR\x0echecklistTotal\x12%\n" +
-	"\x0echecklist_done\x18\x06 \x01(\rR\rchecklistDone\"\xa9\x03\n" +
+	"\x0echecklist_done\x18\x06 \x01(\rR\rchecklistDone\"\xaf\x01\n" +
+	"\vTaskRelease\x12\x1d\n" +
+	"\n" +
+	"release_id\x18\x01 \x01(\tR\treleaseId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
+	"\venvironment\x18\x03 \x01(\tR\venvironment\x12\x10\n" +
+	"\x03url\x18\x04 \x01(\tR\x03url\x129\n" +
+	"\n" +
+	"created_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\xa9\x03\n" +
 	"\vTaskGitLink\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12.\n" +
@@ -10406,7 +10510,7 @@ const file_calaba_v1_boards_proto_rawDesc = "" +
 	"\x1aAPPROVER_STATE_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16APPROVER_STATE_PENDING\x10\x01\x12\x1b\n" +
 	"\x17APPROVER_STATE_APPROVED\x10\x02\x12\x1b\n" +
-	"\x17APPROVER_STATE_REJECTED\x10\x03*\xf4\x04\n" +
+	"\x17APPROVER_STATE_REJECTED\x10\x03*\x8c\x05\n" +
 	"\tTaskField\x12\x1a\n" +
 	"\x16TASK_FIELD_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11TASK_FIELD_STATUS\x10\x01\x12\x1a\n" +
@@ -10432,7 +10536,8 @@ const file_calaba_v1_boards_proto_rawDesc = "" +
 	"\x13TASK_FIELD_ARCHIVED\x10\x14\x12\x1d\n" +
 	"\x19TASK_FIELD_APPROVAL_STATE\x10\x15\x12\x1f\n" +
 	"\x1bTASK_FIELD_APPROVER_PENDING\x10\x16\x12\x14\n" +
-	"\x10TASK_FIELD_BOARD\x10\x17*\x8a\x02\n" +
+	"\x10TASK_FIELD_BOARD\x10\x17\x12\x16\n" +
+	"\x12TASK_FIELD_RELEASE\x10\x18*\x8a\x02\n" +
 	"\x06TaskOp\x12\x17\n" +
 	"\x13TASK_OP_UNSPECIFIED\x10\x00\x12\x0e\n" +
 	"\n" +
@@ -10513,7 +10618,7 @@ func file_calaba_v1_boards_proto_rawDescGZIP() []byte {
 }
 
 var file_calaba_v1_boards_proto_enumTypes = make([]protoimpl.EnumInfo, 17)
-var file_calaba_v1_boards_proto_msgTypes = make([]protoimpl.MessageInfo, 107)
+var file_calaba_v1_boards_proto_msgTypes = make([]protoimpl.MessageInfo, 108)
 var file_calaba_v1_boards_proto_goTypes = []any{
 	(BoardStatusType)(0),                          // 0: calaba.v1.BoardStatusType
 	(TaskPriority)(0),                             // 1: calaba.v1.TaskPriority
@@ -10629,173 +10734,176 @@ var file_calaba_v1_boards_proto_goTypes = []any{
 	(*BoardCategoryDelete)(nil),                   // 111: calaba.v1.BoardCategoryDelete
 	(*TaskChecklistUpdate)(nil),                   // 112: calaba.v1.TaskChecklistUpdate
 	(*TaskChecklistDelete)(nil),                   // 113: calaba.v1.TaskChecklistDelete
-	(*TaskGitLink)(nil),                           // 114: calaba.v1.TaskGitLink
-	(*TaskGitLinksUpdate)(nil),                    // 115: calaba.v1.TaskGitLinksUpdate
-	(*SetBoardOrderRequest_BoardPosition)(nil),    // 116: calaba.v1.SetBoardOrderRequest.BoardPosition
-	(*SetBoardOrderRequest_CategoryPosition)(nil), // 117: calaba.v1.SetBoardOrderRequest.CategoryPosition
-	(*BoardWebhookEvent_BoardRef)(nil),            // 118: calaba.v1.BoardWebhookEvent.BoardRef
-	(*BoardWebhookEvent_Actor)(nil),               // 119: calaba.v1.BoardWebhookEvent.Actor
-	(*BoardWebhookEvent_Change)(nil),              // 120: calaba.v1.BoardWebhookEvent.Change
-	(*BoardWebhookEvent_CommentAttachment)(nil),   // 121: calaba.v1.BoardWebhookEvent.CommentAttachment
-	(*BoardWebhookEvent_Comment)(nil),             // 122: calaba.v1.BoardWebhookEvent.Comment
-	(*BoardWebhookEvent_Rule)(nil),                // 123: calaba.v1.BoardWebhookEvent.Rule
-	(*timestamppb.Timestamp)(nil),                 // 124: google.protobuf.Timestamp
-	(*RoomPermissionOverride)(nil),                // 125: calaba.v1.RoomPermissionOverride
-	(*FileMeta)(nil),                              // 126: calaba.v1.FileMeta
-	(*structpb.Struct)(nil),                       // 127: google.protobuf.Struct
-	(*Message)(nil),                               // 128: calaba.v1.Message
-	(*Room)(nil),                                  // 129: calaba.v1.Room
+	(*TaskRelease)(nil),                           // 114: calaba.v1.TaskRelease
+	(*TaskGitLink)(nil),                           // 115: calaba.v1.TaskGitLink
+	(*TaskGitLinksUpdate)(nil),                    // 116: calaba.v1.TaskGitLinksUpdate
+	(*SetBoardOrderRequest_BoardPosition)(nil),    // 117: calaba.v1.SetBoardOrderRequest.BoardPosition
+	(*SetBoardOrderRequest_CategoryPosition)(nil), // 118: calaba.v1.SetBoardOrderRequest.CategoryPosition
+	(*BoardWebhookEvent_BoardRef)(nil),            // 119: calaba.v1.BoardWebhookEvent.BoardRef
+	(*BoardWebhookEvent_Actor)(nil),               // 120: calaba.v1.BoardWebhookEvent.Actor
+	(*BoardWebhookEvent_Change)(nil),              // 121: calaba.v1.BoardWebhookEvent.Change
+	(*BoardWebhookEvent_CommentAttachment)(nil),   // 122: calaba.v1.BoardWebhookEvent.CommentAttachment
+	(*BoardWebhookEvent_Comment)(nil),             // 123: calaba.v1.BoardWebhookEvent.Comment
+	(*BoardWebhookEvent_Rule)(nil),                // 124: calaba.v1.BoardWebhookEvent.Rule
+	(*timestamppb.Timestamp)(nil),                 // 125: google.protobuf.Timestamp
+	(*RoomPermissionOverride)(nil),                // 126: calaba.v1.RoomPermissionOverride
+	(*FileMeta)(nil),                              // 127: calaba.v1.FileMeta
+	(*structpb.Struct)(nil),                       // 128: google.protobuf.Struct
+	(*Message)(nil),                               // 129: calaba.v1.Message
+	(*Room)(nil),                                  // 130: calaba.v1.Room
 }
 var file_calaba_v1_boards_proto_depIdxs = []int32{
-	124, // 0: calaba.v1.TaskChecklistItem.done_at:type_name -> google.protobuf.Timestamp
-	124, // 1: calaba.v1.TaskChecklistItem.created_at:type_name -> google.protobuf.Timestamp
+	125, // 0: calaba.v1.TaskChecklistItem.done_at:type_name -> google.protobuf.Timestamp
+	125, // 1: calaba.v1.TaskChecklistItem.created_at:type_name -> google.protobuf.Timestamp
 	18,  // 2: calaba.v1.TaskChecklist.items:type_name -> calaba.v1.TaskChecklistItem
-	124, // 3: calaba.v1.TaskChecklist.created_at:type_name -> google.protobuf.Timestamp
-	124, // 4: calaba.v1.TaskMilestone.completed_at:type_name -> google.protobuf.Timestamp
-	124, // 5: calaba.v1.TaskMilestone.created_at:type_name -> google.protobuf.Timestamp
-	124, // 6: calaba.v1.TaskMilestone.updated_at:type_name -> google.protobuf.Timestamp
+	125, // 3: calaba.v1.TaskChecklist.created_at:type_name -> google.protobuf.Timestamp
+	125, // 4: calaba.v1.TaskMilestone.completed_at:type_name -> google.protobuf.Timestamp
+	125, // 5: calaba.v1.TaskMilestone.created_at:type_name -> google.protobuf.Timestamp
+	125, // 6: calaba.v1.TaskMilestone.updated_at:type_name -> google.protobuf.Timestamp
 	0,   // 7: calaba.v1.BoardStatus.type:type_name -> calaba.v1.BoardStatusType
 	2,   // 8: calaba.v1.BoardView.kind:type_name -> calaba.v1.BoardViewKind
 	35,  // 9: calaba.v1.BoardView.filter:type_name -> calaba.v1.TaskFilter
-	124, // 10: calaba.v1.Board.created_at:type_name -> google.protobuf.Timestamp
-	124, // 11: calaba.v1.Board.archived_at:type_name -> google.protobuf.Timestamp
+	125, // 10: calaba.v1.Board.created_at:type_name -> google.protobuf.Timestamp
+	125, // 11: calaba.v1.Board.archived_at:type_name -> google.protobuf.Timestamp
 	22,  // 12: calaba.v1.Board.statuses:type_name -> calaba.v1.BoardStatus
 	23,  // 13: calaba.v1.Board.labels:type_name -> calaba.v1.BoardLabel
 	24,  // 14: calaba.v1.Board.milestones:type_name -> calaba.v1.BoardMilestone
 	25,  // 15: calaba.v1.Board.views:type_name -> calaba.v1.BoardView
-	125, // 16: calaba.v1.Board.permission_overrides:type_name -> calaba.v1.RoomPermissionOverride
+	126, // 16: calaba.v1.Board.permission_overrides:type_name -> calaba.v1.RoomPermissionOverride
 	5,   // 17: calaba.v1.Board.disabled_features:type_name -> calaba.v1.BoardFeature
 	6,   // 18: calaba.v1.Board.estimate_scale:type_name -> calaba.v1.EstimateScale
-	124, // 19: calaba.v1.TaskAssignee.assigned_at:type_name -> google.protobuf.Timestamp
+	125, // 19: calaba.v1.TaskAssignee.assigned_at:type_name -> google.protobuf.Timestamp
 	8,   // 20: calaba.v1.TaskApprover.state:type_name -> calaba.v1.ApproverState
-	124, // 21: calaba.v1.TaskApprover.decided_at:type_name -> google.protobuf.Timestamp
-	124, // 22: calaba.v1.TaskApprover.added_at:type_name -> google.protobuf.Timestamp
+	125, // 21: calaba.v1.TaskApprover.decided_at:type_name -> google.protobuf.Timestamp
+	125, // 22: calaba.v1.TaskApprover.added_at:type_name -> google.protobuf.Timestamp
 	3,   // 23: calaba.v1.TaskRelation.kind:type_name -> calaba.v1.TaskRelationKind
 	1,   // 24: calaba.v1.Task.priority:type_name -> calaba.v1.TaskPriority
 	27,  // 25: calaba.v1.Task.assignees:type_name -> calaba.v1.TaskAssignee
 	30,  // 26: calaba.v1.Task.relations:type_name -> calaba.v1.TaskRelation
-	124, // 27: calaba.v1.Task.created_at:type_name -> google.protobuf.Timestamp
-	124, // 28: calaba.v1.Task.updated_at:type_name -> google.protobuf.Timestamp
-	124, // 29: calaba.v1.Task.started_at:type_name -> google.protobuf.Timestamp
-	124, // 30: calaba.v1.Task.completed_at:type_name -> google.protobuf.Timestamp
-	124, // 31: calaba.v1.Task.archived_at:type_name -> google.protobuf.Timestamp
-	126, // 32: calaba.v1.Task.attachments:type_name -> calaba.v1.FileMeta
+	125, // 27: calaba.v1.Task.created_at:type_name -> google.protobuf.Timestamp
+	125, // 28: calaba.v1.Task.updated_at:type_name -> google.protobuf.Timestamp
+	125, // 29: calaba.v1.Task.started_at:type_name -> google.protobuf.Timestamp
+	125, // 30: calaba.v1.Task.completed_at:type_name -> google.protobuf.Timestamp
+	125, // 31: calaba.v1.Task.archived_at:type_name -> google.protobuf.Timestamp
+	127, // 32: calaba.v1.Task.attachments:type_name -> calaba.v1.FileMeta
 	29,  // 33: calaba.v1.Task.approvers:type_name -> calaba.v1.TaskApprover
 	7,   // 34: calaba.v1.Task.approval_state:type_name -> calaba.v1.TaskApprovalState
 	19,  // 35: calaba.v1.Task.checklists:type_name -> calaba.v1.TaskChecklist
-	114, // 36: calaba.v1.Task.git_links:type_name -> calaba.v1.TaskGitLink
+	115, // 36: calaba.v1.Task.git_links:type_name -> calaba.v1.TaskGitLink
 	20,  // 37: calaba.v1.Task.milestones:type_name -> calaba.v1.TaskMilestone
 	21,  // 38: calaba.v1.Task.milestone_progress:type_name -> calaba.v1.TaskMilestoneProgress
-	127, // 39: calaba.v1.TaskActivity.before:type_name -> google.protobuf.Struct
-	127, // 40: calaba.v1.TaskActivity.after:type_name -> google.protobuf.Struct
-	124, // 41: calaba.v1.TaskActivity.created_at:type_name -> google.protobuf.Timestamp
-	128, // 42: calaba.v1.TaskActivityItem.message:type_name -> calaba.v1.Message
-	32,  // 43: calaba.v1.TaskActivityItem.activity:type_name -> calaba.v1.TaskActivity
-	9,   // 44: calaba.v1.TaskCondition.field:type_name -> calaba.v1.TaskField
-	10,  // 45: calaba.v1.TaskCondition.op:type_name -> calaba.v1.TaskOp
-	124, // 46: calaba.v1.TaskCondition.from:type_name -> google.protobuf.Timestamp
-	124, // 47: calaba.v1.TaskCondition.to:type_name -> google.protobuf.Timestamp
-	34,  // 48: calaba.v1.TaskFilter.conditions:type_name -> calaba.v1.TaskCondition
-	26,  // 49: calaba.v1.ListBoardsResponse.boards:type_name -> calaba.v1.Board
-	4,   // 50: calaba.v1.CreateBoardRequest.template:type_name -> calaba.v1.BoardTemplate
-	26,  // 51: calaba.v1.BoardResponse.board:type_name -> calaba.v1.Board
-	5,   // 52: calaba.v1.UpdateBoardRequest.disabled_features:type_name -> calaba.v1.BoardFeature
-	6,   // 53: calaba.v1.UpdateBoardRequest.estimate_scale:type_name -> calaba.v1.EstimateScale
-	125, // 54: calaba.v1.SetBoardPermissionsRequest.overrides:type_name -> calaba.v1.RoomPermissionOverride
-	125, // 55: calaba.v1.BoardPermissionsResponse.overrides:type_name -> calaba.v1.RoomPermissionOverride
-	26,  // 56: calaba.v1.BoardPermissionsResponse.board:type_name -> calaba.v1.Board
-	0,   // 57: calaba.v1.CreateBoardStatusRequest.type:type_name -> calaba.v1.BoardStatusType
-	0,   // 58: calaba.v1.UpdateBoardStatusRequest.type:type_name -> calaba.v1.BoardStatusType
-	31,  // 59: calaba.v1.ListTasksResponse.tasks:type_name -> calaba.v1.Task
-	1,   // 60: calaba.v1.CreateTaskRequest.priority:type_name -> calaba.v1.TaskPriority
-	28,  // 61: calaba.v1.CreateTaskRequest.assignees:type_name -> calaba.v1.TaskAssigneeInput
-	1,   // 62: calaba.v1.CreateSmartTaskRequest.priority:type_name -> calaba.v1.TaskPriority
-	31,  // 63: calaba.v1.CreateSmartTaskResponse.task:type_name -> calaba.v1.Task
-	54,  // 64: calaba.v1.CreateSmartTaskResponse.refusal:type_name -> calaba.v1.SmartTaskRefusal
-	31,  // 65: calaba.v1.TaskResponse.task:type_name -> calaba.v1.Task
-	31,  // 66: calaba.v1.TaskResponse.subtasks:type_name -> calaba.v1.Task
-	31,  // 67: calaba.v1.TaskResponse.related:type_name -> calaba.v1.Task
-	31,  // 68: calaba.v1.TaskResponse.parent:type_name -> calaba.v1.Task
-	26,  // 69: calaba.v1.TaskResponse.board:type_name -> calaba.v1.Board
-	129, // 70: calaba.v1.TaskResponse.room:type_name -> calaba.v1.Room
-	1,   // 71: calaba.v1.UpdateTaskRequest.priority:type_name -> calaba.v1.TaskPriority
-	28,  // 72: calaba.v1.SetAssigneesRequest.assignees:type_name -> calaba.v1.TaskAssigneeInput
-	11,  // 73: calaba.v1.TaskApprovalRequest.decision:type_name -> calaba.v1.TaskApprovalDecision
-	3,   // 74: calaba.v1.SetTaskRelationRequest.kind:type_name -> calaba.v1.TaskRelationKind
-	33,  // 75: calaba.v1.TaskActivityPage.items:type_name -> calaba.v1.TaskActivityItem
-	32,  // 76: calaba.v1.BoardActivityResponse.activities:type_name -> calaba.v1.TaskActivity
-	31,  // 77: calaba.v1.MyTasksResponse.tasks:type_name -> calaba.v1.Task
-	31,  // 78: calaba.v1.SearchTasksResponse.tasks:type_name -> calaba.v1.Task
-	31,  // 79: calaba.v1.SearchTasksResponse.key_task:type_name -> calaba.v1.Task
-	67,  // 80: calaba.v1.SearchTasksResponse.snippets:type_name -> calaba.v1.TaskSearchSnippet
-	35,  // 81: calaba.v1.TaskSearchQuery.filter:type_name -> calaba.v1.TaskFilter
-	68,  // 82: calaba.v1.SavedTaskSearch.query:type_name -> calaba.v1.TaskSearchQuery
-	69,  // 83: calaba.v1.ListSavedTaskSearchesResponse.searches:type_name -> calaba.v1.SavedTaskSearch
-	68,  // 84: calaba.v1.CreateSavedTaskSearchRequest.query:type_name -> calaba.v1.TaskSearchQuery
-	68,  // 85: calaba.v1.UpdateSavedTaskSearchRequest.query:type_name -> calaba.v1.TaskSearchQuery
-	69,  // 86: calaba.v1.SavedTaskSearchResponse.search:type_name -> calaba.v1.SavedTaskSearch
-	25,  // 87: calaba.v1.ListBoardViewsResponse.views:type_name -> calaba.v1.BoardView
-	2,   // 88: calaba.v1.CreateBoardViewRequest.kind:type_name -> calaba.v1.BoardViewKind
-	35,  // 89: calaba.v1.CreateBoardViewRequest.filter:type_name -> calaba.v1.TaskFilter
-	2,   // 90: calaba.v1.UpdateBoardViewRequest.kind:type_name -> calaba.v1.BoardViewKind
-	35,  // 91: calaba.v1.UpdateBoardViewRequest.filter:type_name -> calaba.v1.TaskFilter
-	25,  // 92: calaba.v1.BoardViewResponse.view:type_name -> calaba.v1.BoardView
-	17,  // 93: calaba.v1.ListBoardCategoriesResponse.categories:type_name -> calaba.v1.BoardCategory
-	17,  // 94: calaba.v1.BoardCategoryResponse.category:type_name -> calaba.v1.BoardCategory
-	116, // 95: calaba.v1.SetBoardOrderRequest.boards:type_name -> calaba.v1.SetBoardOrderRequest.BoardPosition
-	117, // 96: calaba.v1.SetBoardOrderRequest.categories:type_name -> calaba.v1.SetBoardOrderRequest.CategoryPosition
-	26,  // 97: calaba.v1.SetBoardOrderResponse.boards:type_name -> calaba.v1.Board
-	17,  // 98: calaba.v1.SetBoardOrderResponse.categories:type_name -> calaba.v1.BoardCategory
-	19,  // 99: calaba.v1.TaskChecklistResponse.checklist:type_name -> calaba.v1.TaskChecklist
-	31,  // 100: calaba.v1.ConvertChecklistItemResponse.task:type_name -> calaba.v1.Task
-	19,  // 101: calaba.v1.ConvertChecklistItemResponse.checklist:type_name -> calaba.v1.TaskChecklist
-	20,  // 102: calaba.v1.TaskMilestoneResponse.milestone:type_name -> calaba.v1.TaskMilestone
-	31,  // 103: calaba.v1.TaskMilestoneResponse.task:type_name -> calaba.v1.Task
-	124, // 104: calaba.v1.BoardWebhook.disabled_at:type_name -> google.protobuf.Timestamp
-	124, // 105: calaba.v1.BoardWebhook.failing_since:type_name -> google.protobuf.Timestamp
-	124, // 106: calaba.v1.BoardWebhook.last_ok_at:type_name -> google.protobuf.Timestamp
-	124, // 107: calaba.v1.BoardWebhook.created_at:type_name -> google.protobuf.Timestamp
-	124, // 108: calaba.v1.BoardWebhook.updated_at:type_name -> google.protobuf.Timestamp
-	12,  // 109: calaba.v1.BoardWebhook.paused_reason:type_name -> calaba.v1.BoardWebhookPauseReason
-	93,  // 110: calaba.v1.BoardWebhookResponse.webhook:type_name -> calaba.v1.BoardWebhook
-	124, // 111: calaba.v1.BoardWebhookEvent.occurred_at:type_name -> google.protobuf.Timestamp
-	118, // 112: calaba.v1.BoardWebhookEvent.board:type_name -> calaba.v1.BoardWebhookEvent.BoardRef
-	119, // 113: calaba.v1.BoardWebhookEvent.actor:type_name -> calaba.v1.BoardWebhookEvent.Actor
-	31,  // 114: calaba.v1.BoardWebhookEvent.task:type_name -> calaba.v1.Task
-	120, // 115: calaba.v1.BoardWebhookEvent.changes:type_name -> calaba.v1.BoardWebhookEvent.Change
-	122, // 116: calaba.v1.BoardWebhookEvent.comment:type_name -> calaba.v1.BoardWebhookEvent.Comment
-	123, // 117: calaba.v1.BoardWebhookEvent.rule:type_name -> calaba.v1.BoardWebhookEvent.Rule
-	26,  // 118: calaba.v1.BoardCreate.board:type_name -> calaba.v1.Board
-	26,  // 119: calaba.v1.BoardUpdate.board:type_name -> calaba.v1.Board
-	31,  // 120: calaba.v1.TaskCreate.task:type_name -> calaba.v1.Task
-	31,  // 121: calaba.v1.TaskUpdate.task:type_name -> calaba.v1.Task
-	104, // 122: calaba.v1.TaskUpdate.notice:type_name -> calaba.v1.TaskNotice
-	31,  // 123: calaba.v1.TaskNoticeRelay.task:type_name -> calaba.v1.Task
-	104, // 124: calaba.v1.TaskNoticeRelay.notice:type_name -> calaba.v1.TaskNotice
-	13,  // 125: calaba.v1.TaskNotice.kind:type_name -> calaba.v1.TaskNoticeKind
-	104, // 126: calaba.v1.TaskNoticeEntry.notice:type_name -> calaba.v1.TaskNotice
-	124, // 127: calaba.v1.TaskNoticeEntry.created_at:type_name -> google.protobuf.Timestamp
-	105, // 128: calaba.v1.ListTaskNoticesResponse.entries:type_name -> calaba.v1.TaskNoticeEntry
-	32,  // 129: calaba.v1.TaskActivityAppend.activity:type_name -> calaba.v1.TaskActivity
-	17,  // 130: calaba.v1.BoardCategoryCreate.category:type_name -> calaba.v1.BoardCategory
-	17,  // 131: calaba.v1.BoardCategoryUpdate.category:type_name -> calaba.v1.BoardCategory
-	19,  // 132: calaba.v1.TaskChecklistUpdate.checklist:type_name -> calaba.v1.TaskChecklist
-	15,  // 133: calaba.v1.TaskGitLink.kind:type_name -> calaba.v1.TaskGitLinkKind
-	14,  // 134: calaba.v1.TaskGitLink.provider:type_name -> calaba.v1.GitProvider
-	16,  // 135: calaba.v1.TaskGitLink.state:type_name -> calaba.v1.TaskGitLinkState
-	124, // 136: calaba.v1.TaskGitLink.created_at:type_name -> google.protobuf.Timestamp
-	124, // 137: calaba.v1.TaskGitLink.updated_at:type_name -> google.protobuf.Timestamp
-	114, // 138: calaba.v1.TaskGitLinksUpdate.links:type_name -> calaba.v1.TaskGitLink
-	127, // 139: calaba.v1.BoardWebhookEvent.Change.before:type_name -> google.protobuf.Struct
-	127, // 140: calaba.v1.BoardWebhookEvent.Change.after:type_name -> google.protobuf.Struct
-	121, // 141: calaba.v1.BoardWebhookEvent.Comment.attachments:type_name -> calaba.v1.BoardWebhookEvent.CommentAttachment
-	124, // 142: calaba.v1.BoardWebhookEvent.Comment.created_at:type_name -> google.protobuf.Timestamp
-	124, // 143: calaba.v1.BoardWebhookEvent.Comment.edited_at:type_name -> google.protobuf.Timestamp
-	144, // [144:144] is the sub-list for method output_type
-	144, // [144:144] is the sub-list for method input_type
-	144, // [144:144] is the sub-list for extension type_name
-	144, // [144:144] is the sub-list for extension extendee
-	0,   // [0:144] is the sub-list for field type_name
+	114, // 39: calaba.v1.Task.releases:type_name -> calaba.v1.TaskRelease
+	128, // 40: calaba.v1.TaskActivity.before:type_name -> google.protobuf.Struct
+	128, // 41: calaba.v1.TaskActivity.after:type_name -> google.protobuf.Struct
+	125, // 42: calaba.v1.TaskActivity.created_at:type_name -> google.protobuf.Timestamp
+	129, // 43: calaba.v1.TaskActivityItem.message:type_name -> calaba.v1.Message
+	32,  // 44: calaba.v1.TaskActivityItem.activity:type_name -> calaba.v1.TaskActivity
+	9,   // 45: calaba.v1.TaskCondition.field:type_name -> calaba.v1.TaskField
+	10,  // 46: calaba.v1.TaskCondition.op:type_name -> calaba.v1.TaskOp
+	125, // 47: calaba.v1.TaskCondition.from:type_name -> google.protobuf.Timestamp
+	125, // 48: calaba.v1.TaskCondition.to:type_name -> google.protobuf.Timestamp
+	34,  // 49: calaba.v1.TaskFilter.conditions:type_name -> calaba.v1.TaskCondition
+	26,  // 50: calaba.v1.ListBoardsResponse.boards:type_name -> calaba.v1.Board
+	4,   // 51: calaba.v1.CreateBoardRequest.template:type_name -> calaba.v1.BoardTemplate
+	26,  // 52: calaba.v1.BoardResponse.board:type_name -> calaba.v1.Board
+	5,   // 53: calaba.v1.UpdateBoardRequest.disabled_features:type_name -> calaba.v1.BoardFeature
+	6,   // 54: calaba.v1.UpdateBoardRequest.estimate_scale:type_name -> calaba.v1.EstimateScale
+	126, // 55: calaba.v1.SetBoardPermissionsRequest.overrides:type_name -> calaba.v1.RoomPermissionOverride
+	126, // 56: calaba.v1.BoardPermissionsResponse.overrides:type_name -> calaba.v1.RoomPermissionOverride
+	26,  // 57: calaba.v1.BoardPermissionsResponse.board:type_name -> calaba.v1.Board
+	0,   // 58: calaba.v1.CreateBoardStatusRequest.type:type_name -> calaba.v1.BoardStatusType
+	0,   // 59: calaba.v1.UpdateBoardStatusRequest.type:type_name -> calaba.v1.BoardStatusType
+	31,  // 60: calaba.v1.ListTasksResponse.tasks:type_name -> calaba.v1.Task
+	1,   // 61: calaba.v1.CreateTaskRequest.priority:type_name -> calaba.v1.TaskPriority
+	28,  // 62: calaba.v1.CreateTaskRequest.assignees:type_name -> calaba.v1.TaskAssigneeInput
+	1,   // 63: calaba.v1.CreateSmartTaskRequest.priority:type_name -> calaba.v1.TaskPriority
+	31,  // 64: calaba.v1.CreateSmartTaskResponse.task:type_name -> calaba.v1.Task
+	54,  // 65: calaba.v1.CreateSmartTaskResponse.refusal:type_name -> calaba.v1.SmartTaskRefusal
+	31,  // 66: calaba.v1.TaskResponse.task:type_name -> calaba.v1.Task
+	31,  // 67: calaba.v1.TaskResponse.subtasks:type_name -> calaba.v1.Task
+	31,  // 68: calaba.v1.TaskResponse.related:type_name -> calaba.v1.Task
+	31,  // 69: calaba.v1.TaskResponse.parent:type_name -> calaba.v1.Task
+	26,  // 70: calaba.v1.TaskResponse.board:type_name -> calaba.v1.Board
+	130, // 71: calaba.v1.TaskResponse.room:type_name -> calaba.v1.Room
+	1,   // 72: calaba.v1.UpdateTaskRequest.priority:type_name -> calaba.v1.TaskPriority
+	28,  // 73: calaba.v1.SetAssigneesRequest.assignees:type_name -> calaba.v1.TaskAssigneeInput
+	11,  // 74: calaba.v1.TaskApprovalRequest.decision:type_name -> calaba.v1.TaskApprovalDecision
+	3,   // 75: calaba.v1.SetTaskRelationRequest.kind:type_name -> calaba.v1.TaskRelationKind
+	33,  // 76: calaba.v1.TaskActivityPage.items:type_name -> calaba.v1.TaskActivityItem
+	32,  // 77: calaba.v1.BoardActivityResponse.activities:type_name -> calaba.v1.TaskActivity
+	31,  // 78: calaba.v1.MyTasksResponse.tasks:type_name -> calaba.v1.Task
+	31,  // 79: calaba.v1.SearchTasksResponse.tasks:type_name -> calaba.v1.Task
+	31,  // 80: calaba.v1.SearchTasksResponse.key_task:type_name -> calaba.v1.Task
+	67,  // 81: calaba.v1.SearchTasksResponse.snippets:type_name -> calaba.v1.TaskSearchSnippet
+	35,  // 82: calaba.v1.TaskSearchQuery.filter:type_name -> calaba.v1.TaskFilter
+	68,  // 83: calaba.v1.SavedTaskSearch.query:type_name -> calaba.v1.TaskSearchQuery
+	69,  // 84: calaba.v1.ListSavedTaskSearchesResponse.searches:type_name -> calaba.v1.SavedTaskSearch
+	68,  // 85: calaba.v1.CreateSavedTaskSearchRequest.query:type_name -> calaba.v1.TaskSearchQuery
+	68,  // 86: calaba.v1.UpdateSavedTaskSearchRequest.query:type_name -> calaba.v1.TaskSearchQuery
+	69,  // 87: calaba.v1.SavedTaskSearchResponse.search:type_name -> calaba.v1.SavedTaskSearch
+	25,  // 88: calaba.v1.ListBoardViewsResponse.views:type_name -> calaba.v1.BoardView
+	2,   // 89: calaba.v1.CreateBoardViewRequest.kind:type_name -> calaba.v1.BoardViewKind
+	35,  // 90: calaba.v1.CreateBoardViewRequest.filter:type_name -> calaba.v1.TaskFilter
+	2,   // 91: calaba.v1.UpdateBoardViewRequest.kind:type_name -> calaba.v1.BoardViewKind
+	35,  // 92: calaba.v1.UpdateBoardViewRequest.filter:type_name -> calaba.v1.TaskFilter
+	25,  // 93: calaba.v1.BoardViewResponse.view:type_name -> calaba.v1.BoardView
+	17,  // 94: calaba.v1.ListBoardCategoriesResponse.categories:type_name -> calaba.v1.BoardCategory
+	17,  // 95: calaba.v1.BoardCategoryResponse.category:type_name -> calaba.v1.BoardCategory
+	117, // 96: calaba.v1.SetBoardOrderRequest.boards:type_name -> calaba.v1.SetBoardOrderRequest.BoardPosition
+	118, // 97: calaba.v1.SetBoardOrderRequest.categories:type_name -> calaba.v1.SetBoardOrderRequest.CategoryPosition
+	26,  // 98: calaba.v1.SetBoardOrderResponse.boards:type_name -> calaba.v1.Board
+	17,  // 99: calaba.v1.SetBoardOrderResponse.categories:type_name -> calaba.v1.BoardCategory
+	19,  // 100: calaba.v1.TaskChecklistResponse.checklist:type_name -> calaba.v1.TaskChecklist
+	31,  // 101: calaba.v1.ConvertChecklistItemResponse.task:type_name -> calaba.v1.Task
+	19,  // 102: calaba.v1.ConvertChecklistItemResponse.checklist:type_name -> calaba.v1.TaskChecklist
+	20,  // 103: calaba.v1.TaskMilestoneResponse.milestone:type_name -> calaba.v1.TaskMilestone
+	31,  // 104: calaba.v1.TaskMilestoneResponse.task:type_name -> calaba.v1.Task
+	125, // 105: calaba.v1.BoardWebhook.disabled_at:type_name -> google.protobuf.Timestamp
+	125, // 106: calaba.v1.BoardWebhook.failing_since:type_name -> google.protobuf.Timestamp
+	125, // 107: calaba.v1.BoardWebhook.last_ok_at:type_name -> google.protobuf.Timestamp
+	125, // 108: calaba.v1.BoardWebhook.created_at:type_name -> google.protobuf.Timestamp
+	125, // 109: calaba.v1.BoardWebhook.updated_at:type_name -> google.protobuf.Timestamp
+	12,  // 110: calaba.v1.BoardWebhook.paused_reason:type_name -> calaba.v1.BoardWebhookPauseReason
+	93,  // 111: calaba.v1.BoardWebhookResponse.webhook:type_name -> calaba.v1.BoardWebhook
+	125, // 112: calaba.v1.BoardWebhookEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	119, // 113: calaba.v1.BoardWebhookEvent.board:type_name -> calaba.v1.BoardWebhookEvent.BoardRef
+	120, // 114: calaba.v1.BoardWebhookEvent.actor:type_name -> calaba.v1.BoardWebhookEvent.Actor
+	31,  // 115: calaba.v1.BoardWebhookEvent.task:type_name -> calaba.v1.Task
+	121, // 116: calaba.v1.BoardWebhookEvent.changes:type_name -> calaba.v1.BoardWebhookEvent.Change
+	123, // 117: calaba.v1.BoardWebhookEvent.comment:type_name -> calaba.v1.BoardWebhookEvent.Comment
+	124, // 118: calaba.v1.BoardWebhookEvent.rule:type_name -> calaba.v1.BoardWebhookEvent.Rule
+	26,  // 119: calaba.v1.BoardCreate.board:type_name -> calaba.v1.Board
+	26,  // 120: calaba.v1.BoardUpdate.board:type_name -> calaba.v1.Board
+	31,  // 121: calaba.v1.TaskCreate.task:type_name -> calaba.v1.Task
+	31,  // 122: calaba.v1.TaskUpdate.task:type_name -> calaba.v1.Task
+	104, // 123: calaba.v1.TaskUpdate.notice:type_name -> calaba.v1.TaskNotice
+	31,  // 124: calaba.v1.TaskNoticeRelay.task:type_name -> calaba.v1.Task
+	104, // 125: calaba.v1.TaskNoticeRelay.notice:type_name -> calaba.v1.TaskNotice
+	13,  // 126: calaba.v1.TaskNotice.kind:type_name -> calaba.v1.TaskNoticeKind
+	104, // 127: calaba.v1.TaskNoticeEntry.notice:type_name -> calaba.v1.TaskNotice
+	125, // 128: calaba.v1.TaskNoticeEntry.created_at:type_name -> google.protobuf.Timestamp
+	105, // 129: calaba.v1.ListTaskNoticesResponse.entries:type_name -> calaba.v1.TaskNoticeEntry
+	32,  // 130: calaba.v1.TaskActivityAppend.activity:type_name -> calaba.v1.TaskActivity
+	17,  // 131: calaba.v1.BoardCategoryCreate.category:type_name -> calaba.v1.BoardCategory
+	17,  // 132: calaba.v1.BoardCategoryUpdate.category:type_name -> calaba.v1.BoardCategory
+	19,  // 133: calaba.v1.TaskChecklistUpdate.checklist:type_name -> calaba.v1.TaskChecklist
+	125, // 134: calaba.v1.TaskRelease.created_at:type_name -> google.protobuf.Timestamp
+	15,  // 135: calaba.v1.TaskGitLink.kind:type_name -> calaba.v1.TaskGitLinkKind
+	14,  // 136: calaba.v1.TaskGitLink.provider:type_name -> calaba.v1.GitProvider
+	16,  // 137: calaba.v1.TaskGitLink.state:type_name -> calaba.v1.TaskGitLinkState
+	125, // 138: calaba.v1.TaskGitLink.created_at:type_name -> google.protobuf.Timestamp
+	125, // 139: calaba.v1.TaskGitLink.updated_at:type_name -> google.protobuf.Timestamp
+	115, // 140: calaba.v1.TaskGitLinksUpdate.links:type_name -> calaba.v1.TaskGitLink
+	128, // 141: calaba.v1.BoardWebhookEvent.Change.before:type_name -> google.protobuf.Struct
+	128, // 142: calaba.v1.BoardWebhookEvent.Change.after:type_name -> google.protobuf.Struct
+	122, // 143: calaba.v1.BoardWebhookEvent.Comment.attachments:type_name -> calaba.v1.BoardWebhookEvent.CommentAttachment
+	125, // 144: calaba.v1.BoardWebhookEvent.Comment.created_at:type_name -> google.protobuf.Timestamp
+	125, // 145: calaba.v1.BoardWebhookEvent.Comment.edited_at:type_name -> google.protobuf.Timestamp
+	146, // [146:146] is the sub-list for method output_type
+	146, // [146:146] is the sub-list for method input_type
+	146, // [146:146] is the sub-list for extension type_name
+	146, // [146:146] is the sub-list for extension extendee
+	0,   // [0:146] is the sub-list for field type_name
 }
 
 func init() { file_calaba_v1_boards_proto_init() }
@@ -10836,7 +10944,7 @@ func file_calaba_v1_boards_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_calaba_v1_boards_proto_rawDesc), len(file_calaba_v1_boards_proto_rawDesc)),
 			NumEnums:      17,
-			NumMessages:   107,
+			NumMessages:   108,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

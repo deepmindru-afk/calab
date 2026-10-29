@@ -237,7 +237,7 @@ const insertSipPersonalCall = `-- name: InsertSipPersonalCall :one
 
 INSERT INTO sip_calls (id, workspace_id, number, direction, started_by, participant_identity, lk_room, origin, peer_e164)
 VALUES ($1, $2, $3, 'out', $4, $5, $6, 'personal', $3)
-RETURNING id, workspace_id, room_id, number, direction, started_by, participant_identity, sip_call_id, status, reason, ended_by, started_at, answered_at, ended_at, lk_room, answered_by, route, ringing_user_ids, via, provider_call_id, origin, peer_e164, missed
+RETURNING id, workspace_id, room_id, number, direction, started_by, participant_identity, sip_call_id, status, reason, ended_by, started_at, answered_at, ended_at, lk_room, answered_by, route, ringing_user_ids, via, provider_call_id, origin, peer_e164, missed, extension
 `
 
 type InsertSipPersonalCallParams struct {
@@ -284,6 +284,7 @@ func (q *Queries) InsertSipPersonalCall(ctx context.Context, arg InsertSipPerson
 		&i.Origin,
 		&i.PeerE164,
 		&i.Missed,
+		&i.Extension,
 	)
 	return i, err
 }
@@ -314,7 +315,7 @@ func (q *Queries) ListBotUsers(ctx context.Context, ids []uuid.UUID) ([]uuid.UUI
 }
 
 const listLivePersonalCallsByWorkspace = `-- name: ListLivePersonalCallsByWorkspace :many
-SELECT id, workspace_id, room_id, number, direction, started_by, participant_identity, sip_call_id, status, reason, ended_by, started_at, answered_at, ended_at, lk_room, answered_by, route, ringing_user_ids, via, provider_call_id, origin, peer_e164, missed FROM sip_calls
+SELECT id, workspace_id, room_id, number, direction, started_by, participant_identity, sip_call_id, status, reason, ended_by, started_at, answered_at, ended_at, lk_room, answered_by, route, ringing_user_ids, via, provider_call_id, origin, peer_e164, missed, extension FROM sip_calls
 WHERE workspace_id = $1 AND origin = 'personal' AND status IN ('dialing', 'ringing', 'active')
 ORDER BY id
 `
@@ -352,6 +353,7 @@ func (q *Queries) ListLivePersonalCallsByWorkspace(ctx context.Context, workspac
 			&i.Origin,
 			&i.PeerE164,
 			&i.Missed,
+			&i.Extension,
 		); err != nil {
 			return nil, err
 		}
@@ -364,7 +366,7 @@ func (q *Queries) ListLivePersonalCallsByWorkspace(ctx context.Context, workspac
 }
 
 const listLivePersonalCallsForUser = `-- name: ListLivePersonalCallsForUser :many
-SELECT id, workspace_id, room_id, number, direction, started_by, participant_identity, sip_call_id, status, reason, ended_by, started_at, answered_at, ended_at, lk_room, answered_by, route, ringing_user_ids, via, provider_call_id, origin, peer_e164, missed FROM sip_calls
+SELECT id, workspace_id, room_id, number, direction, started_by, participant_identity, sip_call_id, status, reason, ended_by, started_at, answered_at, ended_at, lk_room, answered_by, route, ringing_user_ids, via, provider_call_id, origin, peer_e164, missed, extension FROM sip_calls
 WHERE workspace_id = $1 AND origin = 'personal' AND started_by = $2 AND status IN ('dialing', 'ringing', 'active')
 ORDER BY id
 `
@@ -408,6 +410,7 @@ func (q *Queries) ListLivePersonalCallsForUser(ctx context.Context, arg ListLive
 			&i.Origin,
 			&i.PeerE164,
 			&i.Missed,
+			&i.Extension,
 		); err != nil {
 			return nil, err
 		}

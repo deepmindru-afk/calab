@@ -1,7 +1,7 @@
 import { statusShown } from '../../lib/boards/completion';
 import { BoardFeature, TaskPriority, type Board, type Task } from '@calaba/protocol';
 import { timestampMs } from '@bufbuild/protobuf/wkt';
-import { Archive, CalendarClock, Check, ChevronDown, CircleSlash, Tag, UserRound, X } from 'lucide-react';
+import { Archive, CalendarClock, Check, ChevronDown, CircleSlash, Rocket, Tag, UserRound, X } from 'lucide-react';
 import { memo, useCallback, useMemo, type MouseEvent, type ReactNode } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import { useShallow } from 'zustand/react/shallow';
@@ -9,6 +9,7 @@ import { Button, Tip, cx } from '../../components/ui';
 import { plural, t } from '../../i18n';
 import { addAssignee, draftsOf, toggleAssignee } from '../../lib/boards/assignees';
 import { matchTask, type MatchCtx } from '../../lib/boards/filter';
+import { latestRelease, releaseLabel, releasesOf } from '../../lib/boards/releases';
 import { bulkArchive, bulkUpdate, pickStatus, setAssignees, updateTask } from '../../services/boards';
 import { useBoards } from '../../stores/boards';
 import { prefsOf, useBoardsUi, type BoardPrefs } from '../../stores/boardsUi';
@@ -146,6 +147,26 @@ export function listItems(tasks: Task[], b: Board, prefs: BoardPrefs, workspaceI
         tasks.filter((x) => !x.milestoneId || !b.milestones.some((m) => m.id === x.milestoneId)),
       );
       break;
+    case 'release': {
+      // Board task #101: by the task's newest release (any environment), newest releases first.
+      const latest = new Map(tasks.map((x) => [x.id, latestRelease(x)?.releaseId ?? ''] as const));
+      for (const r of releasesOf(tasks, true))
+        push(
+          r.id,
+          <>
+            <Rocket className="size-4" aria-hidden /> {releaseLabel(r)}
+          </>,
+          tasks.filter((x) => latest.get(x.id) === r.id),
+        );
+      push(
+        'none',
+        <>
+          <CircleSlash className="size-4" aria-hidden /> {t('boards.noRelease')}
+        </>,
+        tasks.filter((x) => !latest.get(x.id)),
+      );
+      break;
+    }
     default:
       push('all', t('boards.allTasks'), tasks);
   }
@@ -168,7 +189,7 @@ export function useListIds(boardId: string, workspaceId: string): { items: Item[
     const b = s.boards[boardId];
     if (!b) return '';
     let out = '';
-    for (const x of visibleOf(s, b, prefs, ctx)) out += `${x.id}|${x.statusId}|${x.position}|${x.priority}|${x.assignees[0]?.userId ?? ''}|${x.labelIds.join('.')}|${x.milestoneId}|${x.dueOn}|${prefs.sort === 'updated' ? ms(x.updatedAt) : ''};`;
+    for (const x of visibleOf(s, b, prefs, ctx)) out += `${x.id}|${x.statusId}|${x.position}|${x.priority}|${x.assignees[0]?.userId ?? ''}|${x.labelIds.join('.')}|${x.milestoneId}|${x.releases.map((r) => r.releaseId).join('.')}|${x.dueOn}|${prefs.sort === 'updated' ? ms(x.updatedAt) : ''};`;
     return out;
   });
   const items = useMemo(

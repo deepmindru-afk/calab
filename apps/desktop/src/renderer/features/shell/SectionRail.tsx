@@ -1,6 +1,6 @@
 import { WorkspaceRole } from '@calaba/protocol';
 import { Volume2 } from 'lucide-react';
-import { memo, useRef, type ComponentPropsWithRef, type ReactNode } from 'react';
+import { memo, useRef, type ComponentPropsWithRef, type CSSProperties, type ReactNode } from 'react';
 import {
   BoardsActiveIcon,
   BoardsIdleIcon,
@@ -72,8 +72,10 @@ export function SectionRail(): ReactNode {
 
   return (
     // The wrapper carries the island fade (styles.css `.island-fade`): a pseudo-element inside the
-    // scroller would scroll away with the icons.
-    <div className="island-fade island-fade-rail flex w-[var(--rail-width)] shrink-0 flex-col">
+    // scroller would scroll away with the icons. The rail keeps its own island height clear
+    // (`--island-rail`): the full island's, or the folded avatar's footprint (ADR-0146) while the
+    // lists beside it reserve nothing.
+    <div className="island-fade island-fade-rail flex w-[var(--rail-width)] shrink-0 flex-col" style={RAIL_ISLAND}>
       <nav
         className="flex min-h-0 flex-1 flex-col items-center gap-3 overflow-y-auto overflow-x-hidden pt-3"
         // The bottom island (AppShell) spans the rail too: the icons end above it.
@@ -115,6 +117,9 @@ function useSection(ws: string | null): Section | null {
   const app = useOpenApp(home ? null : ws) !== null;
   return currentSection({ home, boards, calendar, app, mail, disk, wiki, canvas, telephony });
 }
+
+/** The rail's island height: the shell's `--island-rail` (unset without an island → the fallbacks). */
+const RAIL_ISLAND = { '--island-height': 'var(--island-rail)' } as CSSProperties;
 
 /** Resolved once per page load (the API never appears later). */
 const MAIL = mailAvailable();

@@ -2001,8 +2001,12 @@ type SipCall struct {
 	// fallback (ADR-0124: nobody answered in time, everybody busy or declined). Neither: the
 	// regular route (the entry point in working hours, a menu key, a dialed number). Both: an
 	// off-hours route whose group fell back.
-	OffHours      bool `protobuf:"varint,24,opt,name=off_hours,json=offHours,proto3" json:"off_hours,omitempty"`
-	ViaFallback   bool `protobuf:"varint,25,opt,name=via_fallback,json=viaFallback,proto3" json:"via_fallback,omitempty"`
+	OffHours    bool `protobuf:"varint,24,opt,name=off_hours,json=offHours,proto3" json:"off_hours,omitempty"`
+	ViaFallback bool `protobuf:"varint,25,opt,name=via_fallback,json=viaFallback,proto3" json:"via_fallback,omitempty"`
+	// A room call dialed with an extension («+7 495 123-45-67 доб. 101», ADR-0046 addendum): the
+	// keys sent as tones after the answer, «,» = a 2 s pause («101», «,2#»). The caller's client
+	// sends them; everyone sees «доб. 101» on the line. Empty = none; number never holds it.
+	Extension     string `protobuf:"bytes,26,opt,name=extension,proto3" json:"extension,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2212,6 +2216,13 @@ func (x *SipCall) GetViaFallback() bool {
 	return false
 }
 
+func (x *SipCall) GetExtension() string {
+	if x != nil {
+		return x.Extension
+	}
+	return ""
+}
+
 // POST /api/rooms/{id}/calls (PLACE_CALLS + VIEW_ROOM + CONNECT in the room, not a guest; a
 // voice room of a workspace, not archived; the caller has a device in this room's call) →
 // 201 SipCallResponse with status DIALING; SIP_CALL_UPDATE goes to everyone who sees the room
@@ -2223,7 +2234,10 @@ func (x *SipCall) GetViaFallback() bool {
 type PlaceSipCallRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The number to call: E.164 («+7 916 123-45-67»), or a Russian national number starting
-	// with 8 or 7 (11 digits) — spaces, dashes, dots and brackets are ignored.
+	// with 8 or 7 (11 digits) — spaces, dashes, dots and brackets are ignored. It may end with an
+	// extension: «доб. 101», «ext. 101», «x101», «,101» or «;101» (sip.SplitExtension, vectors in
+	// proto/testdata/phone_numbers.json); the line dials only the number, SipCall.extension keeps
+	// the rest. A bad extension is 422 VALIDATION on «number».
 	Number        string `protobuf:"bytes,1,opt,name=number,proto3" json:"number,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -6211,7 +6225,7 @@ const file_calaba_v1_sip_proto_rawDesc = "" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1d\n" +
 	"\n" +
-	"sip_status\x18\x03 \x01(\rR\tsipStatus\"\xaa\a\n" +
+	"sip_status\x18\x03 \x01(\rR\tsipStatus\"\xc8\a\n" +
 	"\aSipCall\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12!\n" +
 	"\fworkspace_id\x18\x02 \x01(\tR\vworkspaceId\x12\x17\n" +
@@ -6244,7 +6258,8 @@ const file_calaba_v1_sip_proto_rawDesc = "" +
 	"\x0ecaller_user_id\x18\x16 \x01(\tR\fcallerUserId\x120\n" +
 	"\x06origin\x18\x17 \x01(\x0e2\x18.calaba.v1.SipCallOriginR\x06origin\x12\x1b\n" +
 	"\toff_hours\x18\x18 \x01(\bR\boffHours\x12!\n" +
-	"\fvia_fallback\x18\x19 \x01(\bR\vviaFallback\"-\n" +
+	"\fvia_fallback\x18\x19 \x01(\bR\vviaFallback\x12\x1c\n" +
+	"\textension\x18\x1a \x01(\tR\textension\"-\n" +
 	"\x13PlaceSipCallRequest\x12\x16\n" +
 	"\x06number\x18\x01 \x01(\tR\x06number\"9\n" +
 	"\x0fSipCallResponse\x12&\n" +

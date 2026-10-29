@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import table from '../../../../../proto/testdata/phone_numbers.json';
-import { cleanPastedNumber, dialChars, dialKey, normalizeContactNumber, normalizeNumber } from './phoneNumber';
+import { cleanPastedNumber, dialChars, dialKey, normalizeContactNumber, normalizeNumber, splitExtension } from './phoneNumber';
 
 interface Vector {
   in: string;
@@ -20,6 +20,20 @@ describe('phone number normalisation (proto/testdata/phone_numbers.json)', () =>
     it(`«${v.in}» (caller ${v.callerId || '—'})`, () => {
       expect(normalizeNumber(v.in)).toBe(v.number);
       expect(normalizeContactNumber(v.in, v.callerId)).toBe(v.contact);
+    });
+  }
+});
+
+describe('an extension after the number (proto/testdata/phone_numbers.json «extensions»)', () => {
+  const ext: Array<{ in: string; number: string; ext: string }> = table.extensions;
+  it('has the vectors', () => {
+    expect(ext.length).toBeGreaterThan(10);
+  });
+  for (const v of ext) {
+    it(`«${v.in}»`, () => {
+      const s = splitExtension(v.in);
+      const number = s ? normalizeNumber(s.number) : '';
+      expect(number ? { number, ext: s?.ext ?? '' } : { number: '', ext: '' }).toEqual({ number: v.number, ext: v.ext });
     });
   }
 });

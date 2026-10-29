@@ -273,4 +273,12 @@ export const ruShell = {
   'mobile.pinFull': 'Сначала открепите один',
   'mobile.reorder': 'Перетащить «{name}»',
   'mobile.unpin': 'Открепить «{name}»',
+  // The bottom island folded into the avatar (ADR-0146).
+  'island.toggle': 'Профиль и звонок: {name}',
+  'island.region': 'Профиль и звонок',
+  'island.inCall': 'в звонке',
+  'island.muted': 'микрофон выключен',
+  'island.deafened': 'звук выключен',
+  'settings.islandCollapse': 'Островок: сворачивать в аватар вне раздела «Команда»',
+  'settings.islandCollapseHint': 'На остальных экранах внизу слева только ваш аватар — наведите на него, чтобы включить микрофон, сменить статус или управлять звонком',
 } as const;

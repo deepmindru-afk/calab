@@ -97,16 +97,22 @@ test('office-file-view', async ({ open, win, mock, shot }) => {
   // «Редактирует Вера» on the row being edited elsewhere is in the Disk under the view (checked in office-create).
   await checkpoint(shot, 'office-file-view');
 
-  // In a call the bottom island stays (mute, the self panel); the editor ends above it.
+  // In a call the island is folded into my avatar on the rail (ADR-0146): no strip under the
+  // editor — the frame reaches the window's bottom; hovering the avatar opens the island over it.
   await joinVoice(win);
   await win.getByTestId('file-tab').getByRole('button').first().click();
   await expect(view).toHaveAttribute('data-state', 'saved');
   const island = win.getByTestId('bottom-island');
-  await expect(island).toBeVisible();
-  const frameBox = await win.getByTestId('office-frame').boundingBox();
-  const islandBox = await island.boundingBox();
-  expect(frameBox && islandBox && frameBox.y + frameBox.height <= islandBox.y + 0.5).toBe(true);
+  await expect(island).toBeHidden();
+  await expect(win.getByTestId('island-call-mark')).toBeVisible();
+  await expect(win.getByTestId('office-island-spacer')).toHaveCSS('height', '0px');
   await checkpoint(shot, 'office-file-view-voice');
+  await win.getByTestId('island-avatar').hover();
+  await expect(island).toContainText('Голос подключён');
+  await checkpoint(shot, 'office-file-view-voice-open', { keepPointer: true });
+  // Leaving onto the editor (an iframe: the page gets no pointer events there) closes it too.
+  await win.mouse.move(600, 300);
+  await expect(island).toBeHidden();
 });
 
 test('office-create', async ({ open, win, mock, shot }) => {

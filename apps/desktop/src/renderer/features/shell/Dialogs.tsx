@@ -30,6 +30,7 @@ import { AdminWindowLazy, AppSettingsWindow, WorkspaceSettingsWindow } from './l
 import { useSession } from '../../stores/session';
 import { useTaskTabs } from '../../stores/taskTabs';
 import { EventDialog } from '../calendar/EventDialog';
+import { JoinConfirmHost } from '../calendar/JoinConfirm';
 import { SETTINGS_DIALOG_KINDS } from './SettingsScreen';
 import { AppDialog } from '../webapps/AppDialog';
 import { PlansDialog } from '../workspace/billing/PlansDialog';
@@ -224,6 +225,7 @@ export function Dialogs(): ReactNode {
       {node}
       <AchievementLayers />
       <ConfirmHost />
+      <JoinConfirmHost />
     </>
   );
 }

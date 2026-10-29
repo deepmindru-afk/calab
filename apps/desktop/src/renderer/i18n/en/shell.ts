@@ -274,4 +274,11 @@ export const enShell: DictShape<typeof ruShell> = {
   'mobile.pinFull': 'Unpin one first',
   'mobile.reorder': 'Drag “{name}”',
   'mobile.unpin': 'Unpin “{name}”',
+  'island.toggle': 'Profile and call: {name}',
+  'island.region': 'Profile and call',
+  'island.inCall': 'in a call',
+  'island.muted': 'mic muted',
+  'island.deafened': 'sound off',
+  'settings.islandCollapse': 'Island: fold into the avatar outside “Team”',
+  'settings.islandCollapseHint': 'Other screens show only your avatar in the bottom-left corner — hover it to unmute, change your status or control the call',
 };

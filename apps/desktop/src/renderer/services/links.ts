@@ -6,6 +6,7 @@ import { useUi } from '../stores/ui';
 import { parseMailLink } from '../features/mail/mailLink';
 import { parsePlansLink } from '../lib/billing/planLink';
 import { wikiPageIdOf } from '@calaba/wiki-doc/links';
+import { classifyLink, ownOrigins } from '../../shared/ownLink';
 
 /**
  * Invite links: `https://<server>/join/<code>` (shareable: opens the web client, and the
@@ -125,7 +126,7 @@ export function parseEventLink(input: string): string | null {
 export function parseBoardLink(input: string): { kind: 'board' | 'task'; id: string } | null {
   const s = input.trim();
   const ID = '([0-9a-fA-F-]{36})';
-  const KEY = '([A-Za-z][A-Za-z0-9]{1,5}-[0-9]{1,7})';
+  const KEY = '([A-Za-z][A-Za-z0-9]{1,5}-[0-9]{1,9})';
   const b = new RegExp(`^${SCHEME}://b/${ID}/?$`).exec(s) ?? new RegExp(`^https?://[^/\\s]+/b/${ID}/?(?:[?#].*)?$`).exec(s);
   if (b?.[1]) return { kind: 'board', id: b[1].toLowerCase() };
   const k = new RegExp(`^${SCHEME}://t/${KEY}/?$`).exec(s) ?? new RegExp(`^https?://[^/\\s]+/t/${KEY}/?(?:[?#].*)?$`).exec(s);
@@ -163,8 +164,7 @@ export function wikiPageUrl(pageId: string): string | null {
 
 /** A wiki page link of this server (the chat's card, a paste into a page); null for any other URL. */
 export function ownWikiPageId(href: string): string | null {
-  const origin = shareOrigin('');
-  return origin && href.startsWith(`${origin}/`) ? parseWikiLink(href) : null;
+  return isOwnOrigin(href) ? parseWikiLink(href) : null;
 }
 
 /**
@@ -187,8 +187,7 @@ export function canvasUrl(itemId: string): string | null {
 
 /** A canvas link of this server (the chat's card); null for any other URL. */
 export function ownCanvasId(href: string): string | null {
-  const origin = shareOrigin('');
-  return origin && href.startsWith(`${origin}/`) ? parseCanvasLink(href) : null;
+  return isOwnOrigin(href) ? parseCanvasLink(href) : null;
 }
 
 /**
@@ -210,21 +209,34 @@ export function diskItemUrl(itemId: string): string | null {
 
 /** A Disk item link of this server (the chat's chip); null for any other URL. */
 export function ownDiskItemId(href: string): string | null {
-  const origin = shareOrigin('');
-  return origin && href.startsWith(`${origin}/`) ? parseDiskLink(href) : null;
+  return isOwnOrigin(href) ? parseDiskLink(href) : null;
 }
 
 /**
- * A link clicked in a message: our own /m/, /t/, /b/, /wiki/, /disk/ links (this server) open in the app instead
- * of the browser. False = not ours (the caller opens it outside).
+ * Our origins (shared/ownLink.ts ownOrigins): the session's server, the configured one, on the web the
+ * page's origin — and, for them, the deployment's app origins (app.calab.io and its aliases).
+ */
+export function linkOrigins(): string[] {
+  const st = useSession.getState();
+  const web = import.meta.env.VITE_PLATFORM === 'web' && typeof location !== 'undefined' ? location.origin : '';
+  return ownOrigins([st.serverUrl, st.settings?.serverUrl ?? '', web], st.appInfo?.appOrigins ?? []);
+}
+
+/** `href` is an http(s) link to one of our origins (any path). */
+function isOwnOrigin(href: string): boolean {
+  const kind = classifyLink(href, linkOrigins()).kind;
+  return kind === 'app' || kind === 'own-page';
+}
+
+/**
+ * A clicked link (message text, link cards, wiki, Disk): an in-app route of our server (shared/ownLink.ts
+ * classifyLink — /t/, /b/, /m/, /r/, /join/, /dm/, /e/, /wiki/, /canvas/, /disk/, /plans, on any of our
+ * origins) opens in the app instead of the browser. False = not ours (the caller opens it outside).
  */
 export function openOwnLink(href: string): boolean {
-  const origin = shareOrigin('');
-  if (!origin || !href.startsWith(`${origin}/`)) return false;
-  // Every in-app route (CBF-63), the same set as shared/ownLink.ts in the main process.
-  const known = parseMessageLink(href) ?? parseBoardLink(href) ?? parseWikiLink(href) ?? parseCanvasLink(href) ?? parseDiskLink(href) ?? parseEventLink(href) ?? parseDmLink(href) ?? parseRoomInviteCode(href) ?? parsePlansLink(href);
-  if (!known && !parseInviteCode(href)) return false;
-  handleDeepLink(href);
+  const c = classifyLink(href, linkOrigins());
+  if (c.kind !== 'app') return false;
+  handleDeepLink(c.deepLink);
   return true;
 }
 

@@ -1,3 +1,4 @@
+import { SipCallStatus } from '@calaba/protocol';
 import { IDS } from '../e2e-support/mock-server';
 import { expect, test } from './app';
 import { checkpoint, settle } from './harness';
@@ -531,4 +532,51 @@ test('telephony-contacts', async ({ open, win, mock, shot, theme }) => {
   await expect(ring).toContainText('ООО Ромашка');
   await expect(ring).toContainText('+7 916 123-45-67');
   await checkpoint(shot, 'telephony-incoming-contact');
+});
+
+// ADR-0046 addendum «Тональный набор»: a voice room's phone line. «Позвонить на номер» keeps
+// «доб. 101» after the masked number; the line rings without «Клавиатура», answers with «доб. 101»
+// in the room's list and «Клавиатура» left of «Завершить» — the shared tone pad beside the row,
+// «Тоновый набор: <number> доб. 101» on top, the keys pressed. Dark: all; light: the keypad.
+test('telephony-room-call', async ({ open, win, mock, shot, theme }) => {
+  await open();
+  mock.seedSipExchange();
+  const sidebar = win.locator('aside').first();
+  await sidebar.getByRole('button', { name: /Переговорка/ }).first().click();
+  await win.getByRole('region', { name: 'Переговорка' }).getByRole('button', { name: 'Войти в голос', exact: true }).click();
+  const panel = win.getByRole('region', { name: 'Голосовое подключение' });
+  await expect(panel).toContainText('Голос подключён', { timeout: 30_000 });
+
+  await win.getByTestId('sip-dial').click();
+  const field = win.getByTestId('sip-number');
+  await expect(field).toBeFocused();
+  await win.keyboard.type('+74951234567 доб. 101');
+  await expect(field).toHaveValue('+7 495 123-45-67 доб. 101');
+  if (DARK(theme)) await checkpoint(shot, 'telephony-room-dial-ext');
+  await win.keyboard.press('Enter');
+  const row = sidebar.getByTestId('sip-call-row');
+  await expect(row).toHaveAttribute('data-status', 'dialing');
+  await expect(row.getByTestId('sip-call-ext')).toHaveText('· доб. 101');
+  await expect(panel.getByTestId('sip-keypad')).toHaveCount(0); // not while it rings
+
+  mock.setSipCallStatus(mock.liveSipCallOf(IDS.rooms.meeting), SipCallStatus.ACTIVE);
+  await expect(row).toHaveAttribute('data-status', 'active');
+  await expect(row).toHaveAttribute('aria-label', 'Телефон +7 495 123-45-67 доб. 101');
+  const keys = panel.getByTestId('sip-keypad');
+  await expect(keys).toHaveText('Клавиатура');
+  await win.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  // At 600 px the island covers the list's foot: the row to the top of the list.
+  await row.evaluate((el) => el.scrollIntoView({ block: 'start' }));
+  await settle(win);
+  if (DARK(theme)) await checkpoint(shot, 'telephony-room-call-row', { mask: [row.getByTestId('sip-status')] });
+
+  await keys.click();
+  const sheet = win.getByTestId('sip-keypad-popover');
+  await expect(sheet.getByTestId('dtmf-for')).toHaveText('Тоновый набор: +7 495 123-45-67 доб. 101');
+  for (const k of '2#') await sheet.locator(`[data-key="${k}"]`).click();
+  await expect(sheet.getByTestId('dtmf-typed')).toHaveText('2#');
+  await checkpoint(shot, 'telephony-room-keypad');
+  await win.keyboard.press('Escape');
+  await expect(sheet).toHaveCount(0);
+  await panel.getByRole('button', { name: 'Отключиться' }).click();
 });

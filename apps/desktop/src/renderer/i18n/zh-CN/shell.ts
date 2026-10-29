@@ -274,4 +274,11 @@ export const zhShell: DictShape<typeof enShell> = {
   'mobile.pinFull': '请先取消固定一个',
   'mobile.reorder': '拖动“{name}”',
   'mobile.unpin': '取消固定“{name}”',
+  'island.toggle': '个人资料和通话：{name}',
+  'island.region': '个人资料和通话',
+  'island.inCall': '通话中',
+  'island.muted': '麦克风已静音',
+  'island.deafened': '声音已关闭',
+  'settings.islandCollapse': '底部面板：在“团队”以外折叠为头像',
+  'settings.islandCollapseHint': '其他界面左下角只显示你的头像——悬停即可打开麦克风、更改状态或控制通话',
 } as const;

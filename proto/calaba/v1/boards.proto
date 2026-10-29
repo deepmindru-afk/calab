@@ -406,6 +406,9 @@ message Task {
   // A watcher who does not see the board sees this task (VIEW_BOARD on it: view, comment,
   // subscribe). Sorted by user id. See PUT / DELETE /api/tasks/{id}/watchers.
   repeated string watcher_ids = 47;
+  // Releases (board task #101): one per environment the task was deployed to (the first release
+  // of that environment that carried it), newest first. In every task form.
+  repeated TaskRelease releases = 48;
 }
 
 // One entry of the task journal (ADR-0042 §1): written on every change, never edited.
@@ -426,8 +429,11 @@ message Task {
 // {"from_status_id", "status_id", "approved", "quorum", "rejected"} (the "status" entry is
 // written as well). "git" (ADR-0060 §4): after {"event":
 // the RuleGitEvent name without its prefix, "kind": "branch" | "pr" | "commit", "provider",
-// "repo", "ref", "title", "url", "state", "commits": [{"sha", "title", "url"}] of a push};
-// before {"state", "title"} of a pull request that changed.
+// "repo", "ref", "title", "url", "state", "commits": [{"sha", "title", "url"}] of a push,
+// "branch", "author" (who made the event); a pull request also "target_branch", "draft",
+// "users" (reviewers added / the approver)}; before {"state", "title", "draft"} of a pull
+// request that changed. "release" (board task #101): the task entered a release, after
+// {"release_id", "name", "environment", "sha", "url"} (actor = who posted the release).
 // Snapshots (ADR-0091): "description" — {"length", "text"} before and after; "attachments" —
 // {"file_ids", "files": [{"file_id", "name", "size", "mime"}]}; "labels" — {"label_ids",
 // "labels": [{"id", "name", "color"}]}; "milestone" — {"milestone_id", "name"}; "parent" —
@@ -477,6 +483,8 @@ message TaskActivityItem {
 // IS_NOT / NONE_OF. APPROVER_PENDING: user ids or "me" — an approver whose vote is still
 // pending («Ждут моего согласования»); EMPTY / NOT_EMPTY: nobody's / somebody's vote pending.
 // BOARD (ADR-0139): board ids with IS / IS_NOT (the cross-board task search).
+// RELEASE (board task #101): release ids with IS / ANY_OF / IS_NOT / NONE_OF; EMPTY / NOT_EMPTY:
+// in no release / in some release.
 enum TaskField {
   TASK_FIELD_UNSPECIFIED = 0;
   TASK_FIELD_STATUS = 1;
@@ -502,6 +510,7 @@ enum TaskField {
   TASK_FIELD_APPROVAL_STATE = 21;
   TASK_FIELD_APPROVER_PENDING = 22;
   TASK_FIELD_BOARD = 23;
+  TASK_FIELD_RELEASE = 24;
 }
 
 // Operations. IS / ANY_OF: one of values (LABEL IS: all of values); IS_NOT / NONE_OF: none of
@@ -1495,6 +1504,15 @@ enum TaskGitLinkState {
   TASK_GIT_LINK_STATE_OPEN = 1;
   TASK_GIT_LINK_STATE_MERGED = 2;
   TASK_GIT_LINK_STATE_CLOSED = 3;
+}
+
+// The release of an environment a task entered (board task #101; see BoardRelease).
+message TaskRelease {
+  string release_id = 1;
+  string name = 2;        // "4929cf3", "1287"
+  string environment = 3; // "prod", "stage"
+  string url = 4;         // the pipeline, "" = none
+  google.protobuf.Timestamp created_at = 5; // when the task entered it
 }
 
 // A branch, pull / merge request or commit whose name, title, body or message mentions the task

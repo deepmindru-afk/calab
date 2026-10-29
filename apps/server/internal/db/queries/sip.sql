@@ -30,8 +30,8 @@ ON CONFLICT (workspace_id) DO UPDATE SET last_error = excluded.last_error;
 UPDATE workspaces SET sip_enabled = $2 WHERE id = $1 RETURNING *;
 
 -- name: InsertSipCall :one
-INSERT INTO sip_calls (id, workspace_id, room_id, number, direction, started_by, participant_identity, origin, peer_e164)
-VALUES ($1, $2, $3, $4, 'out', $5, $6, $7, $8)
+INSERT INTO sip_calls (id, workspace_id, room_id, number, direction, started_by, participant_identity, origin, peer_e164, extension)
+VALUES ($1, $2, $3, $4, 'out', $5, $6, $7, $8, $9)
 RETURNING *;
 
 -- name: GetSipCall :one

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { create } from '@bufbuild/protobuf';
 import { TimestampSchema } from '@bufbuild/protobuf/wkt';
-import { TaskAssigneeSchema } from '@calaba/protocol';
+import { TaskAssigneeSchema, TaskReleaseSchema } from '@calaba/protocol';
 import AxeBuilder from '@axe-core/playwright';
 import { _electron as electron, expect, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 import { IDS, startMockServer, type MockServer } from '../e2e-support/mock-server';
@@ -375,6 +375,24 @@ export function seedAssigneeCounts(mock: MockServer): void {
   set('CAL-1', [u.anna]);
   set('CAL-2', [u.anna, u.boris]);
   set('CAL-4', [u.anna, u.boris, u.vera, u.grigory, u.dina]);
+}
+
+/**
+ * Releases (board task #101): CAL-1 and CAL-3 went out in prod «4929cf3» (CAL-3 then in stage «1288»
+ * too), CAL-2 in prod «4a1b2c3» the day before; the rest in none. Written straight into the mock, after open().
+ */
+export function seedReleases(mock: MockServer): void {
+  const at = (h: number) => create(TimestampSchema, { seconds: BigInt(Math.floor(NOW.getTime() / 1000) - h * 3600) });
+  const rel = (id: string, name: string, environment: string, h: number) =>
+    create(TaskReleaseSchema, { releaseId: id, name, environment, url: `https://git.example.com/gptunnel/gpt/-/pipelines/${name}`, createdAt: at(h) });
+  const set = (key: string, list: ReturnType<typeof rel>[]): void => {
+    const t = mock.boards.taskByKey(key);
+    if (!t) throw new Error(`no ${key}`);
+    t.task.releases = list;
+  };
+  set('CAL-1', [rel('rel-prod-2', '4929cf3', 'prod', 2)]);
+  set('CAL-2', [rel('rel-prod-1', '4a1b2c3', 'prod', 26)]);
+  set('CAL-3', [rel('rel-stage-3', '1288', 'stage', 1), rel('rel-prod-2', '4929cf3', 'prod', 2)]);
 }
 
 /**

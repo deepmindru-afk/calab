@@ -13,7 +13,7 @@ import { isCompletion, migrateCompletion, type Completion } from '../lib/boards/
  * hidden columns. Leaving the mode (icon, Esc) keeps all of it: coming back restores the board.
  */
 export type ViewKind = 'kanban' | 'list' | 'timeline';
-export type GroupBy = 'status' | 'assignee' | 'priority' | 'label' | 'milestone' | 'none';
+export type GroupBy = 'status' | 'assignee' | 'priority' | 'label' | 'milestone' | 'release' | 'none';
 export type SortBy = 'manual' | 'updated' | 'due' | 'priority' | 'key';
 
 export interface BoardPrefs {

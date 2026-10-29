@@ -343,6 +343,7 @@ func TestSIP(t *testing.T) {
 	bob.wantErr(409, v1.ErrorCode_ERROR_CODE_CONFLICT, "POST", calls, num) // not in the call
 	joinVoice(t, bob, wid, rid)
 	bob.wantErr(422, v1.ErrorCode_ERROR_CODE_VALIDATION, "POST", calls, &v1.PlaceSipCallRequest{Number: "916 123"})
+	bob.wantErr(422, v1.ErrorCode_ERROR_CODE_VALIDATION, "POST", calls, &v1.PlaceSipCallRequest{Number: "+7 916 123-45-67 доб. abc"})
 	bob.wantErr(422, v1.ErrorCode_ERROR_CODE_SIP_NUMBER_NOT_ALLOWED, "POST", calls, &v1.PlaceSipCallRequest{Number: "+44 20 7946 0958"})
 
 	g1 := dialGW(t)
@@ -395,10 +396,16 @@ func TestSIP(t *testing.T) {
 		t.Fatalf("remote hangup: %v", c)
 	}
 
-	// Cancel while dialing: the caller hangs up; a late answer takes the line out again.
-	bob.must(201, "POST", calls, num, &pc)
+	// Cancel while dialing: the caller hangs up; a late answer takes the line out again. Dialed
+	// with an extension: the line dials only the number, the call keeps the extension.
+	bob.must(201, "POST", calls, &v1.PlaceSipCallRequest{Number: "+7 916 123-45-67 доб. 101"}, &pc)
 	c2 := pc.GetCall()
-	sipFake.dialed(t, c2.GetParticipantIdentity())
+	if c2.GetNumber() != "+79161234567" || c2.GetExtension() != "101" {
+		t.Fatalf("extension: %v", c2)
+	}
+	if d := sipFake.dialed(t, c2.GetParticipantIdentity()); d.CallTo != "879161234567" {
+		t.Fatalf("dialed with the extension: %+v", d)
+	}
 	alice := register(t, invite(t, o, wid))
 	alice.wantErr(403, v1.ErrorCode_ERROR_CODE_FORBIDDEN, "DELETE", calls+"/"+c2.GetId(), nil) // no MUTE_MEMBERS
 	var hr v1.SipCallResponse

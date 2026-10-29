@@ -1,5 +1,34 @@
 # Телефон: общий веб в оболочке — статус
 
+## 2026-10-29: Android entry link dropped right after loading (regression from #263, DEV-4947)
+
+Found on a real Android phone (Play internal testing build 1.0.0 (2)): a task/room link opened
+the app, briefly loaded the linked route, then fell back to the home screen. Cause: PR #263 made
+the `loaded` event clear `entry` in `apps/mobile/src/hostState.ts` so a later `retry` would go
+back to the origin — but `entry` is also what the mounted WebView renders as
+`source={{ uri: state.entry ?? origin }}` in `App.tsx` (same `key={state.generation}`), and
+react-native-webview reloads whenever `source.uri` changes. Clearing `entry` on `loaded` made the
+WebView navigate away from the link right after it finished loading. Android hits this on every
+link (no host channel); iOS only on a cold start or a fallback case, and build 22 predates #263.
+Fix: `entry` now never changes while its generation stays mounted; a new `entryLoaded` flag
+(reset by `open`/`retry`/`processGone`) tracks whether it loaded, and `retry` drops `entry` only
+when `entryLoaded` is true. Needs a new Android build (1.0.0 (3)) to pick up the fix.
+
+## 2026-10-29: Android shell recognized by a UA marker (DEV-4947)
+
+The web client's `nativeShell()` previously relied only on the host bridge
+`window.CalabHostActivity`, which the shell injects only on iOS
+(`hostChannelEnabled`, apps/mobile/src/notifications.ts). On Android there was
+no bridge and no other signal, so the web treated an Android shell like an
+ordinary browser: a task/invite/room link showed the "open in the app" card,
+and its `calab://` was then blocked by the shell's own navigation policy.
+Fix: the WebView now sets `applicationNameForUserAgent` to a shared marker
+(`apps/desktop/src/shared/nativeShell.ts`, `SHELL_UA_MARKER`), and
+`detectNativeShell` recognizes it when no bridge is present (Android UA →
+`'android'`, else `'ios'`); a bridge, where present, still decides (fail
+closed on iOS). **Needs a new Android build** to carry the marker; the
+existing iOS build 22 is unaffected and keeps working through the bridge.
+
 ## 2026-10-28: links open the app (DEV-4947, ADR-0142)
 
 https `/t/<KEY>`, `/join/<code>`, `/r/<code>` of the hosts in `EXPO_PUBLIC_CALAB_LINK_HOSTS`

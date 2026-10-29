@@ -4,11 +4,14 @@ export const ruSip = {
   'sip.dial': 'Позвонить на номер',
   'sip.dial.label': 'Номер телефона',
   'sip.dial.placeholder': '+7 916 123-45-67',
-  'sip.dial.hint': 'В формате +7 … или 8 …, можно вставить с пробелами и скобками. Звонок платный.',
+  'sip.dial.hint': 'В формате +7 … или 8 …, можно вставить с пробелами и скобками. Добавочный — после «доб.» или запятой. Звонок платный.',
   'sip.dial.call': 'Позвонить',
   // The phone participant
   'sip.row.label': 'Телефон {number}',
   'sip.row.hangup': 'Завершить',
+  'sip.row.ext': 'доб. {ext}',
+  'sip.keypad.for': 'Тоновый набор: {number}',
+  'sip.row.keypad': 'Клавиатура',
   'sip.status.dialing': 'Набираем…',
   'sip.status.ringing': 'Звонит…',
   'sip.status.active': 'В разговоре',
@@ -35,6 +38,7 @@ export const ruSip = {
   'sip.toast.failed': 'Не дозвонились: {reason}',
   // Dial errors (inline under the number)
   'sip.err.number': 'Это не похоже на номер телефона: нужен +7 … или 8 …',
+  'sip.err.ext': 'Добавочный — цифры, * и # после «доб.» или запятой, не длиннее 20',
   'sip.err.disabled': 'Телефония в пространстве выключена',
   'sip.err.active': 'В комнате уже идёт звонок',
   'sip.err.notAllowed': 'На этот номер звонить нельзя: направление не разрешено в настройках',

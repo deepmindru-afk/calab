@@ -45,6 +45,18 @@ export function officeFormat(name: string): OfficeFormat | null {
   return s.formats[extOf(name)] ?? null;
 }
 
+const WARMABLE = new Set(['word', 'cell', 'slide']);
+
+/** The editors (documentType) these files open in, sorted and joined: 'cell,word' (a primitive for a selector). */
+export function officeKindsOf(names: readonly string[]): string {
+  const kinds = new Set<string>();
+  for (const n of names) {
+    const t = officeFormat(n)?.documentType ?? '';
+    if (WARMABLE.has(t)) kinds.add(t);
+  }
+  return [...kinds].sort().join(',');
+}
+
 export function officeCapability(name: string): OfficeCap | null {
   switch (officeFormat(name)?.capability) {
     case OfficeCapability.EDIT:
