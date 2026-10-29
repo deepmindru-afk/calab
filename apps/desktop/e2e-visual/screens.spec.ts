@@ -7,7 +7,7 @@ import { FREE_PLAN_LIMITS, defaultSettings, mockPdf, ts } from '../e2e-support/f
 import { CODE_FIXTURE, IDS, MOCK_GPTUNNEL_CODE, MOCK_GPTUNNEL_WEB, PASSWORD, RECORDING_FIXTURE, slowWebpAnimation, type MockServer } from '../e2e-support/mock-server';
 import { encodePng } from '../e2e-support/png';
 import { expect, test } from './app';
-import { NOW, checkpoint, expectAssigneeStacks, joinVoice, login, seedAssigneeCounts, seedDays, seedLabelOverflow, settle } from './harness';
+import { NOW, checkpoint, expectAssigneeStacks, joinVoice, login, seedAssigneeCounts, seedDays, seedLabelOverflow, seedReleases, settle } from './harness';
 import { DAY, seedDay } from './calendarWeb';
 import { startPublisher } from './publisher';
 
@@ -202,6 +202,11 @@ const KEY = new Set([
   'temp-room-dialog-result',
   'temp-room-menu',
   'settings-temp-archive',
+  // Toasts at the top right and the join question of a reminder.
+  'toasts',
+  'toast-single',
+  'join-confirm',
+  'join-confirm-switch',
 ]);
 
 // Non-key screens: skipped unless CALABA_VISUAL_ALL=1 (before any fixture, so no app launch).
@@ -2192,6 +2197,52 @@ test('toasts', async ({ open, win, mock, shot }) => {
   });
   await expect(win.getByTestId('toast')).toHaveCount(3);
   await checkpoint(shot, 'toasts');
+});
+
+test('toast-single', async ({ open, win, mock, shot }) => {
+  await open();
+  await mainWindow(win, mock);
+  // Top right under the title bar (the inbox, settings and help icons stay clear).
+  await win.evaluate(() => (window as unknown as { __calabaToast?: (k: string, t: string) => void }).__calabaToast?.('info', 'Ссылка-приглашение скопирована'));
+  await expect(win.getByTestId('toast')).toHaveCount(1);
+  await checkpoint(shot, 'toast-single');
+});
+
+/** A reminder «Через 1 час: Планёрка · Созвон» arrives; its toast action «Перейти в комнату» opens the question. */
+async function askJoin(page: Page, mock: MockServer): Promise<void> {
+  const ev = mock.addEvent({
+    workspaceId: IDS.workspaces.main,
+    organizerId: IDS.users.boris,
+    title: 'Планёрка по релизу',
+    startMs: NOW.getTime() + 3_600_000,
+    endMs: NOW.getTime() + 2 * 3_600_000,
+    roomId: IDS.rooms.call,
+    attendees: [{ userId: IDS.users.anna }],
+  });
+  mock.emitReminder(ev.id, IDS.users.anna, 60, NOW.getTime() + 3_600_000);
+  await page.getByTestId('toast').getByRole('button', { name: 'Перейти в комнату' }).click();
+  await expect(page.getByTestId('join-confirm')).toBeVisible();
+}
+
+test('join-confirm', async ({ open, win, mock, shot }) => {
+  await open();
+  await mainWindow(win, mock);
+  const joined = win.waitForRequest((r) => r.url().endsWith(`/api/rooms/${IDS.rooms.call}/join`), { timeout: 1500 }).then(() => true, () => false);
+  await askJoin(win, mock);
+  await expect(win.getByTestId('join-confirm-warn')).toHaveCount(0);
+  await checkpoint(shot, 'join-confirm');
+  // The click alone never joined; Esc closes without joining.
+  await win.keyboard.press('Escape');
+  await expect(win.getByTestId('join-confirm')).toHaveCount(0);
+  expect(await joined).toBe(false);
+});
+
+test('join-confirm-switch', async ({ open, win, mock, shot }) => {
+  await open();
+  await inVoice(win, mock);
+  await askJoin(win, mock);
+  await expect(win.getByTestId('join-confirm-warn')).toContainText('Вы сейчас в комнате «Переговорка»');
+  await checkpoint(shot, 'join-confirm-switch');
 });
 
 // ---------------------------------------------------------------- voice (needs the dev LiveKit)
@@ -4225,16 +4276,36 @@ test('boards-kanban', async ({ open, win, mock, shot }) => {
   await win.keyboard.press('Escape');
   await expect(createMenu).toHaveCount(0);
 
-  // Needs the dev LiveKit: in voice, the boards screen carries the same bottom island as every
-  // screen (owner 23.10); its mic mutes the call while the board stays on screen.
+  // Needs the dev LiveKit: in voice, the boards screen folds the island into my avatar with the
+  // call mark (ADR-0146); hovering it opens the full island over the board, its mic mutes the call
+  // while the board stays on screen; the avatar then shows the red crossed mic.
   await joinVoice(win);
   await boardsMode(win, mock);
   const dock = win.getByTestId('bottom-island');
+  await expect(dock).toBeHidden();
+  await win.getByTestId('island-avatar').hover();
   await expect(dock).toContainText('Голос подключён');
   await dock.getByRole('button', { name: /^Выключить микрофон/ }).click();
   await expect(dock.getByRole('button', { name: /^Включить микрофон/ })).toBeVisible();
   await expect(win.getByTestId('kanban')).toBeVisible();
-  await checkpoint(shot, 'boards-voice-island');
+  await checkpoint(shot, 'boards-voice-island', { keepPointer: true });
+  await win.mouse.move(600, 300);
+  await expect(dock).toBeHidden();
+  await expect(win.getByTestId('island-call-mark')).toHaveAttribute('data-muted', 'true');
+  await checkpoint(shot, 'boards-voice-avatar');
+
+  // The setting off (Settings → Основное): the old full island on every screen.
+  await win.getByRole('button', { name: 'Настройки', exact: true }).click();
+  const settings = win.getByRole('dialog');
+  await settings.getByRole('tab', { name: 'Основное' }).click();
+  const fold = settings.getByRole('switch', { name: /^Островок: сворачивать в аватар/ });
+  await expect(fold).toBeChecked();
+  await fold.click();
+  await expect(fold).not.toBeChecked();
+  await win.keyboard.press('Escape');
+  await expect(settings).toHaveCount(0);
+  await expect(dock).toBeVisible();
+  await expect(win.getByTestId('island-avatar')).toHaveCount(0);
 });
 
 /**
@@ -4453,6 +4524,7 @@ test('boards-task-history', async ({ open, win, mock, shot }) => {
 /** The list grouped by status, two rows selected: the bulk actions bar. */
 test('boards-list', async ({ open, win, mock, shot }) => {
   await open();
+  seedReleases(mock); // board task #101: not on the rows — the grouping and the task panel at the end
   await mainWindow(win, mock);
   await boardsMode(win, mock);
   await win.getByTestId('view-list').click();
@@ -4486,6 +4558,21 @@ test('boards-list', async ({ open, win, mock, shot }) => {
   await expect(win.getByTestId('archive-empty')).toBeVisible();
   await win.getByTestId('archive-back').click();
   await expect(rows.filter({ hasText: 'CAL-2' })).toHaveCount(1);
+  // Board task #101: grouped by release — the newest first, «Без релиза» last; then a task's «Релиз».
+  await win.getByTestId('display-menu').click();
+  await win.getByTestId('group-by').selectOption('release');
+  await win.keyboard.press('Escape');
+  await expect(win.getByTestId('list-group').first()).toContainText('stage · 1288');
+  await expect(win.getByTestId('list-group').last()).toContainText('Без релиза');
+  while (await win.getByTestId('toast').count()) await win.getByTestId('toast').first().getByRole('button', { name: 'Закрыть' }).click();
+  await win.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await win.mouse.move(0, 0);
+  await checkpoint(shot, 'boards-list-release');
+  await rows.filter({ hasText: 'CAL-3' }).getByText('Эхо в звонке').click();
+  const panel = win.getByTestId('task-panel');
+  await expect(panel.getByTestId('prop-release')).toHaveText(['stage · 1288', 'prod · 4929cf3']);
+  await panel.getByTestId('prop-release').last().evaluate((el) => el.scrollIntoView({ block: 'center' }));
+  await checkpoint(shot, 'boards-task-release');
 });
 
 /**
@@ -4620,6 +4707,55 @@ test('boards-settings', async ({ open, win, mock, shot }) => {
   for (const b of await win.getByTestId('toast').locator('button[aria-label="Закрыть уведомление"]').all()) await b.evaluate((x) => (x as HTMLButtonElement).click());
   await expect(win.getByTestId('toast')).toHaveCount(0);
   await checkpoint(shot, 'boards-settings-access');
+  // Board task #101: a Git rule — the new events, «Целевая ветка», the Git template variables.
+  await win.getByRole('tab', { name: 'Автоматизации' }).click();
+  await expect(win.getByTestId('rules-empty')).toBeVisible();
+  await win.getByTestId('rule-add').click();
+  await win.getByTestId('rule-name').fill('MR влит в main → готово');
+  await win.getByTestId('rule-trigger').selectOption('git');
+  const ev = win.getByTestId('rule-git-event');
+  await expect(ev.locator('option')).toHaveText(['Любое событие', 'Создана ветка', 'Открыт черновик PR', 'Открыт PR', 'Черновик PR готов к ревью', 'Запрошено ревью', 'PR одобрен', 'PR смержен', 'PR закрыт без слияния', 'Новый коммит']);
+  await ev.selectOption({ label: 'Новый коммит' });
+  await expect(win.getByTestId('rule-git-branches')).toHaveCount(0); // a push has no target branch
+  await ev.selectOption({ label: 'PR смержен' });
+  await win.getByTestId('rule-git-branches').fill('main, release/*');
+  await win.getByTestId('rule-action-kind').selectOption('comment');
+  await expect(win.getByTestId('rule-git-vars')).toHaveText('Git: {pr_url} {pr_number} {pr_title} {branch} {target_branch} {git_author}');
+  await win.getByLabel('Текст').fill('Влит MR !{pr_number}: {pr_title} → {target_branch}');
+  await win.mouse.move(0, 0);
+  await checkpoint(shot, 'boards-rules-git-vars');
+  await win.getByTestId('rule-when').scrollIntoViewIfNeeded();
+  await win.getByTestId('rule-name').focus();
+  await checkpoint(shot, 'boards-rules-git');
+  // Board task #101 stage B: «Задача вошла в релиз» (prod by default) with the status condition of
+  // DEV's «Ready to Deploy → Deployed»; {release} under the template.
+  await win.getByTestId('rule-name').fill('Вошла в релиз prod → готово');
+  await win.getByTestId('rule-trigger').selectOption('release');
+  await expect(win.getByTestId('rule-release-envs')).toHaveValue('prod');
+  await win.getByTestId('rule-release-envs').fill('prod, stage');
+  await expect(win.getByTestId('rule-release-vars')).toHaveText('Релиз: {release}');
+  await win.getByLabel('Текст').fill('Выкачено в {release}');
+  await win.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await win.getByTestId('rule-when').scrollIntoViewIfNeeded();
+  await win.mouse.move(0, 0);
+  await checkpoint(shot, 'boards-rules-release');
+  await win.getByRole('dialog').getByRole('button', { name: 'Отмена' }).click();
+  // The GitLab backlink: off by default, the title-visibility help, the address and a write-only token.
+  await win.getByRole('tab', { name: 'Git' }).click();
+  await win.getByTestId('git-provider').selectOption({ label: 'GitLab' });
+  await win.getByTestId('git-save').click();
+  const backlink = win.getByTestId('git-backlink');
+  await expect(backlink.getByRole('switch')).toHaveAttribute('aria-checked', 'false');
+  await backlink.getByRole('switch').click();
+  await expect(win.getByTestId('git-backlink-error')).toHaveText('Заметки не пишутся: нет токена API.');
+  await win.getByTestId('git-backlink-url').fill('https://git.example.com');
+  await win.getByTestId('git-backlink-token').fill('glpat-0123456789abcdefghij');
+  await win.getByTestId('git-backlink-save').click();
+  await expect(win.getByTestId('git-backlink-error')).toHaveCount(0);
+  await expect(win.getByTestId('git-backlink-forget')).toBeVisible();
+  await backlink.scrollIntoViewIfNeeded();
+  await win.mouse.move(0, 0);
+  await checkpoint(shot, 'boards-settings-backlink');
 });
 
 /** Board settings → «Статусы», the colour picker of the first status open (ADR-0093): a 6-wide grid over the rows. */

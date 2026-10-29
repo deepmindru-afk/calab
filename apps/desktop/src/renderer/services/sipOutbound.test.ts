@@ -13,7 +13,7 @@ const voice = vi.hoisted(() => ({
   leave: vi.fn(() => Promise.resolve()),
   join: vi.fn((_room: string, _ws: string, _o?: unknown) => Promise.resolve()),
   unmuteForAnswer: vi.fn(),
-  publishDtmf: vi.fn((_d: string) => true),
+  publishDtmf: vi.fn((_d: string, _line: string) => true),
 }));
 vi.mock('./voice', () => ({ voice }));
 const placePersonal = vi.hoisted(() => vi.fn((_ws: string, _b: unknown): Promise<unknown> => Promise.resolve({})));
@@ -88,7 +88,7 @@ describe('placePersonalCall', () => {
     out.onPersonalCallUpdate(call(SipCallStatus.DIALING));
     expect(useSipOutbound.getState().call?.status).toBe(SipCallStatus.ACTIVE);
     expect(out.sendDtmf('5')).toBe(true);
-    expect(voice.publishDtmf).toHaveBeenCalledWith('5');
+    expect(voice.publishDtmf).toHaveBeenCalledWith('5', 'sip:c1'); // to the line only
 
     out.onPersonalCallUpdate(call(SipCallStatus.ENDED, 'remote'));
     expect(voice.leave).toHaveBeenCalledOnce(); // the engine then resumes the parked room

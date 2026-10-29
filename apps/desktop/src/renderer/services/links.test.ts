@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const session = vi.hoisted(() => ({ status: 'anon', settings: null as { serverUrl: string } | null }));
+const session = vi.hoisted(() => ({ status: 'anon', serverUrl: '', settings: null as { serverUrl: string } | null, appInfo: null as { appOrigins?: string[] } | null }));
 vi.mock('../stores/session', () => ({ useSession: { getState: () => session } }));
 const openRoom = vi.hoisted(() => vi.fn());
 vi.mock('../stores/ui', () => ({ useUi: { getState: () => ({ openDialog: () => undefined, openRoom }) } }));
@@ -244,5 +244,45 @@ describe('own-host links open in the app (CBF-63)', () => {
     expect(openOwnLink('https://app.calab.io/download/')).toBe(false);
     expect(openOwnLink(`https://app.calab.io/e/${ID}/rsvp?t=x`)).toBe(false);
     expect(openOwnLink('https://other.test/t/CBF-63')).toBe(false);
+  });
+});
+
+describe('links to another origin of our deployment open in the app', () => {
+  const CLOUD = ['https://app.calab.io', 'https://app.calab.ru', 'https://meet.gptunnel.ru'];
+  afterEach(() => {
+    session.settings = null;
+    session.serverUrl = '';
+    session.appInfo = null;
+  });
+  it('claims the alias of the signed-in server (app.calab.ru ↔ app.calab.io)', () => {
+    session.appInfo = { appOrigins: CLOUD };
+    session.serverUrl = 'https://app.calab.ru';
+    session.settings = { serverUrl: 'https://app.calab.ru' };
+    expect(openOwnLink('https://app.calab.io/t/DEV-123')).toBe(true);
+    session.serverUrl = 'https://app.calab.io';
+    session.settings = { serverUrl: 'https://app.calab.io' };
+    expect(openOwnLink('https://app.calab.ru/r/AbCd1234')).toBe(true);
+    expect(openOwnLink('https://meet.gptunnel.ru/t/DEV-1000022')).toBe(true);
+  });
+  it('trusts the live session server, not only the configured one', () => {
+    // A restored pre-2.0 session on app.calab.ru while settings hold the 2.0 default.
+    session.serverUrl = 'https://app.calab.ru';
+    session.settings = { serverUrl: 'https://app.calab.io' };
+    expect(openOwnLink('https://app.calab.ru/t/DEV-123')).toBe(true);
+  });
+  it('never claims the cloud on a self-hosted server, or a foreign host', () => {
+    session.appInfo = { appOrigins: CLOUD };
+    session.serverUrl = 'https://calab.example.com';
+    session.settings = { serverUrl: 'https://calab.example.com' };
+    expect(openOwnLink('https://app.calab.io/t/DEV-123')).toBe(false);
+    expect(openOwnLink('https://calab.example.com/t/DEV-123')).toBe(true);
+    expect(openOwnLink('https://user@calab.example.com/t/DEV-123')).toBe(false);
+  });
+  it('recognises cards (wiki, Disk) on the alias too', () => {
+    const P = '0190a0b0-0000-7000-80c1-0000000000d1';
+    session.appInfo = { appOrigins: CLOUD };
+    session.serverUrl = 'https://app.calab.io';
+    expect(ownWikiPageId(`https://app.calab.ru/wiki/${P}`)).toBe(P);
+    expect(ownDiskItemId(`https://app.calab.ru/disk/${P}`)).toBe(P);
   });
 });

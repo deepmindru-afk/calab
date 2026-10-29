@@ -187,7 +187,7 @@ func (q *Queries) ListSipCallParties(ctx context.Context, callIds []uuid.UUID) (
 }
 
 const listSipJournal = `-- name: ListSipJournal :many
-SELECT c.id, c.workspace_id, c.room_id, c.number, c.direction, c.started_by, c.participant_identity, c.sip_call_id, c.status, c.reason, c.ended_by, c.started_at, c.answered_at, c.ended_at, c.lk_room, c.answered_by, c.route, c.ringing_user_ids, c.via, c.provider_call_id, c.origin, c.peer_e164, c.missed FROM sip_calls c
+SELECT c.id, c.workspace_id, c.room_id, c.number, c.direction, c.started_by, c.participant_identity, c.sip_call_id, c.status, c.reason, c.ended_by, c.started_at, c.answered_at, c.ended_at, c.lk_room, c.answered_by, c.route, c.ringing_user_ids, c.via, c.provider_call_id, c.origin, c.peer_e164, c.missed, c.extension FROM sip_calls c
 WHERE c.workspace_id = $1
   AND ($2::text = '' OR c.direction = $2::text)
   AND (NOT $3::bool OR c.missed)
@@ -261,6 +261,7 @@ func (q *Queries) ListSipJournal(ctx context.Context, arg ListSipJournalParams) 
 			&i.Origin,
 			&i.PeerE164,
 			&i.Missed,
+			&i.Extension,
 		); err != nil {
 			return nil, err
 		}
@@ -273,7 +274,7 @@ func (q *Queries) ListSipJournal(ctx context.Context, arg ListSipJournalParams) 
 }
 
 const listSipJournalForUser = `-- name: ListSipJournalForUser :many
-SELECT c.id, c.workspace_id, c.room_id, c.number, c.direction, c.started_by, c.participant_identity, c.sip_call_id, c.status, c.reason, c.ended_by, c.started_at, c.answered_at, c.ended_at, c.lk_room, c.answered_by, c.route, c.ringing_user_ids, c.via, c.provider_call_id, c.origin, c.peer_e164, c.missed FROM sip_call_parties p JOIN sip_calls c ON c.id = p.call_id
+SELECT c.id, c.workspace_id, c.room_id, c.number, c.direction, c.started_by, c.participant_identity, c.sip_call_id, c.status, c.reason, c.ended_by, c.started_at, c.answered_at, c.ended_at, c.lk_room, c.answered_by, c.route, c.ringing_user_ids, c.via, c.provider_call_id, c.origin, c.peer_e164, c.missed, c.extension FROM sip_call_parties p JOIN sip_calls c ON c.id = p.call_id
 WHERE p.workspace_id = $1 AND p.user_id = $2
   AND ($3::text = '' OR c.direction = $3::text)
   AND (NOT $4::bool OR (c.missed AND p.rang))
@@ -348,6 +349,7 @@ func (q *Queries) ListSipJournalForUser(ctx context.Context, arg ListSipJournalF
 			&i.Origin,
 			&i.PeerE164,
 			&i.Missed,
+			&i.Extension,
 		); err != nil {
 			return nil, err
 		}

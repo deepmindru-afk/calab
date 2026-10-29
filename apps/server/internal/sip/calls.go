@@ -130,7 +130,11 @@ func (s *Service) place(w http.ResponseWriter, r *http.Request) error {
 	if err := httpx.Decode(w, r, &req); err != nil {
 		return err
 	}
-	number, ok := NormalizeNumber(req.GetNumber())
+	raw, ext, ok := SplitExtension(req.GetNumber())
+	if !ok {
+		return httpx.Validation("number", "not an extension: digits, * and # after «доб.», «,» or «;», at most 20")
+	}
+	number, ok := NormalizeNumber(raw)
 	if !ok {
 		return httpx.Validation("number", "not a phone number: use the international format, e.g. +7 916 123-45-67")
 	}
@@ -164,7 +168,7 @@ func (s *Service) place(w http.ResponseWriter, r *http.Request) error {
 	call, err := s.journalOutside(ctx, id, func(q *sqlc.Queries) (sqlc.SipCall, error) {
 		return q.InsertSipCall(ctx, sqlc.InsertSipCallParams{
 			ID: id, WorkspaceID: acc.WorkspaceID, RoomID: &room.ID, Number: number, StartedBy: &me,
-			ParticipantIdentity: rtc.SIPIdentity(id), Origin: OriginRoom, PeerE164: number,
+			ParticipantIdentity: rtc.SIPIdentity(id), Origin: OriginRoom, PeerE164: number, Extension: ext,
 		})
 	}, Event{Kind: EvStarted, User: &me, TargetKind: TkRoom, TargetID: &room.ID, TargetName: room.Name})
 	if db.UniqueViolation(err) != "" {

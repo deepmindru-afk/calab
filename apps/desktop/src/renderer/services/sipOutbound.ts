@@ -159,7 +159,7 @@ export async function hangupPersonal(): Promise<void> {
 export function sendDtmf(digit: string): boolean {
   const c = useSipOutbound.getState().call;
   if (!c || c.status !== SipCallStatus.ACTIVE) return false;
-  return voice.publishDtmf(digit);
+  return voice.publishDtmf(digit, c.participantIdentity || `sip:${c.id}`);
 }
 
 // ---------------------------------------------------------------- gateway

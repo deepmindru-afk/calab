@@ -46,7 +46,7 @@ func SipCall(c sqlc.SipCall) *v1.SipCall {
 		StartedAt: ts(c.StartedAt), AnsweredAt: tsp(c.AnsweredAt), EndedAt: tsp(c.EndedAt),
 		ParticipantIdentity: c.ParticipantIdentity, EndedBy: idp(c.EndedBy),
 		AnsweredBy: idp(c.AnsweredBy), Route: c.Route, Via: c.Via, ProviderCallId: c.ProviderCallID, RingingUserIds: make([]string, 0, len(c.RingingUserIds)),
-		Origin: sipOrigin[c.Origin],
+		Origin: sipOrigin[c.Origin], Extension: c.Extension,
 	}
 	for _, u := range c.RingingUserIds {
 		out.RingingUserIds = append(out.RingingUserIds, u.String())

@@ -1,7 +1,7 @@
 import * as Dropdown from '../../components/radix/dropdown-menu';
 import * as Popover from '../../components/radix/popover';
 import { TaskField, TaskOp, WorkspaceRole, type Board } from '@calaba/protocol';
-import { ArrowLeft, Check, CircleSlash, Filter, ListFilter, UserX, X } from 'lucide-react';
+import { ArrowLeft, Check, CircleSlash, Filter, ListFilter, Rocket, UserX, X } from 'lucide-react';
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Avatar } from '../../components/Avatar';
@@ -12,6 +12,7 @@ import { t } from '../../i18n';
 import { FORMER, activeConds, addCond, quickOn, removeCond, resolveDay, setCond, toggleQuick, toggleValue, type Cond, type FilterState } from '../../lib/boards/filter';
 import { estimateName, fieldOff, scaleValues } from '../../lib/boards/features';
 import { APPROVAL_VALUES, DATE_PRESETS, FILTER_FIELDS, RELATION_VALUES, fieldDef, fieldInScope, opLabel, opNeedsValue, type FieldDef, type FieldScope } from '../../lib/boards/filterFields';
+import { releaseLabel, releasesOf, type ReleaseItem } from '../../lib/boards/releases';
 import { autoFocusAllowed } from '../../lib/mobile';
 import { useBoards, workspaceBoards } from '../../stores/boards';
 import { prefsOf, useBoardsUi } from '../../stores/boardsUi';
@@ -80,6 +81,8 @@ function useValueChoices(def: FieldDef, board: Board | undefined, workspaceId: s
         return [c('', t('boards.noLabels'), <CircleSlash className="size-4 text-muted" />, TaskOp.EMPTY), ...[...(board?.labels ?? [])].sort((a, b) => a.position - b.position).map((l) => c(l.id, l.name, <Dot color={l.color} />))];
       case 'milestone':
         return [c('', t('boards.noMilestone'), <CircleSlash className="size-4 text-muted" />, TaskOp.EMPTY), ...(board?.milestones ?? []).map((m) => c(m.id, m.name))];
+      case 'release':
+        return [c('', t('boards.noRelease'), <CircleSlash className="size-4 text-muted" />, TaskOp.EMPTY), ...boardReleases(board?.id).map((r) => c(r.id, releaseLabel(r), <Rocket className="size-4 text-muted" />))];
       case 'relation':
         return RELATION_VALUES.map((r) => c(r, t(`boards.rel.${r}` as 'boards.rel.blocks')));
       case 'task':
@@ -107,6 +110,13 @@ function useValueChoices(def: FieldDef, board: Board | undefined, workspaceId: s
         return [];
     }
   }, [def, board, members, cond, today, noMe, boards]);
+}
+
+/** The releases the board's loaded tasks know (board task #101), newest first; read when a menu or a chip renders. */
+function boardReleases(boardId: string | undefined): ReleaseItem[] {
+  if (!boardId) return [];
+  const tasks = useBoards.getState().tasks;
+  return releasesOf(Object.values(tasks).filter((x) => x.boardId === boardId));
 }
 
 /** The values list of one field; `onChange` receives the edited condition. */
@@ -397,6 +407,10 @@ function valueText(c: Cond, board: Board | undefined, workspaceId: string, today
         return board?.labels.find((l) => l.id === v)?.name ?? '?';
       case 'milestone':
         return board?.milestones.find((m) => m.id === v)?.name ?? '?';
+      case 'release': {
+        const r = boardReleases(board?.id).find((x) => x.id === v);
+        return r ? releaseLabel(r) : '?';
+      }
       case 'relation':
         return t(`boards.rel.${v}` as 'boards.rel.blocks');
       case 'bool':

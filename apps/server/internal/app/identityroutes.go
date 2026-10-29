@@ -509,15 +509,19 @@ var identityRoutes = map[string]identityScope{
 	"POST /api/boards/{id}/webhook/ping":              scopeBoard,
 	// Automations (ADR-0060). The repository delivery is public like POST /api/rtc/webhook:
 	// no session, the hosting signs it with the board's secret.
-	"GET /api/boards/{id}/rules":           scopeBoard,
-	"POST /api/boards/{id}/rules":          scopeBoard,
-	"PATCH /api/rules/{id}":                scopeRule,
-	"DELETE /api/rules/{id}":               scopeRule,
-	"POST /api/rules/{id}/test":            scopeRule,
-	"GET /api/rules/{id}/runs":             scopeRule,
-	"GET /api/boards/{id}/git":             scopeBoard,
-	"PUT /api/boards/{id}/git":             scopeBoard,
-	"DELETE /api/boards/{id}/git":          scopeBoard,
+	"GET /api/boards/{id}/rules":  scopeBoard,
+	"POST /api/boards/{id}/rules": scopeBoard,
+	"PATCH /api/rules/{id}":       scopeRule,
+	"DELETE /api/rules/{id}":      scopeRule,
+	"POST /api/rules/{id}/test":   scopeRule,
+	"GET /api/rules/{id}/runs":    scopeRule,
+	"GET /api/boards/{id}/git":    scopeBoard,
+	"PUT /api/boards/{id}/git":    scopeBoard,
+	"DELETE /api/boards/{id}/git": scopeBoard,
+	"PATCH /api/boards/{id}/git":  scopeBoard, // the GitLab backlink (board task #101)
+	// Releases (board task #101): CI posts with a bot token; EDIT_TASKS on the board.
+	"POST /api/boards/{id}/releases":       scopeBoard,
+	"GET /api/boards/{id}/releases":        scopeBoard,
 	"POST /api/git/boards/{id}/{provider}": scopePublic,
 	// Disk (ADR-0094 §7). The public link routes are anonymous like public forms; the handler
 	// applies auth.CheckPublicCapability of the link's workspace.

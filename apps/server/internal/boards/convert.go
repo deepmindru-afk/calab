@@ -463,6 +463,16 @@ func tasksProto(ctx context.Context, q *sqlc.Queries, ts []taskRow, viewer uuid.
 	if err := taskMilestones(ctx, q, ids, out, idx); err != nil {
 		return nil, err
 	}
+	// Releases (board task #101): one per environment, newest first.
+	rels, err := q.ListTaskReleases(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, x := range rels {
+		t := out[idx[x.TaskID]]
+		t.Releases = append(t.Releases, &v1.TaskRelease{ReleaseId: x.ReleaseID.String(), Name: x.Name, Environment: x.Environment,
+			Url: x.Url, CreatedAt: timestamppb.New(x.CreatedAt)})
+	}
 	// Watchers (ADR-0076): every task form carries them — the gateway routes by them.
 	ws, err := q.ListTaskWatchers(ctx, ids)
 	if err != nil {

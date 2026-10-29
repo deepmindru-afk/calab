@@ -56,6 +56,7 @@ type Service struct {
 	// CreateLimit / SearchLimit: per-user budgets of task creation and of ⌘K task search
 	// (security review 1.1.0; comments are messages under the message limit). nil = none.
 	CreateLimit, SearchLimit                                   Limiter
+	ReleaseLimit                                               Limiter // POST /api/boards/{id}/releases, per board (board task #101)
 	FormReadLimit, FormIPLimit, FormUserLimit, FormSubmitLimit Limiter
 	// FormUploadLimit: staged uploads of FILE fields per IP ("ip:") or user ("user:");
 	// FormUploadFormLimit: per form (ADR-0064 v2). nil = none.
@@ -171,6 +172,7 @@ func (s *Service) Routes(mux httpx.Router, wrap func(http.Handler) http.Handler)
 	s.webhookRoutes(mux, wrap)
 	s.ruleRoutes(mux, wrap)
 	s.repoRoutes(mux, wrap)
+	s.releaseRoutes(mux, wrap)
 }
 
 func uid(r *http.Request) uuid.UUID { return auth.MustFromContext(r.Context()).UserID }

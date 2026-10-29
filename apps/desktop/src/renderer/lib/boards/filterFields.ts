@@ -16,6 +16,7 @@ import {
   Link2,
   MessageSquare,
   Paperclip,
+  Rocket,
   SquareKanban,
   SignalHigh,
   Tag,
@@ -53,6 +54,8 @@ export type ValueKind =
   | 'approval'
   /** A board of the workspace (the cross-board task search, ADR-0139). */
   | 'board'
+  /** A release of the board (board task #101): the releases its loaded tasks know. */
+  | 'release'
   | 'text';
 
 export interface FieldDef {
@@ -82,7 +85,7 @@ export function fieldInScope(d: FieldDef, scope: FieldScope, oneBoard: boolean):
   if (d.hidden) return false;
   if (d.field === TaskField.BOARD) return scope === 'search';
   if (d.field === TaskField.TEXT) return scope === 'rule';
-  if (scope === 'search' && !oneBoard && (d.kind === 'status' || d.kind === 'label' || d.kind === 'milestone')) return false;
+  if (scope === 'search' && !oneBoard && (d.kind === 'status' || d.kind === 'label' || d.kind === 'milestone' || d.kind === 'release')) return false;
   return true;
 }
 
@@ -100,6 +103,7 @@ export const FILTER_FIELDS: readonly FieldDef[] = [
   { field: TaskField.LABEL, label: 'boards.f.label', icon: Tag, kind: 'label', ops: [ANY_OF, IS, NONE_OF, EMPTY, NOT_EMPTY], op: ANY_OF, multi: true },
   { field: TaskField.MILESTONE, label: 'boards.f.milestone', icon: Diamond, kind: 'milestone', ops: [IS, IS_NOT, EMPTY, NOT_EMPTY], op: IS, multi: true },
   { field: TaskField.PARENT, label: 'boards.f.parent', icon: GitFork, kind: 'task', ops: [IS, EMPTY, NOT_EMPTY], op: NOT_EMPTY, multi: true },
+  { field: TaskField.RELEASE, label: 'boards.f.release', icon: Rocket, kind: 'release', ops: [IS, IS_NOT, EMPTY, NOT_EMPTY], op: IS, multi: true },
   { field: TaskField.RELATION, label: 'boards.f.relation', icon: Link2, kind: 'relation', ops: [IS, IS_NOT], op: IS, multi: true },
   { field: TaskField.SUBSCRIBER, label: 'boards.f.subscriber', icon: Bell, kind: 'user', ops: [IS], op: IS, multi: true },
   { field: TaskField.CREATED_AT, label: 'boards.f.createdAt', icon: CalendarPlus, kind: 'datetime', ops: [AFTER, BEFORE, BETWEEN], op: AFTER, multi: false },

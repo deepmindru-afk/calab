@@ -30,7 +30,7 @@ test('wiki-page', async ({ open, win, shot }) => {
   await win.mouse.move(5, 5);
   await checkpoint(shot, 'wiki-page');
 
-  // Owner 23.10: the same bottom island in a call, across the rail and the tree column.
+  // In a call: the island folded into my avatar with the call mark (ADR-0146).
   await joinVoice(win);
   await win.getByTestId('section-wiki').click();
   await expect(win.getByTestId('wiki-title')).toHaveValue('Справочник команды');

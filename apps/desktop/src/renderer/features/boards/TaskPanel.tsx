@@ -73,7 +73,7 @@ import { DRAG_USER, dragKind } from '../calendar/dragState';
 import { featureOn, type Disabled } from '../../lib/boards/features';
 import { ApprovalsSection } from './Approvals';
 import { WatchersSection } from './Watchers';
-import { GitSection } from './GitLinks';
+import { GitSection, ReleaseValues } from './GitLinks';
 import { AttachmentChip } from './AttachmentChip';
 import { splitDescription } from './inlineImages';
 import { descriptionToDoc, docToDescription } from './descriptionDoc';
@@ -777,6 +777,11 @@ export function Properties({ task, canEdit, perms, scoped, disabled, bare = fals
               {t('boards.open')}
             </button>
           ) : null}
+        </Prop>
+      ) : null}
+      {on(BoardFeature.GIT_LINKS) && task.releases.length ? (
+        <Prop label={t('boards.f.release')}>
+          <ReleaseValues releases={task.releases} className={valueBtn} />
         </Prop>
       ) : null}
       {/* Approvals last (docs/08): the state band closes the block. */}

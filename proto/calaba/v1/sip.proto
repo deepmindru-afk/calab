@@ -309,6 +309,10 @@ message SipCall {
   // off-hours route whose group fell back.
   bool off_hours = 24;
   bool via_fallback = 25;
+  // A room call dialed with an extension («+7 495 123-45-67 доб. 101», ADR-0046 addendum): the
+  // keys sent as tones after the answer, «,» = a 2 s pause («101», «,2#»). The caller's client
+  // sends them; everyone sees «доб. 101» on the line. Empty = none; number never holds it.
+  string extension = 26;
 }
 
 // POST /api/rooms/{id}/calls (PLACE_CALLS + VIEW_ROOM + CONNECT in the room, not a guest; a
@@ -321,7 +325,10 @@ message SipCall {
 // calls per hour per workspace, out_per_user_hour per member); 403 WORKSPACE_SUSPENDED. The line rings for up to 45 s; a call lasts 2 h at most.
 message PlaceSipCallRequest {
   // The number to call: E.164 («+7 916 123-45-67»), or a Russian national number starting
-  // with 8 or 7 (11 digits) — spaces, dashes, dots and brackets are ignored.
+  // with 8 or 7 (11 digits) — spaces, dashes, dots and brackets are ignored. It may end with an
+  // extension: «доб. 101», «ext. 101», «x101», «,101» or «;101» (sip.SplitExtension, vectors in
+  // proto/testdata/phone_numbers.json); the line dials only the number, SipCall.extension keeps
+  // the rest. A bad extension is 422 VALIDATION on «number».
   string number = 1;
 }
 

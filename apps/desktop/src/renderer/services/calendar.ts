@@ -39,7 +39,9 @@ import { dayKey, eventSpan, formatWhen, gridWindow, monthOf, occurrenceMs, viewe
 import { can, mayManageEvents, roomPerms } from '../lib/permissions';
 import { log } from '../lib/log';
 import { platform } from '../platform';
+import { joinPlan } from '../lib/joinConfirm';
 import { useCalendar } from '../stores/calendar';
+import { useJoinConfirm } from '../stores/joinConfirm';
 import { useFreeBusy } from '../stores/freebusy';
 import { prefs } from '../stores/prefs';
 import { useRooms } from '../stores/rooms';
@@ -292,7 +294,8 @@ export function onEventReminder(v: CalendarEventReminder): void {
   }
   const room = ev.roomId ? useRooms.getState().byId[ev.roomId] : undefined;
   const text = reminderText(v.minutes, ev.title, room?.name ?? '');
-  const act = room ? (): void => goToRoom(ev) : (): void => openEvent(ev);
+  // A click never joins by itself: it asks first (features/calendar/JoinConfirm).
+  const act = room ? (): void => requestJoin(ev) : (): void => openEvent(ev);
   notifyReminder(text, room ? t('cal.goToRoom') : t('cal.openEvent'), `event:${occKey(ev)}:${v.minutes}`, act);
 }
 
@@ -322,7 +325,20 @@ function notifyReminder(text: string, action: string, tag: string, act: () => vo
 
 // ---------------------------------------------------------------- navigation
 
-/** «Перейти»: the meeting's room, joining its voice (unless already there). */
+/**
+ * A notification (system or toast) led to the meeting's room: ask «Войти в комнату?» before joining
+ * (owner, 29.10). Already in that room — just show it, nothing to join or ask.
+ */
+export function requestJoin(ev: CalendarEvent): void {
+  if (!ev.roomId) return;
+  if (joinPlan({ roomId: useVoice.getState().roomId, call: useVoice.getState().call }, ev.roomId) === 'here') {
+    goToRoom(ev);
+    return;
+  }
+  useJoinConfirm.getState().ask(ev);
+}
+
+/** «Перейти»: the meeting's room, joining its voice. A deliberate button only. */
 export function goToRoom(ev: Pick<CalendarEvent, 'workspaceId' | 'roomId'>): void {
   if (!ev.roomId) return;
   useUi.getState().openRoom(ev.workspaceId, ev.roomId);

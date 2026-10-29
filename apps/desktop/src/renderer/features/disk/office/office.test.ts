@@ -138,11 +138,12 @@ describe('bridge (client side)', () => {
       toHost.push([m, String(o)]);
     });
     const events: HostEvent[] = [];
-    const conn = connectHost(parent, frame, DOCS, JSON.stringify({ document: { key: 'k' }, token: 'signed' }), (e) => events.push(e));
+    let hellos = 0;
+    const conn = connectHost(parent, frame, DOCS, JSON.stringify({ document: { key: 'k' }, token: 'signed' }), (e) => events.push(e), () => hellos++);
     const fromHost = (data: unknown, origin = DOCS, source: unknown = child): void => {
       parent.dispatchEvent(new parent.MessageEvent('message', { data, origin, source: source as Window }));
     };
-    return { parent, child, toHost, events, conn, fromHost };
+    return { parent, child, toHost, events, conn, fromHost, hellos: () => hellos };
   }
 
   it('sends the config once, only to the Document Server origin, on hello', () => {
@@ -151,6 +152,7 @@ describe('bridge (client side)', () => {
     c.fromHost({ source: 'calab-office', type: 'hello' });
     c.fromHost({ source: 'calab-office', type: 'hello' });
     expect(c.toHost).toEqual([[{ source: 'calab-office', type: 'open', config: { document: { key: 'k' }, token: 'signed' } }, DOCS]]);
+    expect(c.hellos()).toBe(1);
   });
 
   it('drops messages of another origin or another window', () => {
@@ -160,6 +162,7 @@ describe('bridge (client side)', () => {
     c.fromHost({ source: 'calab-office', type: 'event', name: 'error', data: { code: 1 } }, 'https://evil.test');
     expect(c.toHost).toHaveLength(0);
     expect(c.events).toHaveLength(0);
+    expect(c.hellos()).toBe(0);
   });
 
   it('maps the host events and stops listening on close', () => {

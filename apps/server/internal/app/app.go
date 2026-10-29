@@ -478,6 +478,7 @@ func New(d Deps) *App {
 	boardSvc.FormUploadFormLimit = redisx.NewRateLimiter(d.Redis, "rl:form-upload-f:", 60, 60) // and 60 per minute per form
 	boardSvc.CreateLimit = redisx.NewRateLimiter(d.Redis, "rl:task-create:", 60, 60)           // 60 at once, one per second
 	boardSvc.SearchLimit = redisx.NewRateLimiter(d.Redis, "rl:task-search:", 30, 60)           // ⌘K: 30 at once, one per second
+	boardSvc.ReleaseLimit = redisx.NewRateLimiter(d.Redis, "rl:board-release:", 30, 30)        // CI releases: 30 per minute per board
 	msgHandlers.TaskHook = boardSvc.TaskHook
 	msgHandlers.TaskCommentHook = boardSvc.TaskCommentHook
 	boardHooks := boardSvc.EnableWebhooks(d.Redis, []byte(d.Config.JWTSecret), whOpts) // same delivery options as bots

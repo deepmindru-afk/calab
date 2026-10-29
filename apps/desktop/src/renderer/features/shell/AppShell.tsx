@@ -50,6 +50,8 @@ import { useTelephonyUi } from '../../stores/telephonyUi';
 import { TelephonySection } from '../telephony/TelephonySection';
 import { EventPanel } from '../calendar/EventCard';
 import { BottomIsland } from './BottomIsland';
+import { islandMode } from './islandModel';
+import { currentSection } from '../../lib/sections';
 import { WindowVibrancy } from './WindowVibrancy';
 import { Sidebar } from './Sidebar';
 import { ArchivedChat } from '../chat/ArchivedChat';
@@ -134,6 +136,20 @@ function ShellLayout(): ReactNode {
   const fileMounted = useTaskTabs((s) => s.fileMounted !== null);
   const fileShown = useTaskTabs((s) => s.fileActive !== null) && !home && !!wsId && !guestWs && hasWs;
 
+  // The bottom island (docs/08 «Нижний островок», ADR-0146): full on «Команда», folded into my
+  // avatar on the other sections, an opened office file and a web app (setting on, default).
+  const collapseIsland = usePrefs((s) => s.islandCollapse);
+  const app = !!appId && !mailOn && !home;
+  let island = islandMode({
+    shown: ready && (mailOn || home || (hasWs && !!wsId)),
+    section: currentSection({ home, boards, calendar: calDay !== null, app, mail: mailOn, disk, wiki, canvas, telephony }),
+    file: fileShown,
+    app,
+    collapse: collapseIsland,
+  });
+  // The folded canvas tree takes the full island with it (it would float over the field's edge).
+  if (island === 'full' && canvas && canvasFolded && !mailOn && !wiki && !fileShown) island = 'none';
+
   useEffect(() => installHotkeys(), []);
   useEffect(() => installFileViewLeave(), []);
   useEffect(() => installAfk(), []);
@@ -181,7 +197,7 @@ function ShellLayout(): ReactNode {
           the chat are one inset panel with a 12 px top-left corner and a quiet edge (docs/08
           «Слои окна», owner 07.10). The bottom island (me + the call) floats over the foot of the
           rail and the column. */}
-      <div className="mat-rail relative flex min-h-0 flex-1">
+      <div className="mat-rail relative flex min-h-0 flex-1" data-island-host>
         <SectionRail />
         {/* An opened office file (ADR-0143): the editor in the content slot, the section it came from untouched under it. */}
         {fileMounted ? <OfficeScreenLazy.Component /> : null}
@@ -278,8 +294,8 @@ function ShellLayout(): ReactNode {
             <Welcome />
           </div>
         )}
-        {/* One island on every screen with the rail (owner 23.10), an opened office file too (its view keeps a strip of island height under the editor, ADR-0143); not over a web app's native view. */}
-        {ready && (fileShown || !(canvas && canvasFolded && !mailOn && !wiki)) && (mailOn || home || (hasWs && wsId && !appId)) ? <BottomIsland column={fileShown ? 'sidebar' : mailOn ? 'mail' : wiki ? 'wiki' : canvas ? 'canvas' : 'sidebar'} /> : null}
+        {/* One island on every screen with the rail (owner 23.10): full on «Команда», folded into my avatar elsewhere (ADR-0146). */}
+        {island !== 'none' ? <BottomIsland mode={island} column={fileShown ? 'sidebar' : mailOn ? 'mail' : wiki ? 'wiki' : canvas ? 'canvas' : 'sidebar'} /> : null}
         {ready ? <CreateTaskDialog /> : null}
         {ready ? <SmartTaskDialog /> : null}
       </div>

@@ -60,10 +60,11 @@ import { hideTip, showTip } from './tipOverlay';
 import { parseTipPayload } from './tipOverlayPolicy';
 import { appViewShown, forgetApp, hideApp, navigateApp, openApp, openAppExternal, setAppBounds } from './webApps';
 import { parseAppId, parseBounds } from './webAppPolicy';
-import { openLink } from './ownLink';
+import { APP_ORIGINS, openLink } from './ownLink';
 import { getMainWindow, isOwnPage, isShown, showMainWindow } from './windows';
 import { mailRequest } from './mail';
 import { setOfficeFrame } from './officeFrame';
+import { OFFICE_KINDS, learnOfficeFrom, warmOffice, type OfficeKind } from './officeWarm';
 
 const VISUAL_TEST = process.env['CALABA_VISUAL_TEST'] === '1';
 const VISUAL_VIBRANCY = process.env['CALABA_VISUAL_VIBRANCY'] === '1';
@@ -243,6 +244,7 @@ export function registerIpc(): void {
     // app.getLocale() follows --lang (tests pin it to ru); the system list covers languages
     // Chromium has no UI pack for (ADR-0022: kk, be → ru; the app ships only our packs).
     locales: systemLocales(app.getLocale(), app.getPreferredSystemLanguages(), app.commandLine.hasSwitch('lang')),
+    appOrigins: [...APP_ORIGINS],
   }));
   handle(IPC.appSetStrings, (_e, a) => {
     const s = parseMainStrings(a);
@@ -486,7 +488,17 @@ export function registerIpc(): void {
   });
   // ---- mail (ADR-0088 §7): validated and relayed to the engine utilityProcess ----
   // ---- office editor (ADR-0143 §11): the frame's origin comes from the server, not the renderer ----
-  handle(IPC.officeFrame, (e, a) => setOfficeFrame(e.sender, a === true, officeDocsUrl));
+  handle(IPC.officeFrame, async (e, a) => {
+    const origin = await setOfficeFrame(e.sender, a === true, officeDocsUrl);
+    learnOfficeFrom(origin);
+    return origin;
+  });
+  handle(IPC.officeWarm, (_e, a) => {
+    const { reason, kinds } = (a ?? {}) as { reason?: unknown; kinds?: unknown };
+    if (reason !== 'disk' && reason !== 'ready') return;
+    const ks = Array.isArray(kinds) ? OFFICE_KINDS.filter((k: OfficeKind) => kinds.includes(k)) : [];
+    return warmOffice(reason, ks, officeDocsUrl);
+  });
   handle(IPC.mailRequest, (_e, a) => mailRequest(a));
   handle(IPC.systemOpenPrivacySettings, (_e, pane) => {
     if (process.platform === 'win32') {

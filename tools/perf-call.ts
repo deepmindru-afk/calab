@@ -25,6 +25,9 @@
  * `--boards`: the kanban (ADR-0042) open during the call; Борис renames CAL-2 every 3 s (TASK_UPDATE to
  * the board): one TaskCard per event should render.
  *
+ * `--no-call`: the scene without joining voice. `--island-hover` (ADR-0146): every 3 s the pointer goes
+ * onto the folded island's avatar (it opens) or away (it closes) — only the island may render.
+ *
  * `--disk`: the Disk (ADR-0094, a list) open during the call; every 3 s someone opens or closes the budget
  * sheet in the office editor («Редактирует Имя», a DISK_ITEM_UPSERT): one Row per event should render.
  * `--office`: the office editor on in the mock (ADR-0143; GET /api/office/capabilities at READY) — with
@@ -131,6 +134,10 @@ const CALENDAR = argv.includes('--calendar') || FINDTIME;
 const BOARDS = argv.includes('--boards');
 /** `--disk`: the Disk open during the call; the budget's «Редактирует» flips every 3 s (DISK_ITEM_UPSERT). */
 const DISK = argv.includes('--disk');
+/** `--no-call`: the same scene without joining voice (the section's idle cost). */
+const NO_CALL = argv.includes('--no-call');
+/** `--island-hover` (ADR-0146): the pointer goes onto the folded island's avatar and away, in turn every 3 s. */
+const ISLAND_HOVER = argv.includes('--island-hover');
 /** `--office`: the office editor on (ADR-0143); `--office-closed`: an editor opened and closed before the window. */
 const OFFICE_CLOSED = argv.includes('--office-closed');
 const OFFICE = argv.includes('--office') || OFFICE_CLOSED;
@@ -529,7 +536,7 @@ async function main(): Promise<void> {
       await page.getByTestId('call-accept').click();
       await page.getByTestId('dm-call-active').waitFor({ timeout: 15_000 });
       await page.getByText('Голос подключён').first().waitFor({ timeout: 30_000 });
-    } else if (!TELEPHONY) {
+    } else if (!TELEPHONY && !NO_CALL) {
       await aside.getByRole('button', { name: /Созвон/ }).first().click();
       // A voice room opens its chat first; «Войти в голос» joins (harness.ts joinVoice).
       const join = page.getByRole('region', { name: 'Созвон' }).getByRole('button', { name: 'Войти в голос', exact: true });
@@ -607,7 +614,8 @@ async function main(): Promise<void> {
       }
     }
     // «--telephony» measures the section alone (no voice call: ADR-0137 §8 «открытый раздел без звонков»).
-    if (!TELEPHONY) await page.getByRole('button', { name: /^Качество связи/ }).first().waitFor({ timeout: 15_000 });
+    // Attached, not visible: outside «Команда» the island is folded into the avatar (ADR-0146).
+    if (!TELEPHONY && !NO_CALL) await page.locator('button[aria-label^="Качество связи"]').first().waitFor({ state: 'attached', timeout: 15_000 });
     // Musician mode is per call (not persisted, ADR-0052): turned on from the voice panel's «…».
     if (MUSICIAN) {
       await page.getByRole('button', { name: 'Ещё', exact: true }).last().click();
@@ -720,6 +728,16 @@ async function main(): Promise<void> {
             if (k === 0) call = mock.ringSipJournal('+79160000000', [IDS.users.anna]);
             else if (k === 1) mock.advanceSipJournal(call, IDS.users.anna);
             else mock.advanceSipJournal(call);
+          }, 3000),
+        );
+      }
+      if (ISLAND_HOVER) {
+        let h = 0;
+        timers.push(
+          setInterval(() => {
+            const over = h++ % 2 === 0;
+            const target = over ? page.getByTestId('island-avatar').hover() : page.mouse.move(600, 300);
+            void target.catch(() => undefined);
           }, 3000),
         );
       }

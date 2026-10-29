@@ -24,12 +24,65 @@ test('disk-tiles', async ({ open, win, shot, theme }) => {
   await expect(tiles.first()).toContainText('Дизайн');
   await expect(win.getByTestId('disk-meter')).toBeVisible();
   await checkpoint(shot, 'disk-tiles');
+});
 
-  // Owner 23.10: the same bottom island in a call; the usage meter sits at the footer's right end, the left stays free under the island.
+/**
+ * ADR-0146: outside «Команда» the bottom island is folded into my avatar on the rail; hovering it
+ * opens the full island over the Disk, its avatar on the same pixels; in a call the avatar carries
+ * the call mark (green speaker, red crossed mic when muted). Dark and light (collapsed + open);
+ * the call in dark only.
+ */
+test('disk-island', async ({ open, win, shot, theme }) => {
+  await open();
+  await win.getByTestId('section-disk').click();
+  await expect(win.getByTestId('disk-tile')).toHaveCount(9);
+  const avatar = win.getByTestId('island-avatar');
+  const island = win.getByTestId('bottom-island');
+  await expect(avatar).toBeVisible();
+  await expect(island).toBeHidden();
+  // Nothing reserved for the island: the Disk's own bottom padding only.
+  expect(await win.getByTestId('disk').evaluate((el) => getComputedStyle(el).getPropertyValue('--island-height'))).toBe('');
+  const folded = await avatar.boundingBox();
+  await checkpoint(shot, 'disk-island');
+
+  // Hover: the full island over the content, its avatar exactly where the folded one is.
+  await avatar.hover();
+  await expect(island).toBeVisible();
+  await expect(avatar).toHaveAttribute('aria-expanded', 'true');
+  const inner = await island.locator('[data-presence]').first().locator('..').boundingBox();
+  expect(inner && folded && Math.abs(inner.x - folded.x) < 0.5 && Math.abs(inner.y - folded.y) < 0.5).toBe(true);
+  await checkpoint(shot, 'disk-island-open', { keepPointer: true });
+  // Leaving closes it (after the grace).
+  await win.mouse.move(600, 300);
+  await expect(island).toBeHidden();
+
+  // Keyboard: Enter opens, Esc closes and keeps focus on the avatar.
+  await avatar.focus();
+  await win.keyboard.press('Enter');
+  await expect(island).toBeVisible();
+  await win.keyboard.press('Escape');
+  await expect(island).toBeHidden();
+  await expect(avatar).toBeFocused();
+  await win.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  if (theme !== 'dark') return;
+
+  // In a call: the folded avatar carries the call mark; muted — the red crossed mic.
   await joinVoice(win);
   await win.getByTestId('section-disk').click();
-  await expect(tiles).toHaveCount(9);
-  await checkpoint(shot, 'disk-voice');
+  await expect(win.getByTestId('disk-tile')).toHaveCount(9);
+  const mark = win.getByTestId('island-call-mark');
+  await expect(mark).toBeVisible();
+  await expect(mark).not.toHaveAttribute('data-muted');
+  await checkpoint(shot, 'disk-island-voice');
+  await avatar.hover();
+  await expect(island).toContainText('Голос подключён');
+  await island.getByRole('button', { name: /^Выключить микрофон/ }).click();
+  await expect(island.getByRole('button', { name: /^Включить микрофон/ })).toBeVisible();
+  await checkpoint(shot, 'disk-island-voice-open', { keepPointer: true });
+  await win.mouse.move(600, 300);
+  await expect(island).toBeHidden();
+  await expect(mark).toHaveAttribute('data-muted', 'true');
+  await checkpoint(shot, 'disk-island-voice-muted');
 });
 
 test('disk-list', async ({ open, win, shot, theme }) => {

@@ -943,7 +943,21 @@ function ThemeCard(): ReactNode {
         />
       </Row>
       <HapticsRow />
+      <IslandRow />
     </Card>
+  );
+}
+
+/** «Островок: сворачивать в аватар вне раздела Команда» (ADR-0146): the desktop layout only — the phone has no island. */
+function IslandRow(): ReactNode {
+  const mobile = useMobile();
+  const on = usePrefs((s) => s.islandCollapse);
+  const set = usePrefs((s) => s.setPrefs);
+  if (mobile) return null;
+  return (
+    <Row label={t('settings.islandCollapse')} hint={t('settings.islandCollapseHint')}>
+      <Toggle label={t('settings.islandCollapse')} checked={on} onChange={(v) => set({ islandCollapse: v })} />
+    </Row>
   );
 }
 

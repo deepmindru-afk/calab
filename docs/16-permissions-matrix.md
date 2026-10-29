@@ -128,6 +128,9 @@
 | Действия правила при срабатывании | от имени доски: права пользователя не проверяются (правило создал `MANAGE_BOARD`), инварианты — да: approval gate, фичи доски, тариф чек-листов, лимиты, `mayInvite` для исполнителей / согласующих; уведомления — только тем, кто видит задачу (`sees`) | `boards.runRules` → `actx` | — |
 | Git-вебхук доски: настроить / посмотреть / удалить (ADR-0060 §4) | `MANAGE_BOARD` board + `MANAGE_INTEGRATIONS` ws; тариф как у правил; боты — так же (ADR-0109); секрет — только в ответе `PUT` | `boards.repoBoard` | — |
 | Приём Git-событий `POST /api/git/boards/{id}/{provider}` | без сессии; подпись провайдера секретом доски (иначе 401), ≤ 1 МБ, 60/мин на доску, повтор доставки — 204 без эффекта; связи и правила — только задачам этой доски (ключ доски) | `boards.repoInbound`, `vcs.Verify` | — |
+| Релиз из CI `POST /api/boards/{id}/releases` (доска #101) | `EDIT_TASKS` board (бот — по тем же битам, ADR-0109); по карточкам — 403, гость / чужое пространство / не видно — 404; тариф `automations`; ≤ 5000 `commits`, ≤ 500 `task_keys` только этой доски (422), тело ≤ 1 МБ, 30/мин на доску, ≤ 20 окружений (409); повтор (окружение, sha) — без дублей; задачи — только живые этой доски | `boards.createRelease` (`validRelease`) | — |
+| Релизы доски `GET /api/boards/{id}/releases` · поле `Task.releases` · фильтр «Релиз» | `VIEW_BOARD` board (по карточкам — 403); `Task.releases` — кто видит задачу | `boards.listReleases`, `tasksProto` | поле «Релиз», группировка |
+| Обратная ссылка в GitLab: `PATCH /api/boards/{id}/git {backlink, api_token, gitlab_url}` | как Git-вебхук: `MANAGE_BOARD` + `MANAGE_INTEGRATIONS`; токен не возвращается и стирается при смене `gitlab_url` без нового токена; заметка — только MR под `gitlab_url`, только ведущий ключ, одна на MR и задачу | `boards.patchRepoHook`, `postBacklinks` | «Git» → «Ссылка на задачу в GitLab» |
 
 ## Поиск
 

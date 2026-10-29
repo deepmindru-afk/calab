@@ -90,3 +90,35 @@ export function cleanPastedNumber(text: string): string {
 
 /** An internal number of the workspace (ADR-0117): 2..6 digits. */
 export const isExtensionLike = (typed: string): boolean => /^\d{2,6}$/.test(typed);
+
+/** The longest extension a dialed number may carry, keys and pauses (sip.MaxExtension). */
+export const MAX_EXTENSION = 20;
+
+/** Where an extension starts: «,», «;», «x», «доб», «ext» (any case). */
+const EXT_MARKER = /[,;xX]|доб|ext/i;
+
+/**
+ * sip.SplitExtension (ADR-0046 addendum «Тональный набор»): «+7 495 123-45-67 доб. 101»,
+ * «… ext. 101», «… x101», «…,101», «…;101» → the text before the marker and the extension. The
+ * marker is the first 2 s pause after the answer; every further «,» / «;» is one more pause
+ * (kept as «,»); keys 0-9 * #; spaces, NBSP, dots and dashes are skipped. No marker: the whole
+ * input and ''. null: a marker without keys after it, anything else after it, or longer than
+ * MAX_EXTENSION.
+ */
+export function splitExtension(input: string): { number: string; ext: string } | null {
+  const s = input.trim();
+  const m = EXT_MARKER.exec(s);
+  if (!m) return { number: s, ext: '' };
+  let ext = '';
+  let keys = 0;
+  for (const r of s.slice(m.index + m[0].length)) {
+    if ((r >= '0' && r <= '9') || r === '*' || r === '#') {
+      ext += r;
+      keys++;
+    } else if (r === ',' || r === ';') ext += ',';
+    else if (r !== ' ' && r !== '\u00a0' && r !== '.' && r !== '-') return null;
+  }
+  ext = ext.replace(/,+$/, '');
+  if (keys === 0 || ext.length > MAX_EXTENSION) return null;
+  return { number: s.slice(0, m.index).trim(), ext };
+}

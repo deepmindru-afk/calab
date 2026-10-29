@@ -269,12 +269,13 @@ function SaveViewDialog({ boardId, prefs, canShare, onClose }: { boardId: string
   );
 }
 
-const GROUPS: ReadonlyArray<{ v: GroupBy; label: 'boards.group.status' | 'boards.group.assignee' | 'boards.group.priority' | 'boards.group.label' | 'boards.group.milestone' | 'boards.group.none' }> = [
+const GROUPS: ReadonlyArray<{ v: GroupBy; label: 'boards.group.status' | 'boards.group.assignee' | 'boards.group.priority' | 'boards.group.label' | 'boards.group.milestone' | 'boards.group.release' | 'boards.group.none' }> = [
   { v: 'status', label: 'boards.group.status' },
   { v: 'assignee', label: 'boards.group.assignee' },
   { v: 'priority', label: 'boards.group.priority' },
   { v: 'label', label: 'boards.group.label' },
   { v: 'milestone', label: 'boards.group.milestone' },
+  { v: 'release', label: 'boards.group.release' },
   { v: 'none', label: 'boards.group.none' },
 ];
 const SORTS: ReadonlyArray<{ v: SortBy; label: 'boards.sort.manual' | 'boards.sort.updated' | 'boards.sort.due' | 'boards.sort.priority' | 'boards.sort.key' }> = [

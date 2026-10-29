@@ -1,4 +1,5 @@
 import { consentReturnPath } from '../../shared/ssoReturn';
+import { parseOriginList } from '../../shared/ownLink';
 import { create, fromJson, toJson, type JsonValue } from '@bufbuild/protobuf';
 import { timestampDate } from '@bufbuild/protobuf/wkt';
 import {
@@ -457,6 +458,7 @@ function info(): AppInfo {
     micAccess: 'n/a',
     screenAccess: 'n/a',
     locales: [...navigator.languages],
+    appOrigins: parseOriginList(import.meta.env.VITE_APP_ORIGINS),
   };
 }
 

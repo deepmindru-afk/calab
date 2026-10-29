@@ -11,12 +11,14 @@ import { joinOutcome } from '../../lib/voiceEntry';
 import { voice } from '../../services/voice';
 import { useRooms } from '../../stores/rooms';
 import { useSession } from '../../stores/session';
+import { useSipCalls } from '../../stores/sipCalls';
 import { toast } from '../../stores/toasts';
 import { useVoice } from '../../stores/voice';
 import { useConnectingRing, useVoiceStateOf } from '../../stores/voicePending';
 import { memberName, useRoleLook, useWorkspaces } from '../../stores/workspaces';
 import { roleTextClass, roleTextStyle } from '../people/MemberBits';
 import { MemberContextMenu } from '../people/MemberContextMenu';
+import { SipCallRow } from '../voice/Sip';
 import { MusicianIcon, SelfVoiceStateIcons, VoiceStateIcons } from '../voice/VoiceStateIcons';
 import { CallTimer } from './Sidebar';
 import { cardOrder, firstNames, stackOrder, stackSlice } from './voicePeople';
@@ -217,6 +219,7 @@ function VoicePeopleCard({ workspaceId, room, perms }: { workspaceId: string; ro
   const inRoom = useVoice((s) => s.roomId === room.id);
   const join = useVoiceJoin(workspaceId, room, perms, people.length);
   const rows = useMemo(() => cardOrder(people, me), [people, me]);
+  const sipLine = useSipCalls((s) => !!s.byRoom[room.id]);
   return (
     <>
       <div className="flex h-11 shrink-0 items-center gap-1.5 px-2.5 text-list font-semibold" data-testid="voice-people-title">
@@ -228,6 +231,8 @@ function VoicePeopleCard({ workspaceId, room, perms }: { workspaceId: string; ro
         {rows.map((id) => (
           <VoicePersonRow key={id} workspaceId={workspaceId} userId={id} self={id === me} />
         ))}
+        {/* The room's phone line (ADR-0046): its number, status, «Клавиатура» and «Завершить». */}
+        {sipLine ? <SipCallRow workspaceId={workspaceId} roomId={room.id} card /> : null}
       </ul>
       <div className="px-1 pt-1.5">
         <Popover.Close asChild>

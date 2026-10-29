@@ -79,7 +79,9 @@ test('canvas-screen', async ({ open, win, mock, shot, theme }) => {
   await win.getByTestId('canvas-tree-toggle').click();
   await expect(win.getByTestId('canvas-column')).toHaveCount(0);
   await expect(win.getByTestId('canvas-tree-toggle')).toBeVisible();
-  await expect(win.getByTestId('bottom-island')).toHaveCount(0);
+  // ADR-0146: outside «Команда» the island is folded into my avatar on the rail, the tree folded or not.
+  await expect(win.getByTestId('bottom-island')).toBeHidden();
+  await expect(win.getByTestId('island-avatar')).toBeVisible();
   await win.waitForTimeout(150);
   await checkpoint(shot, 'canvas-tree-collapsed');
   await win.getByTestId('canvas-tree-toggle').click();
@@ -309,14 +311,16 @@ test('canvas-screen', async ({ open, win, mock, shot, theme }) => {
     await checkpoint(shot, 'canvas-comments-draft');
   }
 
-  // Owner 23.10: the same bottom island in a call, across the rail and the tree column.
+  // In a call: the island folded into my avatar with the call mark (ADR-0146).
   await open();
   await joinVoice(win);
   await openRoadmap(win);
   await checkpoint(shot, 'canvas-voice');
-  // A folded tree takes the island with it; the left controls sit at the canvas edge.
+  // A folded tree: the left controls sit at the canvas edge.
   await win.getByTestId('canvas-tree-toggle').click();
   await expect(win.getByTestId('canvas-column')).toHaveCount(0);
-  await expect(win.getByTestId('bottom-island')).toHaveCount(0);
+  // ADR-0146: outside «Команда» the island is folded into my avatar on the rail, the tree folded or not.
+  await expect(win.getByTestId('bottom-island')).toBeHidden();
+  await expect(win.getByTestId('island-avatar')).toBeVisible();
   await checkpoint(shot, 'canvas-voice-collapsed');
 });

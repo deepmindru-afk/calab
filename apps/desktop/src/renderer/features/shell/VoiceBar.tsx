@@ -34,6 +34,7 @@ import { phoneCallId } from '../../lib/sipInbound';
 import { PhoneTransferRow } from '../call/PhoneTransfer';
 import { usePhoneCallLabel } from '../call/phoneCall';
 import { DtmfRow } from '../call/DtmfKeypad';
+import { RoomLineKeypad } from '../voice/Sip';
 import { usePersonalDialing } from '../../stores/sipOutbound';
 import { ParkedRoomLine } from '../call/ParkedRoom';
 import { openDm } from '../../services/dms';
@@ -697,6 +698,8 @@ export function VoiceBar(): ReactNode {
       {phone !== null ? <PhoneTransferRow callId={phoneCallId(roomId)} className="mt-2" /> : null}
       {/* A personal call answered (ADR-0137 §3.7): «Клавиатура» → the tone keypad. */}
       {phone !== null ? <DtmfRow roomId={roomId} className="mt-2" /> : null}
+      {/* A voice room's phone line answered (ADR-0046 addendum): «Клавиатура · +7 …» → the keypad. */}
+      {phone === null && !call && wsId ? <RoomLineKeypad workspaceId={wsId} roomId={roomId} className="mt-2" /> : null}
       {/* The room the phone call parked (ADR-0133): «Комната: Lobby — на паузе» · «Выйти». */}
       {phone !== null ? <ParkedRoomLine className="mt-2" /> : null}
 

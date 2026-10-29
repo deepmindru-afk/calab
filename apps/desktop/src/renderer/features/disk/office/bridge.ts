@@ -118,9 +118,10 @@ export interface HostConnection {
 
 /**
  * Listens to the host page in `frame` (messages from its window and the Document Server's origin
- * only) and sends it `configJson` once it says hello (only to that origin).
+ * only) and sends it `configJson` once it says hello (only to that origin); `onHello` learns the
+ * Document Server answered.
  */
-export function connectHost(win: Window, frame: HTMLIFrameElement, docsOrigin: string, configJson: string, on: (e: HostEvent) => void): HostConnection {
+export function connectHost(win: Window, frame: HTMLIFrameElement, docsOrigin: string, configJson: string, on: (e: HostEvent) => void, onHello?: () => void): HostConnection {
   let sent = false;
   const listener = (e: MessageEvent): void => {
     if (e.source !== frame.contentWindow || e.origin !== docsOrigin) return;
@@ -137,6 +138,7 @@ export function connectHost(win: Window, frame: HTMLIFrameElement, docsOrigin: s
         return;
       }
       frame.contentWindow?.postMessage({ source: SRC, type: 'open', config }, docsOrigin);
+      onHello?.();
       return;
     }
     on(m);

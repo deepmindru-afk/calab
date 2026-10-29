@@ -62,7 +62,7 @@ export function InboxButton(): ReactNode {
         </Popover.Trigger>
       </Tip>
       <Popover.Portal>
-        <Popover.Content align="end" sideOffset={6} collisionPadding={16} aria-label={t('shell.inbox')} className={cx(popoverBox, 'w-[380px] p-0')}>
+        <Popover.Content align="end" sideOffset={6} collisionPadding={16} data-inbox-popover aria-label={t('shell.inbox')} className={cx(popoverBox, 'w-[380px] p-0')}>
           <InboxList />
         </Popover.Content>
       </Popover.Portal>

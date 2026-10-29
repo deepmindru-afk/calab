@@ -17,7 +17,9 @@ import {
   type RemoteVideoTrack,
   type RoomEventCallbacks,
   type TrackPublishOptions,
+  type DataChannelKind,
 } from 'livekit-client';
+import { dtmfPacket } from '../lib/media/dtmf';
 import type { PttEvent } from '../../shared/ipc';
 import { t } from '../i18n';
 import { ApiError } from '../lib/api/client';
@@ -102,6 +104,8 @@ function planAudio(workspaceId: string, kbps: number): number {
  *     false` only — the sender emits silence (Opus DTX), no signalling (ADR-0014, lib/voiceLogic.ts).
  */
 
+/** livekit-client's reliable data channel (DataChannelKind.RELIABLE; the enum is exported as a type only). */
+const RELIABLE = 0 as DataChannelKind.RELIABLE;
 const METER_UI_INTERVAL_MS = 50;
 const STATS_INTERVAL_MS = ECHO.statsMs;
 /** Remote SSRC levels are fresh when played out within this window (DTX sends ~every 400 ms). */
@@ -2949,15 +2953,18 @@ class VoiceEngine {
   }
 
   /**
-   * A tone digit to the line of my personal phone call (ADR-0137 §3.7): a SipDTMF data packet
-   * (livekit-client publishDtmf; livekit/sip sends it to the provider as RFC 2833). Data, not
-   * sound: the echo rules (docs/02) are untouched. Only in a connected personal call's room.
+   * A tone key to one phone line of my connected room (ADR-0137 §3.7, ADR-0046 addendum): a
+   * SipDTMF data packet addressed to `line` only (lib/media/dtmf; livekit/sip sends it to the
+   * provider as RFC 2833); a line that is not in the room gets nothing (livekit-server drops a
+   * packet for an absent identity — never a broadcast). Data, not sound: the echo rules (docs/02)
+   * are untouched. Who may press is the caller's check (the line answered, the server's state).
    */
-  publishDtmf(digit: string): boolean {
+  publishDtmf(key: string, line: string): boolean {
     const room = this.room;
-    if (!room || !isPersonalRoom(this.roomId) || room.state !== ConnectionState.Connected || !/^[0-9*#]$/.test(digit)) return false;
-    const code = digit === '*' ? 10 : digit === '#' ? 11 : Number(digit);
-    room.localParticipant.publishDtmf(code, digit).catch((err: unknown) => log.warn('voice: dtmf failed', err));
+    if (!room || room.state !== ConnectionState.Connected) return false;
+    const packet = dtmfPacket(key, line);
+    if (!packet) return false;
+    room.engine.sendDataPacket(packet, RELIABLE).catch((err: unknown) => log.warn('voice: dtmf failed', err));
     return true;
   }
 
@@ -3166,9 +3173,10 @@ class VoiceEngine {
       }
       this.screen = share;
       this.viewers.set(share.video.sid ?? '', new Set());
-      // Whole screen: the annotation overlay may cover it (ADR-0028); a window: preview only.
+      // Whole screen: the annotation overlay may cover it (ADR-0028); a window: preview only. An
+      // empty display id (Windows, issue #102) still goes: main resolves a single display itself.
       const src = opts.source;
-      annot.presenting(share.video.sid ?? null, src.id.startsWith('screen:') && src.displayId ? { sourceId: src.id, displayId: src.displayId } : null);
+      annot.presenting(share.video.sid ?? null, src.id.startsWith('screen:') ? { sourceId: src.id, displayId: src.displayId ?? '' } : null);
       const audio = share.audioProblem
         ? reportMediaError(share.audioProblem.raw, 'streamAudio', share.audioProblem.code === 'no-loopback' ? 'no-loopback' : undefined)
         : null;

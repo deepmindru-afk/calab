@@ -20,6 +20,11 @@ func TestPhoneNumberVectors(t *testing.T) {
 			Number   string `json:"number"`
 			Contact  string `json:"contact"`
 		} `json:"cases"`
+		Extensions []struct {
+			In     string `json:"in"`
+			Number string `json:"number"`
+			Ext    string `json:"ext"`
+		} `json:"extensions"`
 	}
 	if err := json.Unmarshal(raw, &v); err != nil {
 		t.Fatal(err)
@@ -33,6 +38,21 @@ func TestPhoneNumberVectors(t *testing.T) {
 		}
 		if got, ok := NormalizeContactNumber(c.In, c.CallerID); (ok && got != c.Contact) || (!ok && c.Contact != "") {
 			t.Errorf("NormalizeContactNumber(%q, %q) = %q %v, want %q", c.In, c.CallerID, got, ok, c.Contact)
+		}
+	}
+	if len(v.Extensions) < 10 {
+		t.Fatalf("only %d extension vectors", len(v.Extensions))
+	}
+	for _, c := range v.Extensions {
+		number, ext, ok := SplitExtension(c.In)
+		if ok {
+			number, ok = NormalizeNumber(number)
+		}
+		if !ok {
+			number, ext = "", ""
+		}
+		if number != c.Number || ext != c.Ext {
+			t.Errorf("SplitExtension(%q) → %q %q, want %q %q", c.In, number, ext, c.Number, c.Ext)
 		}
 	}
 }
