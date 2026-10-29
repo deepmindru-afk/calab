@@ -1,6 +1,6 @@
 # iOS native room audio — implementation plan
 
-ADR: [0147](../adr/0147-ios-native-room-audio.md). Task: DEV-4955, GitHub #255. Status: accepted
+ADR: [0147](../adr/0147-ios-native-room-audio.md). Issue: GitHub #255. Status: accepted
 28.10. Order: stage 1 (background and lock) first, stage 2 (the rest) after it.
 
 Goal: on an iPhone shell built with `CALAB_IOS_NATIVE_ROOM_AUDIO=1`, workspace voice rooms use native
@@ -24,13 +24,13 @@ shared web keeps UI, REST, permissions, seat state and video. Everything else ke
 
 ## Alignment with parallel work
 
-- ADR-0146 seat grace (`fix/dev-4955-voice-seat-grace`, VOICE_LOST_GRACE 60 s, `connection_lost`):
+- ADR-0146 seat grace (PR #257, VOICE_LOST_GRACE 60 s, `connection_lost`):
   R5 starts after it merges; companion rules sit next to `seatAfterDrop`/`explicitRelease` and never
   feed them. R3's reconnect schedule is tested to end inside the grace: a LiveKit reconnect after
   the grace would recreate the seat through `participant_joined`.
-- Web audio recovery (`fix/dev-4955-voice-audio-recovery`: startAudio, resubscribe, mic health,
+- Web audio recovery (PR #260: startAudio, resubscribe, mic health,
   rejoin backoff): R4 rebases on it; every recovery path returns early for a native-owned join.
-- Autoplay fix (`fix/dev-4955-ios-webview-autoplay`): keeps the web path healthy; independent.
+- Autoplay fix (PR #256): keeps the web path healthy; independent.
 - PRs #253 (calendar widgets) and #254 (phone links) touch `apps/mobile/src/App.tsx` and the
   hostActivity bridge: R2 is additive (new message type and capability) and rebases after them.
 
