@@ -48,6 +48,7 @@ import { useColleagueClocks } from '../people/useColleagueClocks';
 import { REPEAT_LABEL } from './EventCard';
 import { dragKind, dragPayload, useRoomDropHover } from './dragState';
 import { AvailabilityStrip } from './AvailabilityStrip';
+import { ZoneSpan } from './ZoneAxis';
 import { FindTimeDialog } from './FindTime';
 
 const REPEATS = [EventRepeat.UNSPECIFIED, EventRepeat.DAILY, EventRepeat.WORKDAYS, EventRepeat.WEEKLY, EventRepeat.BIWEEKLY, EventRepeat.MONTHLY] as const;
@@ -241,7 +242,10 @@ export function EventDialog({ workspaceId, eventKey, draft: init, onClose }: { w
               </Select>
             </Field>
             <div className="col-span-2 -mt-1 flex items-center justify-between gap-2">
-              <p className="min-w-0 text-caption text-faint">{t('cal.f.zone', { zone })}</p>
+              <div className="min-w-0">
+                <p className="min-w-0 text-caption text-faint">{t('cal.f.zone', { zone })}</p>
+                <ZoneSpan day={d.day} start={d.start} end={d.end} />
+              </div>
               <Button variant="ghost" size="sm" onClick={() => setFinding(true)} data-testid="event-find">
                 <CalendarSearch className="size-3.5" aria-hidden />
                 {t('fb.find')}

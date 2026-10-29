@@ -348,8 +348,8 @@ Docker compose в этом документе — тестовый стенд и
 После зелёного `ci` релизного тега `v*` workflow `images` собирает `apps/server/Dockerfile` на том же коммите
 (версия сервера — тег, как у `release.sh`), рядом собирает веб-клиент и лендинг теми же командами, что
 `release.sh`, в образ `infra/docker/web-image` (Caddy, его конфиг «за прокси» и статика) и пушит оба
-образа в прод-реестр. Ключей в GitHub нет: OIDC-токен job'а меняется на короткий IAM-токен сервисного
-аккаунта, которому разрешён только пуш в репозитории calab этого реестра. Затем workflow создаёт GitHub
+образа в прод-реестр Harbor `cr.shds.io/calab` (VK Cloud) роботом Harbor, которому разрешён только пуш в
+проект calab (секреты репо `HARBOR_USER`/`HARBOR_PASSWORD`). Затем workflow создаёт GitHub
 Deployment `calab-prod` с digest обоих образов в payload: API и веб релиза выкатываются вместе.
 
 - В кластер workflow не ходит. Выкатку делает кластер сам: забирает заявку, проверяет её и меняет образ по
@@ -357,8 +357,8 @@ Deployment `calab-prod` с digest обоих образов в payload: API и �
   для коммитов из `main`.
 - История заявок — вкладка Deployments репо. По [операторскому preflight](plans/identity-v2-operator-preflight.md) текущий consumer не публикует GitHub deployment statuses, выкатывает компоненты последовательно и при ошибке может оставить смешанные версии. Требуются Kubernetes readiness и фактические digests API/web плюс version smoke; успешная заявка/CronJob сами по себе не подтверждают выкатку.
 - Откат — только на согласованный identity-aware digest с совместимой БД, ключами и platform config. После активации identity нельзя перезапускать старый успешный `images`, если он возвращает pre-identity бинарник. Down guard миграции не защищает от image-only rollback.
-- `YC_REGISTRY` и `YC_CI_SA_ID` — секреты репо: публичные логи их маскируют. Это не ключи, но внутренние id в
-  открытых логах не нужны.
+- `cr.shds.io` публично указывает на внутренний адрес VK, поэтому job'ы прописывают вход VK в `/etc/hosts`;
+  снаружи открыты только проекты calab и gpu.
 - Конфиг Caddy едет в образе веба: `Caddyfile.behind-proxy` (TLS снимает прокси перед ним, HTTP на
   `BEHIND_PROXY_PORT`, по умолчанию 8080; API — `API_UPSTREAM`; без `rtc.`/`turn.`) и общий с `Caddyfile` стенда
   `sites.caddy`. Правка `infra/docker/caddy/` попадает в прод с релизом; хосты и адреса — env кластера:
@@ -367,7 +367,7 @@ Deployment `calab-prod` с digest обоих образов в payload: API и �
   `images` проверяет конфиг в собранном образе (`caddy validate` на тестовых хостах) до пуша.
 - Прогоны идут строго по одному (`concurrency`), поэтому заявки создаются в порядке коммитов.
 - Агенты входящих — job `agents` того же workflow: `apps/server/Dockerfile.sipreg` и `Dockerfile.ivr` →
-  `<YC_REGISTRY>/sipreg:<sha>` и `<YC_REGISTRY>/ivr:<sha>` (и копии `cr.shds.io/calab/sipreg|ivr:<sha>`), digest — в
+  `cr.shds.io/calab/sipreg:<sha>` и `cr.shds.io/calab/ivr:<sha>`, digest — в
   summary прогона. В заявку `calab-prod` не входят и релиз не держат: девопс выкатывает их сам (одна реплика
   каждого, по digest), см. п. 6–7 «Телефония» выше.
 

@@ -2067,6 +2067,7 @@ CALABA_WEB_URL=http://127.0.0.1:39571 npx playwright test --config playwright.we
 | C.27 | «Удалить из календаря»: своё событие с участниками, чужое приглашение, вхождение серии («Только это событие»), серия; затем изменить событие у провайдера и удалить в Calab без синхронизации; календарь только для чтения | Текст подтверждения по роли; событие исчезает сразу и у провайдера (участникам — отмена); вхождение — остальные остаются; изменённое — тост «изменилось», событие на месте; read-only — тост; боту / гостю `DELETE /api/me/external-events` — 403 |
 | C.28 | ADR-0104. А и Bob открывают одну встречу (Bob — участник), Carol видит её комнату, Dave — нет (встреча без комнаты). Bob пишет комментарий (Enter), правит его («…» → «Изменить»), А удаляет комментарий Bob; Carol комментирует встречу в своей комнате; curl Dave `GET /api/events/<id>/comments`, гость — то же | Комментарий появляется у всех открытых карточек без перезагрузки (`EVENT_COMMENT_UPSERT`), «Комментарии — N» растёт; «изменено» после правки; у А «…» → «Удалить» на чужом, у Bob «Изменить» только на своём; Dave — 404, гость — 403; у отменённой встречи комментарии видны, поля ввода нет |
 | C.29 | Диалог встречи → «Добавить участников» → ввести `@all` → строка «@all · все участники пространства · N» | Чипы всех участников пространства без гостей и ботов; больше 12 — первые 10 и «+N», рядом с «Участники» число и «Убрать всех»; в пространстве > 99 человек строка неактивна «больше 99 — во встрече до 100 человек» |
+| C.30 | Bug board #85. Настройки → Календарь → «Добавить часовой пояс» → «kolk» → Kolkata; ещё New York, подпись «Нью-Йорк», ↑; третий добавить нельзя. День и неделя; диалог новой встречи; второе устройство того же аккаунта; телефон 375 px | Слева от основной шкалы две приглушённые колонки в строках сетки (Kolkata — «…:30»), в шапке подпись и «UTC+5:30»; пилюля даты в строке полуночи пояса («+1 д» в неделе); линия «сейчас» проходит через колонки; в диалоге — время встречи в обоих поясах; на втором устройстве те же пояса; × убирает колонку; у коллеги без поясов календарь прежний |
 
 Автотесты: `docs/20-calendar-testing.md` (Go-интеграционные `internal/app/events_*_integration_test.go`, unit десктопа, Playwright e2e против мока, прод-smoke).
 
@@ -2355,3 +2356,16 @@ A Document Server per docs/ops/office-onlyoffice-deploy.md, `OFFICE_ENABLED=true
 6. Close a tab with unsaved changes → the three-button dialog. Hide the window for 5 minutes, show it → the editor opens again.
 7. Phone: «Создать → Документ» → the file is in the list with the note «Править его можно на компьютере»; opening it views only.
 8. `OFFICE_ENABLED=false` + rollout: after a reconnect the office items and the editor are gone, xlsx opens its card as before.
+
+### CalDAV source DATE preservation (ADR-0144)
+
+- Unit: `go test -race ./internal/caldav` covers calendar-date preservation, recurrence across DST and batch encoding.
+- PG17: `go test -race -tags integration -run '^TestCalDAVDatePersistence$' ./internal/app` imports a DATE event, changes the profile timezone, checks persisted dates and legacy-column defaults.
+- Migration 00133 is additive; previously imported rows acquire original dates on their next successful normal sync.
+
+### Session-bound calendar widget feed (ADR-0145)
+
+- `go test -race ./internal/calendar ./internal/caldav` covers grant type/key separation, expiry and minimized projection.
+- PG17: `go test -race -tags integration -count=1 -run '^Test(CalendarWidget|CalDAVDatePersistence|BotRouteTable)' ./internal/app` covers exact-session revocation, bot/anonymous denial, own-only/SSO policy, workday/cancelled occurrences, source DATE values and bounds.
+- `make gen` and `pnpm -F @calaba/landing gen:routes --check` must have no generated drift.
+- Native widgets and physical acceptance belong to the dependent iOS change.

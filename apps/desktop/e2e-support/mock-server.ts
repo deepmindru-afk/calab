@@ -483,6 +483,7 @@ import {
   UserSchema,
   UserSettingsSchema,
   WorkHoursSchema,
+  CalendarZoneSchema,
   VoiceStateSchema,
   VoiceDisconnectReason,
   VoiceStreamStopReason,
@@ -953,6 +954,8 @@ export interface MockServer {
   setCalDav(userId: string, patch?: Partial<CalDavRec>): void;
   /** ADR-0041: `userId`'s work hours (default 10:00–19:00 Mon–Fri in their zone; the mock's default zone is Moscow). */
   setWorkHours(userId: string, wh: WorkHoursRec): void;
+  /** Board #85: `userId`'s extra calendar zones (Me.settings.calendar_zones), pushed with their Me. */
+  setCalendarZones(userId: string, zones: ReadonlyArray<{ zone: string; label?: string }>): void;
   /** ADR-0041 §4: what the fake CalDAV server holds for `userId`: a sync with import on copies it to their external busy time (default: 11:00–12:00 MSK of the clock's day). */
   setCalDavRemote(userId: string, intervals: readonly Span[]): void;
   /** The answer link token of an external attendee (the page /e/<id>/rsvp?t=…). */
@@ -1082,6 +1085,10 @@ export async function startMockServer(opts: MockServerOptions = {}): Promise<Moc
     },
     setCalDav: (u, patch) => impl.seedCalDav(u, patch),
     setWorkHours: (u, wh) => impl.calWorkHours.set(u, { ...wh, days: [...wh.days] }),
+    setCalendarZones: (u, zones) => {
+      const rec = impl.state.users.get(u);
+      if (rec) rec.settings.calendarZones = zones.map((z) => create(CalendarZoneSchema, { zone: z.zone, label: z.label ?? '' }));
+    },
     setCalDavRemote: (u, list) => impl.calDavRemote.set(u, [...list]),
     setEventRecording: (id, at, rec) => impl.setEventRecording(id, at, rec),
     eventRsvpToken: (id, email, st) => rsvpToken(id, email, st),
@@ -3393,11 +3400,20 @@ class MockImpl {
         u.settings.eventReminders = mins.sort((x, y) => y - x);
         u.settings.eventRemindersDnd = b.eventReminders.dnd;
       }
+      if (b.calendarZones) {
+        // Board #85 (the server's rules, users/calendar_zones.go): ≤ 2 distinct IANA zones, labels ≤ 16.
+        if (u.user.isBot) throw forbidden('not for bots');
+        const zones = b.calendarZones.zones.map((z) => ({ zone: z.zone.trim(), label: z.label.trim() }));
+        if (zones.length > 2 || new Set(zones.map((z) => z.zone)).size !== zones.length || zones.some((z) => !/^[A-Z][A-Za-z0-9_+-]*(\/[A-Z][A-Za-z0-9_+-]*)*$/.test(z.zone) || Array.from(z.label).length > 16))
+          throw invalid('calendarZones.zones', 'at most 2 distinct IANA zones, labels ≤ 16 characters');
+        u.settings.calendarZones = zones.map((z) => create(CalendarZoneSchema, z));
+      }
       if (b.settings) {
         const st = create(UserSettingsSchema, b.settings);
         // Meeting reminders are stored apart: a settings replace keeps them (user.proto).
         st.eventReminders = u.settings.eventReminders;
         st.eventRemindersDnd = u.settings.eventRemindersDnd;
+        st.calendarZones = u.settings.calendarZones; // board #85: kept apart too
         if (st.micMode === MicMode.UNSPECIFIED) st.micMode = MicMode.VAD;
         // The server keeps the deprecated flag in sync with mic_mode (user.proto).
         // eslint-disable-next-line @typescript-eslint/no-deprecated

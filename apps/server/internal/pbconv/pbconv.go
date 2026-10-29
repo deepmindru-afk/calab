@@ -230,7 +230,26 @@ func EncodeSettings(s *v1.UserSettings) ([]byte, error) {
 	s.HideMessageTextInNotifications = false // dedicated privacy column (ADR-0072)
 	s.TaskNotifyOff = nil                    // users.task_notify_off (ADR-0089)
 	s.TaskNotifyBots = nil                   // users.task_notify_bots (ADR-0090)
+	s.CalendarZones = nil                    // users.calendar_zones (board #85)
 	return protojson.MarshalOptions{EmitDefaultValues: true}.Marshal(s)
+}
+
+// CalendarZones decodes users.calendar_zones (board #85); a broken value reads as none.
+func CalendarZones(raw []byte) []*v1.CalendarZone {
+	var rows []struct {
+		Zone  string `json:"zone"`
+		Label string `json:"label"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &rows) != nil {
+		return []*v1.CalendarZone{}
+	}
+	out := make([]*v1.CalendarZone, 0, len(rows))
+	for _, r := range rows {
+		if r.Zone != "" {
+			out = append(out, &v1.CalendarZone{Zone: r.Zone, Label: r.Label})
+		}
+	}
+	return out
 }
 
 // DefaultSettings are the settings of a new user.
@@ -261,6 +280,7 @@ func Me(u sqlc.User) *v1.Me {
 	for _, d := range u.WorkDays {
 		settings.WorkHours.Days = append(settings.WorkHours.Days, uint32(max(d, 0))) //nolint:gosec // 1..7
 	}
+	settings.CalendarZones = CalendarZones(u.CalendarZones)
 	me := &v1.Me{User: WithContacts(User(u), u), Email: email, Settings: settings,
 		EmailVerified: u.IsGuest || u.EmailVerifiedAt != nil,                 // guests have no email to verify
 		IsSuperadmin:  u.EmailVerifiedAt != nil && superadmin.IsPtr(u.Email)} // an unverified address proves nothing

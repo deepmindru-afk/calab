@@ -278,6 +278,8 @@ PUT    /api/events/{id}/rsvp                   { status: ACCEPTED | DECLINED | M
 GET    /api/events/{id}/comments?before=&limit= комментарии к встрече (ADR-0104), новейшие ≤ 100 по возрастанию → { comments, has_more }; видящие встречу, гость — 403, бот — 403
 POST   /api/events/{id}/comments               { body } → 201 { comment }; PATCH …/comments/{comment_id} — автор; DELETE — автор или canEdit встречи → 204
 GET    /api/me/events/today?tz=                сегодняшние предстоящие встречи (не отклонённые) во всех пространствах → { count, events }
+POST   /api/me/calendar-widget              грант виджета календаря (ADR-0145) → CalendarWidgetGrant { token, expires_at }: человек с живой сессией local/SSO; бот, гость, recovery — 403; срок ≤ 30 дней и ≤ сроку сессии
+GET    /api/calendar-widget?tz=                только грант виджета в Authorization (обычный access JWT — 401): свои встречи и импорт CalDAV на 7 дней, ≤ 100 вхождений → CalendarWidgetAgenda; каждый запрос заново проверяет сессию и политику, no-store
 GET    /api/event-rsvp?t=                      публично: встреча по view- или answer-токену внешнего участника → EventRsvpTokenResponse (описание, комната, my_status, три answer-токена, guest_url + окно, повтор, почта организатора; без других участников)
 POST   /api/event-rsvp { token }               публично: сохранить ответ answer-токена (идемпотентно); view-токен — 400; после конца — 410 EVENT_OVER; битая — 404
 ```

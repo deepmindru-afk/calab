@@ -993,6 +993,8 @@ type ExternalBusy struct {
 	Etag      string
 	Recurring bool
 	WebUrl    string
+	StartDate string
+	EndDate   string
 }
 
 type ExternalRemindersSent struct {
@@ -2016,6 +2018,7 @@ type User struct {
 	Phone                          *string
 	TaskNotifyOff                  []string
 	TaskNotifyBots                 []uuid.UUID
+	CalendarZones                  []byte
 }
 
 type UserAttribution struct {

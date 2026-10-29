@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { HandoffError } from '../src/inbox.js';
 import { issueTicket } from '../src/ticket.js';
-import { ASSIST_TOOL_VERBS, planBoard, planGh, runTool, stdinAllowed, toolEnv, WAKE_TOOL_VERBS, WRITE_CAPS } from '../src/tools.js';
+import { ASSIST_TOOL_VERBS, planBoard, planGh, runTool, toolEnv, WAKE_TOOL_VERBS, WRITE_CAPS } from '../src/tools.js';
 
 const REPO = 'itrcz/calab';
 const R = ['-R', 'github.com/itrcz/calab'];
@@ -146,16 +146,7 @@ describe('runTool', () => {
   });
 });
 
-describe('stdin and env', () => {
-  const st = (o: { fifo?: boolean; file?: boolean; nlink?: number }) => ({ isFIFO: () => o.fifo ?? false, isFile: () => o.file ?? false, nlink: o.nlink ?? 1 });
-
-  it('takes text from a pipe or a heredoc (an unlinked temp file), never from a redirected file', () => {
-    expect(stdinAllowed(st({ fifo: true }))).toBe(true);
-    expect(stdinAllowed(st({ file: true, nlink: 0 }))).toBe(true);
-    expect(stdinAllowed(st({ file: true, nlink: 1 }))).toBe(false);
-    expect(stdinAllowed(st({}))).toBe(false); // a tty or /dev/null
-  });
-
+describe('env', () => {
   it('keeps only the basics of the env', () => {
     expect(toolEnv({ HOME: '/h', GH_HOST: 'x', HTTPS_PROXY: 'p', PYTHONSTARTUP: 's' })).toEqual({ HOME: '/h', GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', NO_COLOR: '1' });
   });

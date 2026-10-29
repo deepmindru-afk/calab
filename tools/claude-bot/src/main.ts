@@ -12,17 +12,20 @@ import { ApiError, Bot, GatewayFatalError, type CommandEvent, type Message, type
 import { MessageKind, RoomType } from '@calaba/protocol';
 import { assistArgv, wakeArgv } from './argv.js';
 import { buildChatPrompt, CONTEXT_MESSAGES, MAX_ANSWER } from './chat.js';
-import { runAssistant, runLead } from './claude.js';
+import { runAssistant, runLead, toolOutcome } from './claude.js';
 import { childEnv, loadConfig } from './config.js';
 import { gate, roomAllowed } from './gate.js';
+import { installCrashGuard } from './guard.js';
 import { scrubRequest } from './inbox.js';
+import { mcpConfig, mcpToolNames } from './mcp.js';
 import { emptyPollState, GithubSource, Poller, type BoardItem, type Change, type PollState } from './poll.js';
 import { RateLimiter } from './ratelimit.js';
 import { redact, trimTo } from './redact.js';
 import { RunLock } from './runlock.js';
 import { ASSIST_TOOL_VERBS, WAKE_TOOL_VERBS } from './tools.js';
+import { emptySweep, markSeen, markSweep, sweepBoard, sweepChanges, sweepDue, type SweepState } from './sweep.js';
 import { createdBy, dropAllTickets, dropTicket, issueTicket, takeReplies, WAKE_REQUESTER, type SourceInput } from './ticket.js';
-import { buildWakePrompt, dayKey, Debounce, outsiderOnly, parseQuiet, wakeBlocked, type ChatEvent, type WakeBlock } from './wake.js';
+import { buildWakePrompt, dayKey, Debounce, hourIn, inQuiet, outsiderOnly, parseQuiet, wakeBlocked, type ChatEvent, type WakeBlock } from './wake.js';
 
 const installDir = dirname(fileURLToPath(import.meta.url));
 const cfg = loadConfig(process.env, installDir);
@@ -47,10 +50,11 @@ const bot = new Bot(cfg.token, { server: cfg.apiUrl, log: (m) => {
 } });
 const limiter = new RateLimiter(10, 10 * 60_000);
 const env = childEnv(process.env);
-/** The handoff writer as the runs call it (an absolute node, the installed bundle). */
-const handoff = `${process.execPath} ${join(installDir, 'handoff.mjs')}`;
+/** The runs' MCP server (src/mcp.ts), started by claude with this node and the run's ticket. */
+const runMcp = (ticketId: string): string =>
+  mcpConfig({ node: process.execPath, script: join(installDir, 'mcp.mjs'), inboxDir: cfg.inboxDir, ticketId, path: env.PATH ?? '/usr/bin:/bin', home: homedir() });
 let workspaceId = cfg.workspaceId;
-/** What a run's ticket lets it call through `handoff.mjs gh|board` (src/tools.ts). */
+/** What a run's ticket lets it call through its MCP tools (src/mcp.ts, src/tools.ts). */
 const ticketTools = (allow: readonly string[]) => ({ allow: [...allow], ghRepo: cfg.ghRepo, ghBin: cfg.ghBin, bugboard: cfg.bugboard, envFile: cfg.envFile });
 
 // ---- members (gate + names), cached for 5 minutes ----
@@ -211,8 +215,8 @@ async function answer(m: Message, kind: 'dm' | 'task', askerName: string): Promi
       tools: ticketTools(ASSIST_TOOL_VERBS),
     });
     ticketId = t.id;
-    const systemPrompt = readPrompt('assistant-prompt.md').replaceAll('{{BUGBOARD}}', cfg.bugboard).replaceAll('{{HANDOFF}}', handoff);
-    const argv = assistArgv({ systemPrompt, home: homedir(), ownerRepo: cfg.ownerDir, handoff, inboxDir: cfg.inboxDir });
+    const systemPrompt = readPrompt('assistant-prompt.md');
+    const argv = assistArgv({ systemPrompt, home: homedir(), ownerRepo: cfg.ownerDir, mcpConfig: runMcp(ticketId), mcpTools: mcpToolNames(ASSIST_TOOL_VERBS), inboxDir: cfg.inboxDir });
     const t0 = Date.now();
     const r = await runAssistant({
       bin: cfg.claudeBin,
@@ -246,19 +250,21 @@ interface StateFile {
   v: 1;
   poll: PollState;
   wakes: { day: string; count: number; outsider?: number };
+  sweep?: SweepState;
 }
 
 function loadState(): StateFile {
   try {
     const s = JSON.parse(readFileSync(cfg.stateFile, 'utf8')) as Partial<StateFile> | null;
-    if (s?.v === 1 && s.poll && s.wakes) return { v: 1, poll: s.poll, wakes: s.wakes };
+    if (s?.v === 1 && s.poll && s.wakes) return { v: 1, poll: s.poll, wakes: s.wakes, sweep: s.sweep ?? emptySweep() };
   } catch {
     // first start or a broken file: start over (the first poll only sets the baseline)
   }
-  return { v: 1, poll: emptyPollState(), wakes: { day: '', count: 0 } };
+  return { v: 1, poll: emptyPollState(), wakes: { day: '', count: 0 }, sweep: emptySweep() };
 }
 
 const state = loadState();
+const sweepState: SweepState = (state.sweep ??= emptySweep());
 
 function saveState(): void {
   const tmp = `${cfg.stateFile}.tmp`;
@@ -294,16 +300,27 @@ const gh = new GithubSource({
 let ghSelf = cfg.ghSelf;
 
 let statusNames = new Map<string, string>();
+let labelNames = new Map<string, string>();
 let statusesAt = 0;
 
 async function boardItems(): Promise<Record<string, BoardItem>> {
   if (Date.now() - statusesAt > 60 * 60_000) {
-    statusNames = new Map((await bot.boards.get(cfg.boardId)).statuses.map((s) => [s.id, s.name]));
+    const b = await bot.boards.get(cfg.boardId);
+    statusNames = new Map(b.statuses.map((s) => [s.id, s.name]));
+    labelNames = new Map(b.labels.map((l) => [l.id, l.name]));
     statusesAt = Date.now();
   }
   const out: Record<string, BoardItem> = {};
   for (const t of await bot.tasks.list(cfg.boardId)) {
-    out[`#${String(t.number)}`] = { title: t.title, status: statusNames.get(t.statusId) ?? t.statusId, comments: t.commentCount, createdBy: t.createdBy, roomId: t.roomId };
+    out[`#${String(t.number)}`] = {
+      title: t.title,
+      status: statusNames.get(t.statusId) ?? t.statusId,
+      comments: t.commentCount,
+      createdBy: t.createdBy,
+      roomId: t.roomId,
+      labels: t.labelIds.map((id) => labelNames.get(id) ?? id),
+      priority: t.priority,
+    };
   }
   return out;
 }
@@ -385,11 +402,33 @@ async function tick(): Promise<void> {
   const gen = wakeGen;
   const changes = await poller.changes(now);
   if (gen !== wakeGen) return; // a run started meanwhile: this diff is stale
-  pendingChanges = changes;
+  const board = state.poll.current?.board ?? {};
+  await sweep(now, board);
+  if (gen !== wakeGen) return;
+  pendingChanges = [...changes, ...sweepChanges(sweepState, board, new Set(changes.map((c) => c.key)))];
   saveState();
   const sig = pendingChanges.map((c) => `${c.key}:${c.what.join(',')}`).join('|');
   if (sig && sig !== pendingSig) debounce.note(now.getTime());
   pendingSig = sig;
+}
+
+/**
+ * The daily board sweep (src/sweep.ts): at the first poll after 10:00 and after 15:00, outside quiet hours,
+ * Todo tasks that need a look join the next wake. Its changes go through the same debounce, cooldown and
+ * caps as any other (they are board changes, so not the outsiders' cap).
+ */
+async function sweep(now: Date, board: Record<string, BoardItem>): Promise<void> {
+  if (!cfg.wake.enabled || existsSync(cfg.wake.quietFile) || inQuiet(now, quiet, cfg.timeZone) || Object.keys(board).length === 0) return;
+  const day = dayKey(now, cfg.timeZone);
+  const slot = sweepDue(sweepState, hourIn(now, cfg.timeZone), day);
+  if (slot === null) return;
+  const added = await sweepBoard(board, sweepState, {
+    botId: bot.me?.id ?? '',
+    // newest first; system lines (moves, label changes) are not comments
+    lastAuthor: async (roomId) => (await bot.messages(roomId, { limit: 5 })).messages.find((x) => x.kind !== MessageKind.SYSTEM)?.authorId,
+  });
+  markSweep(sweepState, day, slot);
+  log(`sweep ${String(slot)}:00: ${String(added)} task(s) need a look, ${String(Object.keys(sweepState.pending).length)} pending`);
 }
 
 async function maybeWake(): Promise<void> {
@@ -456,13 +495,12 @@ async function runWake(now: Date): Promise<void> {
   }, 5000);
 
   const prompt = buildWakePrompt(readPrompt('wake-prompt.md'), changes, events.filter((e) => e.ref in t.ticket.sources), {
-    BUGBOARD: cfg.bugboard,
-    HANDOFF: handoff,
     GH_REPO: cfg.ghRepo,
   });
   const argv = wakeArgv({
     model: cfg.wake.model,
-    handoff,
+    mcpConfig: runMcp(t.id),
+    mcpTools: mcpToolNames(WAKE_TOOL_VERBS),
     home: homedir(),
     ownerRepo: cfg.ownerDir,
     inboxDir: cfg.inboxDir,
@@ -486,6 +524,8 @@ async function runWake(now: Date): Promise<void> {
   const ids = collectHandoffs(t.id);
   dropTicket(cfg.inboxDir, t.id);
   log('wake done', { code: r.code, isError: r.isError, timedOut: r.timedOut, handoffs: ids, summary: trimTo(redact(r.result, cfg.secrets), 600) });
+  const outcome = toolOutcome(r.tools);
+  log(`wake outcome: ${outcome.line}`);
 
   // A chat whose author's request was recorded hears so; a chat left unanswered by a failed run hears that.
   const recordedRooms = new Map<string, string[]>();
@@ -504,6 +544,9 @@ async function runWake(now: Date): Promise<void> {
   }
   // The new baseline includes the run's own comments, statuses and replies.
   await poller.rebaseline(new Date()).catch(report('rebaseline'));
+  // The tasks this run looked at are not swept again until they change; after a failed run they stay
+  // pending (a sweep entry) for the next wake.
+  if (!r.isError && !outcome.allDenied) markSeen(sweepState, state.poll.current?.board ?? {}, changes.filter((c) => c.source === 'board').map((c) => c.key));
   saveState();
 }
 
@@ -529,8 +572,21 @@ bot.on('command', (cmd) => {
 bot.on('message', (m) => {
   onMessage(m).catch(report('message'));
 });
+let gatewayStatus = 'idle';
 bot.on('status', (s) => {
+  gatewayStatus = s;
   log('gateway', s);
+});
+// An uncaught error (e.g. `ws` emitting 'error' while the SDK reconnects) is logged instead of killing the
+// daemon; if the gateway does not come back, the guard exits on purpose and launchd restarts us.
+installCrashGuard({
+  proc: process,
+  log: (line) => {
+    log(line);
+  },
+  gatewayStatus: () => gatewayStatus,
+  exit: (code) => process.exit(code),
+  redact: (x) => redact(x, cfg.secrets),
 });
 bot.on('error', (err) => {
   log('error:', err.message);

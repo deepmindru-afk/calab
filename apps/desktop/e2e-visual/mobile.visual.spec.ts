@@ -929,6 +929,26 @@ test('m-calendar-day', async ({ page }) => {
   await expect(page.getByTestId('event-panel')).toHaveCount(0);
 });
 
+// Board #85: two extra zones as narrow muted columns left of the day's scale (compact offsets),
+// New York on the previous day until 08:00 MSK; the same list in Profile → Календарь.
+test('m-calendar-zones', async ({ page }) => {
+  mock.setClock(NOW.getTime());
+  seedDay(mock);
+  mock.setCalendarZones(IDS.users.anna, [{ zone: 'Asia/Kolkata' }, { zone: 'America/New_York', label: 'Нью-Йорк' }]);
+  await signedIn(page);
+  await tab(page, 'calendar');
+  const day = page.getByTestId('day-view');
+  await expect(day.getByTestId('zone-scale')).toHaveCount(2);
+  await expect(day.getByTestId('zone-head').first()).toHaveText(/Kolkata\s*\+5:30/);
+  await day.getByTestId('day-scroller').evaluate((el) => el.scrollTo({ top: 6 * 48 }));
+  await checkpoint(page, 'm-calendar-zones');
+  await openProfile(page);
+  await page.getByTestId('phone-profile-calendar').tap();
+  await expect(page.getByTestId('cal-zone-label')).toHaveCount(2);
+  await page.getByTestId('cal-zone-label').last().evaluate((el) => el.scrollIntoView({ block: 'center' }));
+  await checkpoint(page, 'm-settings-calendar-zones');
+});
+
 // The header's date opens a month card (weekday in the label, today / chosen day marked); a day pick navigates.
 test('m-calendar-datepicker', async ({ page }) => {
   mock.setClock(NOW.getTime());
