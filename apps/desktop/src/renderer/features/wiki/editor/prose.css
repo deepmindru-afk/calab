@@ -220,8 +220,10 @@
 }
 .wiki-prose table {
   border-collapse: collapse;
-  table-layout: fixed;
-  width: 100%;
+  /* Columns size by their content and wrap at spaces only; when they don't fit, .tableWrapper scrolls. */
+  table-layout: auto;
+  width: max-content;
+  min-width: 100%;
   margin: var(--space-1) 0;
 }
 .wiki-prose th,
@@ -230,6 +232,9 @@
   padding: 6px 8px;
   vertical-align: top;
   min-width: 80px;
+  max-width: 320px;
+  overflow-wrap: normal;
+  word-break: normal;
   position: relative;
 }
 .wiki-prose th {
