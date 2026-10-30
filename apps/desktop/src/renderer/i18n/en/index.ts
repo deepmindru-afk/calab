@@ -476,6 +476,7 @@ export const en: Dict = {
   'voice.pttMac': 'macOS: requires “Accessibility” and “Input Monitoring” permissions.',
   'voice.rnnoise': 'Noise suppression',
   'voice.rnnoiseHint': 'Removes keyboard clatter and background noise. Uses extra CPU — off by default',
+  'voice.rnnoisePlatform': 'On this device the system removes noise itself — a second suppressor on top would distort your voice',
   'voice.red': 'Resilience to poor networks',
   'voice.redHint': 'Fewer voice dropouts on weak Wi‑Fi or VPN, at twice the traffic',
   'voice.myBitrate': 'My voice quality',

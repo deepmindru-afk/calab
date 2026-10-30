@@ -84,6 +84,7 @@ KV-хранилище — **Valkey (совместим с Redis)**, ADR-0017. В
 | `LIVEKIT_INTERNAL_URL` | — | URL для API (`http://127.0.0.1:7880`) |
 | `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | — | задаются все четыре LIVEKIT_* или ни одной (тогда voice-эндпоинты → 503) |
 | `LIVEKIT_MAX_PARTICIPANTS` | `50` | `max_participants` комнаты LiveKit |
+| `VOICE_LOST_GRACE` | `60s` | сколько место в голосовой комнате ждёт устройство после невольного обрыва LiveKit (ADR-0150): другие видят «нет связи», `/join` в это время возвращает место без выхода/входа; `0` — выключено (место снимается с обрывом), максимум `10m` |
 | `PLAN_FREE_LIMITS` / `PLAN_TEAM_LIMITS` | встроенные (ADR-0024) | JSON поверх дефолтов тарифа, напр. `{"room_members":5,"stream_max_preset":"h720","stream_max_fps":15,"storage_mb":1024}`; 0 / `""` = без лимита; неверный JSON — сервер не стартует |
 | `PLAN_CONTACT_URL` / `PLAN_CONTACT_EMAIL` | — / `support@calab.io` | куда писать за подпиской (`plan_contact` в READY и `/api/version`): URL, иначе `mailto:` |
 | `SUPERADMIN_EMAILS` | — | email суперадминов через запятую: `/api/admin/*`, `me.is_superadmin` |

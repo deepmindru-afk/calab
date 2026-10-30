@@ -52,6 +52,11 @@ interface Entry<E extends AudioOutElement> {
   /** A screen share's system audio (not the voice). */
   stream: boolean;
   guard: () => void;
+  /**
+   * The element's sink ops (setSink, rebind) run one after another: a setSinkId still in flight
+   * when a re-bind (or another switch) starts could land last with an older id.
+   */
+  ops: Promise<void>;
 }
 
 /** `volume` values closer than this are equal (the element stores a double as given). */
@@ -82,12 +87,12 @@ export class RemoteAudioOut<E extends AudioOutElement = HTMLMediaElement> {
    */
   add(sid: string, el: E, userId: string, stream: boolean): void {
     if (this.els.has(sid)) return;
-    const entry: Entry<E> = { sid, el, userId, stream, guard: () => this.apply(entry, false) };
+    const entry: Entry<E> = { sid, el, userId, stream, guard: () => this.apply(entry, false), ops: Promise.resolve() };
     this.els.set(sid, entry);
     // Someone else (LiveKit) wrote muted / volume: put ours back (a no-op when it already matches).
     el.addEventListener('volumechange', entry.guard);
     this.apply(entry, false);
-    if (this.sinkId) void this.sink(entry, this.sinkId);
+    if (this.sinkId) void this.sink(entry);
   }
 
   /** The track went away: forget its element (the caller removes it from the DOM). */
@@ -115,21 +120,23 @@ export class RemoteAudioOut<E extends AudioOutElement = HTMLMediaElement> {
   async rebind(): Promise<{ rebound: number; blocked: number }> {
     const out = { rebound: 0, blocked: 0 };
     await Promise.all(
-      [...this.els.values()].map(async (entry) => {
-        const { el } = entry;
-        const src = el.srcObject;
-        if (!src) return;
-        el.srcObject = null;
-        el.srcObject = src;
-        out.rebound++;
-        await this.sink(entry, this.sinkId);
-        if (typeof el.play !== 'function') return;
-        try {
-          await el.play();
-        } catch (e) {
-          if ((e as { name?: unknown } | null)?.name === 'NotAllowedError') out.blocked++;
-        }
-      }),
+      [...this.els.values()].map((entry) =>
+        this.queue(entry, async () => {
+          const { el } = entry;
+          const src = el.srcObject;
+          if (!src) return;
+          el.srcObject = null;
+          el.srcObject = src;
+          out.rebound++;
+          await this.setSinkNow(entry);
+          if (typeof el.play !== 'function') return;
+          try {
+            await el.play();
+          } catch (e) {
+            if ((e as { name?: unknown } | null)?.name === 'NotAllowedError') out.blocked++;
+          }
+        }),
+      ),
     );
     return out;
   }
@@ -170,13 +177,26 @@ export class RemoteAudioOut<E extends AudioOutElement = HTMLMediaElement> {
    */
   async setSink(id: string): Promise<void> {
     this.sinkId = id;
-    await Promise.all([...this.els.values()].map((entry) => this.sink(entry, id)));
+    await Promise.all([...this.els.values()].map((entry) => this.sink(entry)));
   }
 
-  private async sink(entry: Entry<E>, id: string): Promise<void> {
+  /** Runs `op` after the element's earlier sink ops; a failure does not stop the next one. */
+  private queue(entry: Entry<E>, op: () => Promise<void>): Promise<void> {
+    const run = entry.ops.then(op);
+    entry.ops = run.catch(() => undefined);
+    return entry.ops;
+  }
+
+  /** The current sink (read when the op runs, so a queued older switch never lands last). */
+  private sink(entry: Entry<E>): Promise<void> {
+    return this.queue(entry, () => this.setSinkNow(entry));
+  }
+
+  private async setSinkNow(entry: Entry<E>): Promise<void> {
     // No setSinkId: the element keeps the OS-selected output; the playback state is still re-asserted.
-    // A gone device rejects: the element stays on what it plays to now (Chromium falls back to the default).
-    if (typeof entry.el.setSinkId === 'function') await entry.el.setSinkId(id).catch(() => undefined);
+    // A gone device rejects: the element stays where it is (the caller routes a gone choice to
+    // the default itself, lib/media/outputRoute).
+    if (typeof entry.el.setSinkId === 'function') await entry.el.setSinkId(this.sinkId).catch(() => undefined);
     if (this.els.get(entry.sid) === entry) this.apply(entry, true);
   }
 

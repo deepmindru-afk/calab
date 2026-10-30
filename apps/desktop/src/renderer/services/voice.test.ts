@@ -159,7 +159,24 @@ class FakeRoom {
     on: vi.fn(),
     off: vi.fn(),
   };
-  constructor() {
+  /** RoomOptions as given (audioOutput: what LiveKit applies to new remote tracks). */
+  options: { audioOutput?: { deviceId?: string } };
+  /** LiveKit's active devices (localParticipant.activeDeviceMap). */
+  active = new Map<string, string>([['audiooutput', 'default']]);
+  switches: [string, string][] = [];
+  getActiveDevice(kind: string): string | undefined {
+    return this.active.get(kind);
+  }
+  /** As livekit-client: options + active device, then ActiveDeviceChanged (its setSinkId is ours: same id). */
+  switchActiveDevice(kind: string, id: string): Promise<boolean> {
+    this.switches.push([kind, id]);
+    this.options.audioOutput = { deviceId: id };
+    this.active.set(kind, id);
+    this.emit('ActiveDeviceChanged', kind, id);
+    return Promise.resolve(true);
+  }
+  constructor(opts?: { audioOutput?: { deviceId?: string } }) {
+    this.options = { ...opts };
     FakeRoom.all.push(this);
     // Local publications (a parked room unpublishes them, ADR-0133).
     Object.defineProperty(this.localParticipant, 'trackPublications', { get: () => new Map(this.published.map((t, i) => [`L${i}`, { track: t }])) });
@@ -877,6 +894,29 @@ describe('VoiceEngine', () => {
     expect(useVoice.getState().roomId).toBeNull();
   });
 
+  it('a rejoin whose room drops right as connect() resolves is not counted as back: the cycle goes on', async () => {
+    await voice.join('A', 'ws');
+    // The first rejoin attempt: LiveKit connects, then the room is gone before our connect() returns.
+    FakeRoom.onConnect = () => {
+      FakeRoom.onConnect = null;
+      const room = FakeRoom.all.at(-1);
+      return Promise.resolve().then(() => {
+        if (!room) return;
+        room.state = 'Disconnected';
+        room.emit('Disconnected', 'SIGNAL_CLOSE');
+      });
+    };
+    FakeRoom.all[0]?.emit('Disconnected', 'SIGNAL_CLOSE');
+    await vi.advanceTimersByTimeAsync(1_100);
+    expect(joinVoice).toHaveBeenCalledTimes(2);
+    expect(useVoice.getState().phase).toBe('reconnecting');
+    // Next attempt (2 s later) gets in for real.
+    await vi.advanceTimersByTimeAsync(2_100);
+    expect(joinVoice).toHaveBeenCalledTimes(3);
+    expect(FakeRoom.all.at(-1)?.state).toBe('Connected');
+    expect(useVoice.getState().phase).toBe('connected');
+  });
+
   it('a failing reconnect cycle keeps the seat: no unmount of the voice panel, one stable phase (0.2.1)', async () => {
     await voice.join('A', 'ws');
     const seen: { roomId: string | null; phase: string }[] = [];
@@ -909,7 +949,7 @@ describe('VoiceEngine', () => {
     await settle();
     // Rejoin attempts so far (the first /join was the user's).
     const attempts = (): number => joinVoice.mock.calls.length - 1;
-    // Attempts at 1, 3, 7, 15, 30, 45, 60, 75 and 90 s; then the cycle gives up (90 s, ADR-0148 hold).
+    // Attempts at 1, 3, 7, 15, 30, 45, 60, 75 and 90 s; then the cycle gives up (90 s, ADR-0150 hold).
     const steps: [number, number][] = [[999, 0], [1, 1], [1_999, 1], [1, 2], [3_999, 2], [1, 3], [7_999, 3], [1, 4], [14_999, 4], [1, 5], [14_999, 5], [1, 6], [14_999, 6], [1, 7], [14_999, 7], [1, 8], [14_999, 8], [1, 9]];
     for (const [ms, n] of steps) {
       await vi.advanceTimersByTimeAsync(ms);
@@ -1302,6 +1342,16 @@ describe('per-user volume and local mute (docs/09 #20)', () => {
     muted = false;
     sinkId = '';
     resetOnSink = false;
+    /** The element's stream; `binds` counts re-assignments (RemoteAudioOut.rebind). */
+    private src: unknown = {};
+    binds = 0;
+    get srcObject(): unknown {
+      return this.src;
+    }
+    set srcObject(v: unknown) {
+      this.src = v;
+      if (v) this.binds++;
+    }
     setSinkId(id: string): Promise<void> {
       this.sinkId = id;
       if (this.resetOnSink) {
@@ -1321,6 +1371,115 @@ describe('per-user volume and local mute (docs/09 #20)', () => {
     room?.emit('TrackSubscribed', track, { source }, { identity });
     return el;
   };
+
+  describe('output device routing (CBF-108)', () => {
+    const out = (deviceId: string, label: string, groupId = deviceId) => ({ deviceId, groupId, kind: 'audiooutput', label });
+    const inp = (deviceId: string, label: string, groupId = deviceId) => ({ deviceId, groupId, kind: 'audioinput', label });
+    const fire = async (list: (typeof deviceList)[number][]): Promise<void> => {
+      deviceList = list;
+      for (const fn of deviceChange) fn();
+      await settle();
+    };
+    const spk = out('spk', 'MacBook Speakers', 'g-mbp');
+    const air = out('air', 'AirPods Pro', 'g-air');
+    const dflt = (label: string, groupId: string) => out('default', `Default - ${label}`, groupId);
+
+    it('LiveKit follows a mid-call switch: a late participant plays on the new choice, not the join-time one', async () => {
+      await fire([dflt('MacBook Speakers', 'g-mbp'), spk, air]);
+      usePrefs.getState().setPrefs({ outputDeviceId: 'spk' });
+      await settle();
+      await voice.join('A', 'ws');
+      const room = FakeRoom.all.at(-1);
+      expect(room?.options.audioOutput?.deviceId).toBe('spk');
+      const a = subscribe(room, 'u2:phone', 'TR_a');
+      await settle();
+      usePrefs.getState().setPrefs({ outputDeviceId: 'air' });
+      await settle();
+      // LiveKit re-applies its own id to every new remote track: it has ours now.
+      expect([a.sinkId, room?.options.audioOutput?.deviceId, room?.getActiveDevice('audiooutput')]).toEqual(['air', 'air', 'air']);
+      // Back to «system default»: the alias, for LiveKit too (no stale 'air' for the next track).
+      usePrefs.getState().setPrefs({ outputDeviceId: null });
+      await settle();
+      const late = subscribe(room, 'u3:desk', 'TR_late');
+      await settle();
+      expect([a.sinkId, late.sinkId, room?.options.audioOutput?.deviceId]).toEqual(['default', 'default', 'default']);
+      // In sync: ActiveDeviceChanged came back without another switch.
+      expect(room?.switches).toEqual([['audiooutput', 'air'], ['audiooutput', 'default']]);
+    });
+
+    it('the chosen AirPods go away → default; they come back → AirPods again', async () => {
+      await fire([dflt('AirPods Pro', 'g-air'), spk, air]);
+      usePrefs.getState().setPrefs({ outputDeviceId: 'air' });
+      await settle();
+      await voice.join('A', 'ws');
+      const room = FakeRoom.all.at(-1);
+      const a = subscribe(room, 'u2:phone', 'TR_a');
+      await settle();
+      expect(a.sinkId).toBe('air');
+      await fire([dflt('MacBook Speakers', 'g-mbp'), spk]);
+      expect([a.sinkId, room?.getActiveDevice('audiooutput')]).toEqual(['default', 'default']);
+      await fire([dflt('AirPods Pro', 'g-air'), spk, air]);
+      expect([a.sinkId, room?.getActiveDevice('audiooutput')]).toEqual(['air', 'air']);
+      // The choice itself was never touched.
+      expect(usePrefs.getState().outputDeviceId).toBe('air');
+    });
+
+    it('joining with a stale stored device plays on the default from the first track', async () => {
+      await fire([dflt('MacBook Speakers', 'g-mbp'), spk]);
+      usePrefs.getState().setPrefs({ outputDeviceId: 'air' });
+      await settle();
+      await voice.join('A', 'ws');
+      const room = FakeRoom.all.at(-1);
+      expect(room?.options.audioOutput?.deviceId).toBe('default');
+      const a = subscribe(room, 'u2:phone', 'TR_a');
+      await settle();
+      expect(a.sinkId).toBe('default');
+    });
+
+    it('the mic opening on the headset the voices play to re-binds them once the route settled', async () => {
+      await fire([dflt('AirPods Pro', 'g-air'), spk, air, inp('default', 'Default - AirPods Pro', 'g-air'), inp('mic-air', 'AirPods Pro', 'g-air')]);
+      usePrefs.getState().setPrefs({ outputDeviceId: null, micDeviceId: 'AirPods Pro' });
+      await settle();
+      await vi.advanceTimersByTimeAsync(500); // the devicechange re-bind (#255) is past
+      await voice.join('A', 'ws');
+      const room = FakeRoom.all.at(-1);
+      const a = subscribe(room, 'u2:phone', 'TR_a');
+      await settle();
+      const before = a.binds;
+      await vi.advanceTimersByTimeAsync(1600);
+      expect(a.binds).toBe(before + 1);
+      usePrefs.getState().setPrefs({ micDeviceId: null });
+    });
+
+    it('devicechange re-binds only when the outputs changed, not on a mic / camera change', async () => {
+      const list = [dflt('MacBook Speakers', 'g-mbp'), spk, inp('mbp-mic', 'MacBook Mic', 'g-mbp')];
+      await fire(list);
+      await voice.join('A', 'ws');
+      const a = subscribe(FakeRoom.all.at(-1), 'u2:phone', 'TR_a');
+      await vi.advanceTimersByTimeAsync(2000);
+      const before = a.binds;
+      await fire([...list, inp('usb-mic', 'USB Mic', 'g-usb')]);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(a.binds).toBe(before);
+      await fire([dflt('AirPods Pro', 'g-air'), spk, air, inp('mbp-mic', 'MacBook Mic', 'g-mbp')]);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(a.binds).toBe(before + 1);
+    });
+
+    it('a mic on another device does not re-bind', async () => {
+      await fire([dflt('AirPods Pro', 'g-air'), spk, air, inp('mbp-mic', 'MacBook Mic', 'g-mbp')]);
+      usePrefs.getState().setPrefs({ outputDeviceId: null, micDeviceId: 'MacBook Mic' });
+      await settle();
+      await vi.advanceTimersByTimeAsync(500); // the devicechange re-bind (#255) is past
+      await voice.join('A', 'ws');
+      const a = subscribe(FakeRoom.all.at(-1), 'u2:phone', 'TR_a');
+      await settle();
+      const before = a.binds;
+      await vi.advanceTimersByTimeAsync(1600);
+      expect(a.binds).toBe(before);
+      usePrefs.getState().setPrefs({ micDeviceId: null });
+    });
+  });
 
   describe('deafen holds on every path (docs/09 #70)', () => {
     it('deafen → output device switch (prefs, OS devicechange, LiveKit) → every element muted', async () => {

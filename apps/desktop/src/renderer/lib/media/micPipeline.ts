@@ -4,6 +4,7 @@ import { log } from '../log';
 import { DUCK_GAIN, ECHO } from './echo';
 import type { MicReport } from './micReport';
 import type { DenoiseControl, DenoiseMode } from './denoiseSleep';
+import { rnnoiseSupported } from './rnnoiseSupport';
 
 /**
  * Capture pipeline (docs/02-media.md, ADR-0004):
@@ -146,7 +147,9 @@ export class MicPipeline {
    * (NotSupportedError). RNNoise needs 48 kHz, so on such devices we fall back to the
    * built-in noise suppression and analyse at the device rate (web client, ADR-0015).
    */
-  static async start(opts: MicPipelineOptions): Promise<MicPipeline> {
+  static async start(options: MicPipelineOptions): Promise<MicPipeline> {
+    // WebKit / Android keep their own NS on: RNNoise on top only distorts (lib/media/rnnoiseSupport.ts, board #114).
+    const opts = options.rnnoise && !rnnoiseSupported() ? { ...options, rnnoise: false } : options;
     try {
       return await MicPipeline.startWith(opts, 48000);
     } catch (err) {
@@ -190,6 +193,8 @@ export class MicPipeline {
     if (onContextState) ctx.addEventListener('statechange', () => onContextState(ctx.state));
     const reports = { at: 0 };
     try {
+      // The worklet's 480-sample frames are 10 ms only at 48 kHz: never run RNNoise at another rate.
+      if (opts.rnnoise && ctx.sampleRate !== 48000) throw new RnnoiseUnavailable(`AudioContext runs at ${ctx.sampleRate} Hz`);
       await ctx.audioWorklet.addModule(workletUrl);
 
       // With a graph (RNNoise or the duck) the published track is the graph's output. Without

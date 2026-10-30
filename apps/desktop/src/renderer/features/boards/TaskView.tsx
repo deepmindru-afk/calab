@@ -8,6 +8,7 @@ import { CloseButton, IconButton, Spinner, Tip, cx } from '../../components/ui';
 import { t } from '../../i18n';
 import { featureOn } from '../../lib/boards/features';
 import { loadPresent } from '../../services/chat';
+import { replaceNextNav } from '../../services/navHistory';
 import { copyTaskKey, copyTaskLink, loadTask, moveTaskToBoard, openBoard, setSubscription, useTaskDetails } from '../../services/boards';
 import { useBoards } from '../../stores/boards';
 import { useMessages } from '../../stores/messages';
@@ -41,6 +42,12 @@ const scrolls = new Map<string, number>();
 /** The main column never gets narrower than this (px); keep in sync with the aside's max-w. */
 const MAIN_MIN = 480;
 
+/** J/K (and the header's next / previous buttons): the next task replaces the open one in the ‹ › history (board #113). */
+function stepTo(id: string): void {
+  replaceNextNav();
+  useBoardsUi.getState().openTask(id);
+}
+
 export function TaskView({ taskId, boardId, workspaceId, boardRef }: { taskId: string; boardId: string; workspaceId: string; boardRef: RefObject<HTMLElement | null> }): ReactNode {
   const task = useBoards((s) => s.tasks[taskId]);
   const root = useRef<HTMLElement>(null);
@@ -64,7 +71,7 @@ export function TaskView({ taskId, boardId, workspaceId, boardRef }: { taskId: s
     taskNav.set({
       step: (dir) => {
         const next = stepTask(latest.current.order, latest.current.taskId, dir);
-        if (next) useBoardsUi.getState().openTask(next);
+        if (next) stepTo(next);
       },
       contains: (el) => !!el && !!root.current?.contains(el),
     });
@@ -205,10 +212,10 @@ const TaskBar = memo(function TaskBar({ task, boardId, workspaceId, order }: { t
           {pos.n} / {pos.total}
         </span>
       ) : null}
-      <IconButton label={t('boards.nextTask')} shortcut="J" disabled={!next} onClick={() => next && useBoardsUi.getState().openTask(next)} data-testid="task-next">
+      <IconButton label={t('boards.nextTask')} shortcut="J" disabled={!next} onClick={() => next && stepTo(next)} data-testid="task-next">
         <ChevronDown className="size-4" aria-hidden />
       </IconButton>
-      <IconButton label={t('boards.prevTask')} shortcut="K" disabled={!prev} onClick={() => prev && useBoardsUi.getState().openTask(prev)} data-testid="task-prev">
+      <IconButton label={t('boards.prevTask')} shortcut="K" disabled={!prev} onClick={() => prev && stepTo(prev)} data-testid="task-prev">
         <ChevronUp className="size-4" aria-hidden />
       </IconButton>
       <CloseButton onClick={toList} data-testid="task-close" />

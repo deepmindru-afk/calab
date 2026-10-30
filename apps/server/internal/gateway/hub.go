@@ -633,9 +633,19 @@ func (h *Hub) routeLocked(st *wsState, wid, id uuid.UUID, ev *v1.DispatchEvent) 
 	case *v1.DispatchEvent_BotCreate, *v1.DispatchEvent_BotUpdate, *v1.DispatchEvent_BotDelete:
 		// Bots (ADR-0031) are managed by MANAGE_BOTS members (ADR-0048); the owner of a bot sees its
 		// events too (the owner's own devices also get BOT_UPDATE on the user channel).
-		owner := parseID(ev.GetBotCreate().GetBot().GetOwnerUserId())
+		bot := ev.GetBotCreate().GetBot()
 		if b := ev.GetBotUpdate().GetBot(); b != nil {
-			owner = parseID(b.GetOwnerUserId())
+			bot = b
+		}
+		owner := parseID(bot.GetOwnerUserId())
+		// ADR-0151: the owner is an author of the bot's tasks (create-only rule) in the bot's home
+		// workspace only; a bot that left (or was deleted) no longer makes its owner one here —
+		// fail closed until a reload.
+		if id := parseID(bot.GetUser().GetId()); id != uuid.Nil && owner != uuid.Nil && parseID(bot.GetWorkspaceId()) == wid {
+			st.setBotOwner(id, owner)
+		}
+		if d := ev.GetBotDelete(); d != nil {
+			st.setBotOwner(parseID(d.GetBotUserId()), uuid.Nil)
 		}
 		for _, s := range sessions {
 			if (st.members[s.user].Workspace().Has(perm.ManageBots) && st.role(s.user) != perm.RoleGuest) || (owner != uuid.Nil && s.user == owner) {

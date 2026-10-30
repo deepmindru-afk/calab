@@ -25,6 +25,7 @@ import { log } from '../../lib/log';
 import { useMobile } from '../../lib/mobile';
 import { METER_MIN_DB } from '../../lib/media/vad';
 import { outputLabel } from '../../lib/media/outputKind';
+import { rnnoiseSupported } from '../../lib/media/rnnoiseSupport';
 import { musicianWarning, useMusicianAllowed } from '../../services/musician';
 import { PlanLock } from '../../components/PlanLock';
 import { platform } from '../../platform';
@@ -471,8 +472,8 @@ function VoiceTab(): ReactNode {
 
       <Card title={t('voice.processing')} footer={p.musicianMode ? t('music.aecNote') : t('voice.aecNote')}>
         <MusicianRow outputs={outputs} />
-        <Row label={t('voice.rnnoise')} hint={p.musicianMode ? t('music.rnnoiseOff') : t('voice.rnnoiseHint')}>
-          <Toggle label={t('voice.rnnoise')} checked={p.rnnoise && !p.musicianMode} disabled={p.musicianMode} onChange={(v) => p.setPrefs({ rnnoise: v })} />
+        <Row label={t('voice.rnnoise')} hint={p.musicianMode ? t('music.rnnoiseOff') : rnnoiseSupported() ? t('voice.rnnoiseHint') : t('voice.rnnoisePlatform')}>
+          <Toggle label={t('voice.rnnoise')} checked={p.rnnoise && !p.musicianMode && rnnoiseSupported()} disabled={p.musicianMode || !rnnoiseSupported()} onChange={(v) => p.setPrefs({ rnnoise: v })} />
         </Row>
         <Row label={t('voice.red')} hint={t('voice.redHint')}>
           <Toggle label={t('voice.red')} checked={p.red} onChange={(v) => p.setPrefs({ red: v })} />

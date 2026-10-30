@@ -208,7 +208,7 @@ func (s *Service) closeRoom(ctx context.Context, wid, rid uuid.UUID) {
 	if err := s.lk.DeleteRoom(ctx, voice.RoomName(wid, rid)); err != nil && !IsNotFound(err) {
 		slog.WarnContext(ctx, "livekit delete room", "err", err)
 	}
-	_ = s.roomFinished(ctx, wid, rid)
+	_ = s.roomFinished(ctx, wid, rid, false)
 }
 
 // joinGrace: voice states younger than this are not removed by reconcile (they may have
@@ -300,8 +300,18 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		cutoff := start.Add(-joinGrace).UnixMilli()
 		for _, st := range states {
 			if rid, ok := present[voice.Identity(st.UserID, st.SessionID)]; ok && rid == st.RoomID {
-				if st.Pending { // connected, but participant_joined was lost
-					_ = s.setFlag(ctx, wid, st.RoomID, st.UserID, st.SessionID, func(n *voice.SessionState) { n.Pending = false })
+				if st.Pending || held(st) { // connected, but participant_joined was lost
+					_ = s.setFlag(ctx, wid, st.RoomID, st.UserID, st.SessionID, func(n *voice.SessionState) {
+						n.Pending, n.Lost, n.Hold = false, false, 0
+					})
+				}
+				continue
+			}
+			// A seat held for a lost connection (ADR-0150) is absent from LiveKit by definition:
+			// it stays until its grace ends, then goes as a leave.
+			if st.Hold > 0 {
+				if time.Now().UnixMilli() >= st.Hold {
+					s.expireSeat(ctx, wid, st)
 				}
 				continue
 			}

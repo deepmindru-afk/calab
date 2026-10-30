@@ -13,6 +13,7 @@ import { mayArrangeRooms } from '../../lib/permissions';
 import { installAfk } from '../../services/afk';
 import { installPresenceTimer } from '../../services/presenceTimer';
 import { installHotkeys } from '../../services/hotkeys';
+import { installNavHistory } from '../../services/navHistory';
 import { installEmail } from '../../services/email';
 import { VerifyBanner } from '../auth/VerifyEmail';
 import { SuspendedBanner } from '../workspace/SuspendedBanner';
@@ -151,6 +152,7 @@ function ShellLayout(): ReactNode {
   if (island === 'full' && canvas && canvasFolded && !mailOn && !wiki && !fileShown) island = 'none';
 
   useEffect(() => installHotkeys(), []);
+  useEffect(() => installNavHistory(), []);
   useEffect(() => installFileViewLeave(), []);
   useEffect(() => installAfk(), []);
   useEffect(() => installPresenceTimer(), []);

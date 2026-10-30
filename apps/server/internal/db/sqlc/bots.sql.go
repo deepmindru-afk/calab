@@ -819,6 +819,31 @@ func (q *Queries) ListBotCommands(ctx context.Context, botIds []uuid.UUID) ([]Bo
 	return items, nil
 }
 
+const listOwnedBotIDs = `-- name: ListOwnedBotIDs :many
+SELECT user_id FROM bots WHERE owner_user_id = $1 ORDER BY user_id
+`
+
+// The bots a user owns (READY.my_bot_ids, ADR-0151: the client's author rights on their tasks).
+func (q *Queries) ListOwnedBotIDs(ctx context.Context, ownerUserID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listOwnedBotIDs, ownerUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var user_id uuid.UUID
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTaskNoticeRelayUsers = `-- name: ListTaskNoticeRelayUsers :many
 SELECT id FROM users WHERE task_notify_bots <> '{}'
 `

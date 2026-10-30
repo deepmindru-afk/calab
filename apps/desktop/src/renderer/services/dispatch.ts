@@ -79,9 +79,10 @@ import { applyBoardEvent, applySnapshotBoards, dropWorkspaceBoards, onBoardsRead
 import { onDiskItemRemove, onDiskItemUpsert, onWorkspaceStorage } from './disk';
 import { useDisk } from '../stores/disk';
 import { onWikiPageRemove, onWikiPageUpsert } from './wiki';
-import { onCanvasItemRemove, onCanvasItemUpsert } from './canvas';
+import { onCanvasItemRemove, onCanvasItemUpsert, resyncCanvasTree } from './canvas';
 import { onCanvasCommentDelete, onCanvasCommentMention, onCanvasCommentUpsert, resyncCanvasComments } from './canvasComments';
 import { restoreSectionOnBoot } from '../features/shell/sectionNav';
+import { armNavHistory } from './navHistory';
 import { useCanvas } from '../stores/canvas';
 import { useWiki } from '../stores/wiki';
 import { applyAutomationEvent } from './automations';
@@ -189,9 +190,12 @@ export function applyDispatch(ev: DispatchEvent): void {
       useEventComments.getState().reset();
       // Canvas comments missed while away (ADR-0127 wave 4): the held canvases read theirs again.
       resyncCanvasComments();
+      // The canvas tree and the open canvas' bits likewise (docs/09, 2026-10-21 (б)).
+      resyncCanvasTree();
       // Read receipts (docs/09 #92): workspace rooms here, DMs with their summaries (applyDm).
       useReadReceipts.getState().reset();
       useReadReceipts.getState().setFrom(r.readReceiptsFrom); // ADR-0140: no ticks before it
+      useBots.getState().setMine(r.myBotIds); // ADR-0151: my bots' tasks are mine for author rights
       for (const pr of r.peerReads) useReadReceipts.getState().set(pr.roomId, pr.lastReadMessageId);
       rooms.setNotifyAll(r.notificationSettings);
       rooms.setWsNotifyAll(r.workspaceNotificationSettings);
@@ -255,6 +259,8 @@ export function applyDispatch(ev: DispatchEvent): void {
       ensureActiveWorkspace();
       // The first READY of this page: back on the section the workspace was left on (ADR-0074 §1).
       restoreSectionOnBoot();
+      // From here every change of place is a step of the ‹ › history (board #113).
+      armNavHistory();
       // Calendar (ADR-0038): rooms' active meetings, listed months again, today's count, a pending /e/<id>.
       onCalendarReady(r.workspaces);
       // Boards (ADR-0042): loaded boards and the open task reloaded, a pending /b/ or /t/ link.

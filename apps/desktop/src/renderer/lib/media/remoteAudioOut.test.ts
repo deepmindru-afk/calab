@@ -289,3 +289,44 @@ describe('rebind (the OS switched the output: headphones in or out, #255)', () =
     expect(a.muted).toBe(true);
   });
 });
+
+describe('sink ops are serialised per element (a re-bind cannot race a switch)', () => {
+  it('a slow setSinkId in flight: the next switch and the re-bind wait; the newest id lands last', async () => {
+    const out = new RemoteAudioOut<FakeAudio & HTMLMediaElement>(() => ({ deafened: false, userVolumes: {}, mutedUsers: {}, streamVolume: {} }));
+    const a = new FakeAudio() as FakeAudio & HTMLMediaElement;
+    const calls: string[] = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const pending: (() => void)[] = [];
+    Object.defineProperty(a, 'srcObject', { value: {}, writable: true });
+    Object.defineProperty(a, 'setSinkId', {
+      value: (id: string) => {
+        calls.push(id);
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        return new Promise<void>((resolve) =>
+          pending.push(() => {
+            inFlight--;
+            a.sinkId = id;
+            resolve();
+          }),
+        );
+      },
+    });
+    out.add('a', a, 'u1', false);
+    const first = out.setSink('air');
+    const rebind = out.rebind();
+    const second = out.setSink('default');
+    // Drain one call at a time, as a slow audio service would.
+    for (let i = 0; i < 10 && (pending.length > 0 || calls.length < 3); i++) {
+      await Promise.resolve();
+      pending.shift()?.();
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    await Promise.all([first, rebind, second]);
+    expect(maxInFlight).toBe(1);
+    // The queued ops read the current choice when they run: the older 'air' is never applied.
+    expect(calls).toEqual(['default', 'default', 'default']);
+    expect(a.sinkId).toBe('default');
+  });
+});

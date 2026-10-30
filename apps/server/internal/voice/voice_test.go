@@ -168,3 +168,33 @@ func TestAggregateOnPhone(t *testing.T) {
 		t.Fatal("a user without sessions is not on the phone")
 	}
 }
+
+func TestAggregateConnectionLost(t *testing.T) {
+	ws, u, r1 := uuid.New(), uuid.New(), uuid.New()
+	sessions := []SessionState{
+		{UserID: u, SessionID: uuid.New(), RoomID: r1, Lost: true, Hold: 5000, JoinedAt: 100},
+		{UserID: u, SessionID: uuid.New(), RoomID: r1, JoinedAt: 200},
+	}
+	mixed := Aggregate(ws, u, sessions)
+	if mixed.GetConnectionLost() || mixed.GetRoomId() != r1.String() {
+		t.Fatalf("a connected device keeps the user connected: %v", mixed)
+	}
+	sessions[1].Lost = true
+	lost := Aggregate(ws, u, sessions)
+	if !lost.GetConnectionLost() || lost.GetRoomId() != r1.String() || Equal(mixed, lost) {
+		t.Fatalf("every device lost: still in the room, marked, and the flip is a change: %v", lost)
+	}
+	// The seat keeps its place: joined_at does not move with the mark.
+	if !lost.GetJoinedAt().AsTime().Equal(mixed.GetJoinedAt().AsTime()) {
+		t.Fatalf("joined_at moved: %v -> %v", mixed.GetJoinedAt(), lost.GetJoinedAt())
+	}
+	// Hold alone (a seat taken back by /join, not reconnected yet) is not shown as lost.
+	sessions[0].Lost, sessions[1].Lost = false, false
+	sessions[1].Hold = 9000
+	if Aggregate(ws, u, sessions).GetConnectionLost() {
+		t.Fatal("a held seat without the mark is shown as lost")
+	}
+	if !occupied([]SessionState{{RoomID: r1, Lost: true}}, r1) {
+		t.Fatal("a lost seat ends the call")
+	}
+}

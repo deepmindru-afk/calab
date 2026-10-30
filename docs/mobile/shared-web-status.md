@@ -63,6 +63,15 @@ Fix: the WebView now sets `applicationNameForUserAgent` to a shared marker
 closed on iOS). **Needs a new Android build** to carry the marker; the
 existing iOS build 22 is unaffected and keeps working through the bridge.
 
+## 2026-10-28: room audio plays without a gesture (#255)
+
+`mediaPlaybackRequiresUserAction` is now `false` for every build, not only with
+native call audio. A room rejoin after the app was in the background creates new
+remote `<audio>` elements with no web gesture; with the old default `play()`
+rejected with `NotAllowedError` (the same failure proven for calls on 2026-10-08)
+and the user saw others speaking without hearing them. Only the Calab origin loads
+in the WebView; local video previews stay muted. Needs a new native build.
+
 ## 2026-10-28: links open the app (DEV-4947, ADR-0142)
 
 https `/t/<KEY>`, `/join/<code>`, `/r/<code>` of the hosts in `EXPO_PUBLIC_CALAB_LINK_HOSTS`

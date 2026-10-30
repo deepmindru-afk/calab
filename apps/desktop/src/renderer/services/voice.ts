@@ -47,9 +47,10 @@ import { ECHO, EchoRiskDetector, RemoteActivity, duckWanted, duckable } from '..
 import { RateTracker, audioSourceEcho, candidatePair, inboundAudio, inboundVideo, outboundAudio, outboundVideo, transportBytes } from '../lib/media/stats';
 import { VoiceGate, rmsToDb } from '../lib/media/vad';
 import { denoiseMode, wakeDbFor } from '../lib/media/denoiseSleep';
+import { rnnoiseSupported } from '../lib/media/rnnoiseSupport';
 import { isMobileNow } from '../lib/mobile';
 import { playSound } from '../lib/sounds';
-import { joinLeaveCue, joinLeaveSoundMax } from '../lib/media/joinLeaveSound';
+import { SeatCues, joinLeaveCue, joinLeaveSoundMax, type SeatVerdict } from '../lib/media/joinLeaveSound';
 import { PttRelease } from '../lib/pttRelease';
 import { SpeakingDebouncer, speakingUserIds } from '../lib/speaking';
 import { AUTO_MUTE_TOAST, AutoMuteTimer, autoMuteArmed, type AutoMuteSec } from '../lib/autoMute';
@@ -57,6 +58,7 @@ import { REMOTE_LEVEL, RemoteLevelSpeaking, readLevel, type LevelSample } from '
 import { audioDevices, deviceName, deviceSwitches, type AudioDevice } from '../lib/deviceSwitch';
 import { answerCallSelf, canSpeakFrom, isDeviceGone, meterUpdate, micModeFor, mySeat, pttAllowed, pttCue, qualityOf, remoteAudio, toggleDeafen, toggleMute, transmitDecision, withUserMuted, withUserVolume } from '../lib/voiceLogic';
 import { RemoteAudioOut } from '../lib/media/remoteAudioOut';
+import { captureOnOutputHeadset, livekitOutputStale, outputSink, outputsChanged } from '../lib/media/outputRoute';
 import { useMessages } from '../stores/messages';
 import { useRooms } from '../stores/rooms';
 import { isTempRoom } from '../lib/tempRooms';
@@ -144,13 +146,18 @@ const REMOVED_GRACE_MS = 500;
 /**
  * Rejoin backoff (#255): 1, 2, 4, 8 s, then at most 15 s apart; at least 5 attempts and 90 s — the
  * server's default seat hold after a drop (VOICE_LOST_GRACE 60 s, removed by the next 30 s
- * reconcile, ADR-0148) — before «Не удалось вернуться в голосовую комнату».
+ * reconcile, ADR-0150) — before «Не удалось вернуться в голосовую комнату».
  */
 const REJOIN_MIN_ATTEMPTS = 5;
 const REJOIN_MAX_BACKOFF_MS = 15_000;
 const REJOIN_GIVE_UP_MS = 90_000;
 /** `devicechange` comes in bursts while the OS switches the output: re-bind the elements once it settles (#255). */
 const REBIND_SETTLE_MS = 400;
+/**
+ * The capture opened on the headset the voices play to (CBF-108): macOS moves a Bluetooth headset
+ * to the HFP profile, which takes about a second and fires no `devicechange` — re-bind after it.
+ */
+const HEADSET_ROUTE_SETTLE_MS = 1500;
 /**
  * Mic track mute / unmute (ADR-0134): an op unsettled after this counts as failed (a lock held
  * across a dead link), and a failed one is retried after MUTE_RETRY_MS (by attempt, capped) —
@@ -252,6 +259,8 @@ class VoiceEngine {
   private muteRetryTimer: number | null = null;
   /** scheduleRebind: the settle timer after an output device change. */
   private rebindTimer: number | null = null;
+  /** performance.now() the pending re-bind is due at: a later request never brings it forward. */
+  private rebindDue = 0;
   private muteFails = 0;
   private room: Room | null = null;
   private nativeAudio: HostCallAudioSession | null = null;
@@ -390,9 +399,9 @@ class VoiceEngine {
       this.snapshotDevices(true);
       void this.onDevicesChanged();
       // macOS moves the default output (charger, dock, headphones): re-assert our sink and the
-      // playback state (deafen!) on every remote element once the switch has settled.
+      // playback state (deafen!) on every remote element; the snapshot re-binds them once the
+      // switch has settled — only when the outputs changed (snapshotDevices).
       void this.applyOutputDevice();
-      this.scheduleRebind();
     });
     this.snapshotDevices(false);
     void this.applyOutputDevice(); // the chosen output for every remote element from the first one on
@@ -445,7 +454,9 @@ class VoiceEngine {
     if (s.outputDeviceId !== p.outputDeviceId || s.micDeviceId !== p.micDeviceId) this.resetEcho();
     // Without RNNoise the pipeline has a gain stage only in the speakerphone modes: rebuild when that flips.
     const gainFlips = s.echoMode !== p.echoMode && this.mic !== null && this.mic.duckable !== (this.mic.rnnoise || duckable(s.echoMode));
-    if ((s.rnnoise !== p.rnnoise || s.micDeviceId !== p.micDeviceId || gainFlips) && this.mic) void this.restartMic();
+    // The synced RNNoise pref flipped on another device changes nothing where RNNoise can't run.
+    const denoiseFlips = s.rnnoise !== p.rnnoise && rnnoiseSupported();
+    if ((denoiseFlips || s.micDeviceId !== p.micDeviceId || gainFlips) && this.mic) void this.restartMic();
     if (s.echoMode !== p.echoMode) this.applyDuck();
     if (s.red !== p.red && this.micTrack && this.room) void this.republishMic();
     if (s.personalBitrateKbps !== p.personalBitrateKbps) this.applyMicTier();
@@ -728,8 +739,8 @@ class VoiceEngine {
         dynacast: true,
         webAudioMix: false, // echo rule 1
         disconnectOnPageLeave: true,
-        // LiveKit re-selects the output on `devicechange` unless it knows ours (RoomEvent.ActiveDeviceChanged below).
-        ...(prefs().outputDeviceId ? { audioOutput: { deviceId: prefs().outputDeviceId ?? '' } } : {}),
+        // LiveKit applies its output id to every new remote track: it must be ours (lib/media/outputRoute).
+        ...(this.outputSinkNow() ? { audioOutput: { deviceId: this.outputSinkNow() } } : {}),
       });
       this.room = room;
       // H.264 «Авто» = High on the wire (hardware on macOS): codec preferences set between
@@ -876,7 +887,7 @@ class VoiceEngine {
   /**
    * Rejoin after an unexpected disconnect: 1 s, 2 s, 4 s, 8 s, then every 15 s (`now`: the first one
    * at once), for at least 5 attempts and REJOIN_GIVE_UP_MS — as long as the server holds a dropped
-   * seat (ADR-0148), so a metro tunnel or a Wi-Fi ↔ LTE switch does not end the call while the
+   * seat (ADR-0150), so a metro tunnel or a Wi-Fi ↔ LTE switch does not end the call while the
    * others still see «Нет связи». The network coming back wakes the next attempt at once. The seat
    * (room id, phase 'reconnecting') stays in the store for the whole cycle: the voice panel keeps
    * its state and open menus instead of remounting on every attempt.
@@ -912,6 +923,14 @@ class VoiceEngine {
         if (gen !== this.rejoinGen) return;
         await this.connect(roomId, wsId, true, undefined, serverMuted);
         if (gen !== this.rejoinGen) return;
+        // A Disconnected between room.connect() resolving and here is ignored by its handler
+        // (a rejoin is running): a room that is not Connected now is not back — drop it, go on.
+        if (this.room && this.room.state !== ConnectionState.Connected && !this.nativeAudio?.connected) {
+          log.info(`voice: rejoin attempt ${attempt + 1} got a room that is ${this.room.state} already`);
+          await this.teardown(false, true);
+          if (gen !== this.rejoinGen) return;
+          continue;
+        }
         if (this.room || this.nativeAudio?.connected) {
           if (stream) toast.info(t('mediaErr.stream.restart'));
           // The camera comes back by itself (a new capture, no preview); start() explains a failure.
@@ -1804,12 +1823,13 @@ class VoiceEngine {
         if (pub.source === Track.Source.ScreenShare || pub.source === Track.Source.Camera) setVoice({ trackEpoch: useVoice.getState().trackEpoch + 1 });
       })
       .on(RoomEvent.ParticipantConnected, (p) => {
-        if (this.joinLeaveCue(room, p.identity)) playSound('join');
+        this.peerCue(room, userIdOf(p.identity), true);
       })
       .on(RoomEvent.ParticipantDisconnected, (p) => {
         const gone = userIdOf(p.identity);
-        if (![...room.remoteParticipants.values()].some((o) => userIdOf(o.identity) === gone)) this.active.drop(gone);
-        if (this.joinLeaveCue(room, p.identity)) playSound('leave');
+        const still = [...room.remoteParticipants.values()].some((o) => userIdOf(o.identity) === gone);
+        if (!still) this.active.drop(gone);
+        if (!still) this.peerCue(room, gone, false);
         for (const set of this.viewers.values()) set.delete(p.identity);
         annot.participantLeft(p.identity);
         this.publishViewers();
@@ -2198,11 +2218,67 @@ class VoiceEngine {
   }
 
   /** Others' join/leave cue: only while the room with that person has ≤ join_leave_sound_max people. */
-  private joinLeaveCue(room: Room, identity: string): boolean {
+  private joinLeaveCue(room: Room, who: string): boolean {
     const max = joinLeaveSoundMax(this.roomId ? useRooms.getState().byId[this.roomId]?.media : undefined);
     if (max <= 0) return false;
     const others = Array.from(room.remoteParticipants.values(), (o) => userIdOf(o.identity));
-    return joinLeaveCue(others, userIdOf(identity), userIdOf(room.localParticipant.identity), max);
+    return joinLeaveCue(others, who, userIdOf(room.localParticipant.identity), max);
+  }
+
+  /** Whose LiveKit connection went while the server keeps their seat (ADR-0150), per room. */
+  private seatCues = new SeatCues();
+  private seatCuesRoom: Room | null = null;
+  private seatCuesOff: (() => void) | null = null;
+
+  /**
+   * Someone's (last) LiveKit connection in my room appeared or went: the cue follows the server's
+   * seat (ADR-0150, SeatCues) — no «leave» while the seat is kept after a lost connection, no
+   * «join» when they come back to it, «leave» when the server removes it.
+   */
+  private peerCue(room: Room, who: string, joined: boolean): void {
+    if (this.seatCuesRoom !== room) this.resetSeatCues(room);
+    const seat = this.seatOf(who);
+    const due = joined ? this.seatCues.connected(who, seat) : this.seatCues.disconnected(who, seat);
+    if (due && this.joinLeaveCue(room, who)) playSound(joined ? 'join' : 'leave');
+    this.watchSeats();
+  }
+
+  /** The server's seat of `who` in my voice room (a DM call has no per-user seats here: gone). */
+  private seatOf(who: string): SeatVerdict {
+    const { workspaceId, roomId } = useVoice.getState();
+    const v = workspaceId && roomId ? useWorkspaces.getState().byId[workspaceId]?.voice[who] : undefined;
+    if (!v || v.roomId !== roomId) return 'gone';
+    return v.connectionLost ? 'lost' : 'present';
+  }
+
+  /** Follows the voice states only while someone's seat awaits the server's word: no timer. */
+  private watchSeats(): void {
+    if (this.seatCues.size === 0) {
+      this.seatCuesOff?.();
+      this.seatCuesOff = null;
+      return;
+    }
+    if (this.seatCuesOff) return;
+    this.seatCuesOff = useWorkspaces.subscribe((s, prev) => {
+      const ws = useVoice.getState().workspaceId;
+      if (!ws || s.byId[ws]?.voice === prev.byId[ws]?.voice) return;
+      const room = this.seatCuesRoom;
+      if (!room || room !== this.room) {
+        this.resetSeatCues(null);
+        return;
+      }
+      for (const who of this.seatCues.settle((id) => this.seatOf(id))) {
+        if (this.joinLeaveCue(room, who)) playSound('leave');
+      }
+      if (this.seatCues.size === 0) this.watchSeats();
+    });
+  }
+
+  private resetSeatCues(room: Room | null): void {
+    this.seatCues.clear();
+    this.seatCuesRoom = room;
+    this.seatCuesOff?.();
+    this.seatCuesOff = null;
   }
 
   private inRoom(userId: string): boolean {
@@ -2331,9 +2407,32 @@ class VoiceEngine {
     this.audioOut.applyAll();
   }
 
-  /** Echo rule 2: switch output with setSinkId on the same <audio> elements (and re-apply deafen). */
-  private async applyOutputDevice(): Promise<void> {
-    await this.audioOut.setSink(prefs().outputDeviceId ?? '');
+  /** Remote output routes run one at a time, each after the device snapshot queued before it. */
+  private outputOps: Promise<void> = Promise.resolve();
+
+  /** The sink remote voices use now: the chosen device while present, else the default (CBF-108). */
+  private outputSinkNow(): string {
+    return outputSink(this.devices, prefs().outputDeviceId);
+  }
+
+  /**
+   * Echo rule 2: switch output with setSinkId on the same <audio> elements (and re-apply deafen).
+   * LiveKit is told the same id: it re-applies its own to every new remote track, and in
+   * Chromium one element's setSinkId moves all remote voices (lib/media/outputRoute).
+   */
+  private applyOutputDevice(): Promise<void> {
+    const run = this.outputOps.then(() => this.devicesOps).then(async () => {
+      const sink = this.outputSinkNow();
+      await this.audioOut.setSink(sink);
+      const room = this.room;
+      // WebKit without element setSinkId: LiveKit refuses the switch (the OS picks the output there).
+      if (typeof HTMLMediaElement !== 'undefined' && !('setSinkId' in HTMLMediaElement.prototype)) return;
+      if (!room || !livekitOutputStale(sink, room.options.audioOutput?.deviceId, room.getActiveDevice('audiooutput'))) return;
+      // Its setSinkId on our elements is a no-op now (same id); ActiveDeviceChanged comes back here, in sync.
+      await room.switchActiveDevice('audiooutput', sink).catch((e: unknown) => log.warn('voice: LiveKit output switch failed', e));
+    });
+    this.outputOps = run.catch(() => undefined);
+    return this.outputOps;
   }
 
   /** Mute someone for me only (CHAT-SHELL, member menu); persisted per device like volumes. */
@@ -2422,6 +2521,8 @@ class VoiceEngine {
       }
       const prev = this.devices;
       this.devices = next;
+      // An input / camera change leaves the remote renderers alone (CBF-108).
+      if (announce && outputsChanged(prev, next)) this.scheduleRebind();
       if (!announce || !prev || !this.roomId) return;
       const p = prefs();
       for (const sw of deviceSwitches(prev, next, { micDeviceId: p.micDeviceId, outputDeviceId: p.outputDeviceId })) announceDeviceSwitch(sw);
@@ -2499,6 +2600,8 @@ class VoiceEngine {
       this.micFallback = true;
     }
     this.micLost = false;
+    // The capture opened on the headset the voices play to: re-bind them once its route settled.
+    if (this.room && captureOnOutputHeadset(this.devices, built.deviceLabel, this.outputSinkNow())) this.scheduleRebind(HEADSET_ROUTE_SETTLE_MS);
     // Capture permission reveals device labels: the list the next change is diffed against needs them.
     this.snapshotDevices(false, true);
     this.gate.reset();
@@ -3545,8 +3648,13 @@ class VoiceEngine {
    * Headphones switched (#255): the elements opened before the switch could stay silent — re-bind
    * them once the burst of `devicechange` events has settled (one timeout, no polling).
    */
-  private scheduleRebind(): void {
-    if (this.rebindTimer !== null) window.clearTimeout(this.rebindTimer);
+  private scheduleRebind(ms = REBIND_SETTLE_MS): void {
+    const now = performance.now();
+    if (this.rebindTimer !== null) {
+      window.clearTimeout(this.rebindTimer);
+      ms = Math.max(ms, this.rebindDue - now);
+    }
+    this.rebindDue = now + ms;
     this.rebindTimer = window.setTimeout(() => {
       this.rebindTimer = null;
       const room = this.room;
@@ -3556,7 +3664,7 @@ class VoiceEngine {
         log.info(`voice: output devices changed, ${r.rebound} remote audio element(s) re-bound`);
         if (r.blocked > 0 && !document.hidden) this.offerPlayback();
       });
-    }, REBIND_SETTLE_MS);
+    }, ms);
   }
 
   /** One pass of «play what the system paused» (RemoteAudioOut.replayPaused); a refusal offers the tap. */
