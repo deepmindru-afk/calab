@@ -981,6 +981,14 @@ test('main-members-toggled', async ({ open, win, mock, shot }) => {
   // Members: a column from 1200 px (open by default), a floating panel below (closed by default).
   await win.getByRole('button', { name: 'Участники' }).click();
   await checkpoint(shot, 'main-members-toggled');
+  // ADR-0150: Вера's connection is lost (the seat is kept): dimmed, a crossed wifi instead of her
+  // other icons, in the sidebar voice row and the members list; next to Борис (muted). Server-side state only, no LiveKit.
+  mock.setVoiceState({ userId: IDS.users.vera, roomId: IDS.rooms.meeting, streaming: false, connectionLost: true });
+  const sidebar = win.locator('aside').first();
+  await expect(sidebar.getByRole('listitem', { name: /Вера/ }).locator('[data-voice-icon="connection-lost"]')).toHaveCount(1);
+  await expect(sidebar.getByRole('listitem', { name: /Борис Петров/ }).locator('[data-voice-icon="muted"]')).toHaveCount(1);
+  await expect(win.getByRole('complementary', { name: 'Участники' }).locator('[data-voice-icon="connection-lost"]')).toHaveCount(1);
+  await checkpoint(shot, 'main-members-voice-lost');
 });
 
 test('members-profile', async ({ open, win, mock, shot }) => {

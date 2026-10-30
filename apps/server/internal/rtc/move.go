@@ -142,6 +142,7 @@ func (s *Service) moveMember(w http.ResponseWriter, r *http.Request) error {
 			}
 			n := *cur
 			n.RoomID, n.JoinedAt = dstID, time.Now().UnixMilli()
+			n.Lost, n.Hold = false, 0 // a seat held after a drop (ADR-0150) moves as a new connection
 			// App-level moves (known already) reconnect: pending in the target from the start,
 			// so its call starts with the device's LiveKit connection, not with the move.
 			n.Pending = s.noSFUMove.Load()
