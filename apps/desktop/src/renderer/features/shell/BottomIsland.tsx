@@ -242,12 +242,14 @@ function FoldedIsland({ panelRef, width, content }: { panelRef: RefObject<HTMLDi
   );
 }
 
-const BADGE = 'absolute -right-1 -top-1 box-content grid size-3.5 place-items-center rounded-full border-2 border-[var(--color-rail)] text-white';
+const BADGE = 'absolute -right-1 -top-1 box-content grid size-3.5 place-items-center rounded-full border-2 border-[var(--color-rail)]';
 
 /**
  * The folded avatar (a leaf: its own primitive subscriptions, so speaking / mute redraw only it):
  * my avatar with the presence dot, as in the full island, and — in a call — one small mark at the
- * top right: green speaker (in a call), red crossed mic (muted) or headphones (deafened). Above the
+ * top right: green speaker (in a call), red crossed mic (muted) or headphones (deafened). The system
+ * took the mic (#255): the crossed mic too, yellow while it is restored, red once that failed: the
+ * panel header that says so is folded here. Above the
  * island (its avatar lies right under it); invisible and click-through while the island is open,
  * still focusable, so Enter / Space / Esc keep working from it.
  */
@@ -256,9 +258,10 @@ const IslandToggle = memo(function IslandToggle({ ref, open, panelId, onToggle }
   const status = useMyStatus();
   const mic = useSelfMic();
   const speaking = useVoice((s) => (user ? (s.speaking[user.id] ?? false) : false));
+  const trouble = useVoice((s) => s.micTrouble);
   if (!user) return null;
   const call = mic.here;
-  const state = !call ? '' : mic.deafened ? t('island.deafened') : mic.muted ? t('island.muted') : '';
+  const state = !call ? '' : mic.deafened ? t('island.deafened') : mic.muted ? t('island.muted') : trouble ? t(trouble === 'recovering' ? 'voice.micRecovering' : 'voice.micUnheard') : '';
   const label = [t('island.toggle', { name: user.displayName }), call ? t('island.inCall') : '', state].filter(Boolean).join(', ');
   return (
     <button
@@ -276,10 +279,15 @@ const IslandToggle = memo(function IslandToggle({ ref, open, panelId, onToggle }
       <span className="island-face relative flex" data-open={open || undefined} aria-hidden>
         <Avatar userId={user.id} name={user.displayName} fileId={user.avatarFileId || undefined} size={32} speaking={speaking && !mic.muted} status={status} ring="var(--color-rail)" />
         {call ? (
-          <span className={cx(BADGE, mic.muted ? 'bg-danger' : 'bg-ok')} data-testid="island-call-mark" data-muted={mic.muted || undefined}>
+          <span
+            className={cx(BADGE, trouble === 'recovering' && !mic.muted ? 'bg-warn text-black' : mic.muted || trouble ? 'bg-danger text-white' : 'bg-ok text-white')}
+            data-testid="island-call-mark"
+            data-muted={mic.muted || undefined}
+            data-trouble={trouble ?? undefined}
+          >
             {mic.deafened ? (
               <HeadphoneOff className="size-2.5" strokeWidth={2.75} />
-            ) : mic.muted ? (
+            ) : mic.muted || trouble ? (
               <MicOff className="size-2.5" strokeWidth={2.75} />
             ) : (
               <Volume2 className="size-2.5" strokeWidth={2.75} />

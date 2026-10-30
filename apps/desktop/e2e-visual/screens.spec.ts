@@ -1515,6 +1515,39 @@ test('self-mic-menu', async ({ open, win, mock, shot }) => {
   await expect(menu.getByTestId('mic-ptt-key')).toBeVisible();
   await expect(menu.getByTestId('ptt-release-compact')).toBeVisible();
   await checkpoint(shot, 'self-mic-menu');
+  // Voice audio recovery (#255) without LiveKit: the voice panel is shown from store state alone
+  // (__calabaVoiceSeat), the recovery signals come through the voice service's own paths.
+  await win.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await win.evaluate(([roomId, workspaceId]) => (window as unknown as { __calabaVoiceSeat?: (s: object) => void }).__calabaVoiceSeat?.({ roomId, workspaceId }), [IDS.rooms.meeting, IDS.workspaces.main]);
+  await expect(win.getByText('Голос подключён')).toBeVisible();
+  await win.evaluate(() => (document.activeElement as HTMLElement | null)?.blur()); // no focus ring / tooltip of the mic button
+  // The system holds the mic: the panel header says so in place of «Голос подключён», no line under
+  // the buttons, no toast. The refused sound is the one toast.
+  await win.evaluate(() => {
+    const w = window as unknown as { __calabaVoiceRecovery?: (what: string) => void };
+    w.__calabaVoiceRecovery?.('recovering');
+    w.__calabaVoiceRecovery?.('playback');
+  });
+  await expect(win.getByTestId('voice-phase')).toHaveText('Ждём микрофон');
+  await expect(win.getByRole('region', { name: 'Голосовое подключение' }).getByRole('alert')).toHaveCount(0); // no red line under the buttons
+  await expect(win.getByTestId('toast')).toHaveCount(1);
+  await expect(win.getByTestId('toast').filter({ hasText: 'Вы не слышите собеседников' })).toBeVisible();
+  await expect(win.getByTestId('toast').getByRole('button', { name: 'Включить звук' })).toBeVisible();
+  await checkpoint(shot, 'voice-audio-recovery-seat');
+  await win.evaluate(() => (window as unknown as { __calabaVoiceRecovery?: (w: string) => void }).__calabaVoiceRecovery?.('unheard'));
+  await expect(win.getByTestId('voice-phase')).toHaveText('Вас не слышно');
+  await expect(win.getByTestId('toast')).toHaveCount(1); // still only the sound prompt
+  await checkpoint(shot, 'voice-audio-recovery-unheard');
+  // Outside «Команда» the island is folded (ADR-0146): the avatar's mark carries the state.
+  await win.getByTestId('toast').getByRole('button', { name: 'Закрыть' }).click();
+  await win.getByTestId('section-calendar').click();
+  const mark = win.getByTestId('island-call-mark');
+  await expect(mark).toHaveAttribute('data-trouble', 'unheard');
+  await checkpoint(shot, 'voice-audio-recovery-folded-unheard');
+  await win.evaluate(() => (window as unknown as { __calabaVoiceRecovery?: (w: string) => void }).__calabaVoiceRecovery?.('recovering'));
+  await expect(mark).toHaveAttribute('data-trouble', 'recovering');
+  await checkpoint(shot, 'voice-audio-recovery-folded');
 });
 
 test('workspace-menu', async ({ open, win, mock, shot }) => {
@@ -3360,6 +3393,17 @@ test('voice-reconnecting', async ({ open, win, mock, shot }) => {
   await win.evaluate(() => (window as unknown as { __calabaVoicePhase?: (p: string) => void }).__calabaVoicePhase?.('reconnecting'));
   await expect(win.getByTestId('voice-reconnecting')).toBeVisible();
   await checkpoint(shot, 'voice-reconnecting');
+  // Back from the background: the mic is being restored (the panel header) and the remote audio
+  // waits for a tap («Вы не слышите собеседников»).
+  await win.evaluate(() => {
+    const w = window as unknown as { __calabaVoicePhase?: (p: string) => void; __calabaVoiceRecovery?: (what: string) => void };
+    w.__calabaVoicePhase?.('connected');
+    w.__calabaVoiceRecovery?.('recovering');
+    w.__calabaVoiceRecovery?.('playback');
+  });
+  await expect(win.getByTestId('voice-phase')).toHaveText('Ждём микрофон');
+  await expect(win.getByTestId('toast').filter({ hasText: 'Вы не слышите собеседников' })).toBeVisible();
+  await checkpoint(shot, 'voice-audio-recovery');
 });
 
 test('voice-member-menu', async ({ open, win, mock, shot }) => {

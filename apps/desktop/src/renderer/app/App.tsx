@@ -45,6 +45,8 @@ declare global {
     __calabaLocale?: (locale: Locale) => void;
     /** Visual tests only: the room a phone call parked (ADR-0133) — the phone harness has no LiveKit link to park. */
     __calabaParked?: (p: { roomId: string; workspaceId: string } | null) => void;
+    /** Visual tests only: be «in voice» in a room by store state alone, no LiveKit (null = leave; `phase` defaults to connected). */
+    __calabaVoiceSeat?: (seat: { roomId: string; workspaceId: string; phase?: 'connected' | 'reconnecting' } | null) => void;
   }
 }
 
@@ -62,10 +64,13 @@ function useTheme(): void {
     window.__calabaLogout = () => logout();
     window.__calabaLocale = (locale) => usePrefs.getState().setPrefs({ locale });
     window.__calabaParked = (parked) => setVoice({ parked });
+    window.__calabaVoiceSeat = (seat) =>
+      setVoice(seat ? { roomId: seat.roomId, workspaceId: seat.workspaceId, phase: seat.phase ?? 'connected', joinedAt: Date.now() } : { roomId: null, workspaceId: null, phase: 'idle', joinedAt: null });
     return () => {
       delete window.__calabaLogout;
       delete window.__calabaLocale;
       delete window.__calabaParked;
+      delete window.__calabaVoiceSeat;
     };
   }, [os, visualTest]);
   useEffect(() => {

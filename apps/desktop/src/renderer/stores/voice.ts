@@ -139,6 +139,8 @@ export interface VoiceStore {
   /** Human text (lib/media/errors.ts), never a raw error. */
   micError: string | null;
   micErrorAction: MediaErrorAction | null;
+  /** The system muted the mic (#255, services/voice setMicTrouble): the panel header and the phone strip say so. */
+  micTrouble: 'recovering' | 'unheard' | null;
   /** A moderator muted my mic (not me): shown as a red crossed mic, distinct from self-mute. */
   serverMuted: boolean;
   /**
@@ -209,6 +211,7 @@ export const useVoice = create<VoiceStore>()((set) => ({
   ducking: false,
   micError: null,
   micErrorAction: null,
+  micTrouble: null,
   serverMuted: false,
   micSyncLag: false,
   speaking: {},
