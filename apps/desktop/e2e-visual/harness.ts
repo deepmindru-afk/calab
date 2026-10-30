@@ -436,3 +436,11 @@ export async function expectAssigneeStacks(page: Page): Promise<void> {
   expect(new Set(boxes.map((b) => b.h)).size, JSON.stringify(boxes)).toBe(1);
   expect(new Set(boxes.map((b) => b.right)).size, JSON.stringify(boxes)).toBe(1);
 }
+
+/** Board #115: CAL-3 made by the «Погода» bot, which asks me (an assignee) to act on my behalf. Call after open(). */
+export function seedBotAuthoredTask(mock: MockServer): void {
+  mock.seedBots();
+  const t = mock.boards.taskByKey('CAL-3');
+  if (!t) throw new Error('no CAL-3');
+  t.task.createdBy = IDS.bots.weather;
+}

@@ -7,7 +7,7 @@ import { FREE_PLAN_LIMITS, defaultSettings, mockPdf, ts } from '../e2e-support/f
 import { CODE_FIXTURE, IDS, MOCK_GPTUNNEL_CODE, MOCK_GPTUNNEL_WEB, PASSWORD, RECORDING_FIXTURE, slowWebpAnimation, type MockServer } from '../e2e-support/mock-server';
 import { encodePng } from '../e2e-support/png';
 import { expect, test } from './app';
-import { NOW, checkpoint, expectAssigneeStacks, joinVoice, login, seedAssigneeCounts, seedDays, seedLabelOverflow, seedReleases, settle } from './harness';
+import { NOW, checkpoint, expectAssigneeStacks, joinVoice, login, seedAssigneeCounts, seedBotAuthoredTask, seedDays, seedLabelOverflow, seedReleases, settle } from './harness';
 import { DAY, seedDay } from './calendarWeb';
 import { startPublisher } from './publisher';
 
@@ -181,6 +181,7 @@ const KEY = new Set([
   'boards-status-menu',
   'boards-create-menu',
   'boards-task',
+  'boards-bot-consent',
   // «Комментарии | История» of the task panel (ADR-0091).
   'boards-task-comments',
   'boards-task-comments-days',
@@ -4434,6 +4435,42 @@ test('boards-smart-task', async ({ open, win, mock, shot }) => {
 });
 
 /** The task full screen over the board: properties, two assignees, relations, comments. */
+/** Board #115: the bot's «act on your behalf» request in the task: a warn block, one button, a window with «Разрешить» / «Отклонить». */
+test('boards-bot-consent', async ({ open, win, mock, shot }) => {
+  await open();
+  seedBotAuthoredTask(mock);
+  await mainWindow(win, mock);
+  await boardsMode(win, mock);
+  await win.getByTestId('task-card').filter({ hasText: 'CAL-3' }).getByTestId('card-title').click();
+  const panel = win.getByTestId('task-panel');
+  const block = panel.getByTestId('bot-consent-prompt');
+  await expect(block).toBeVisible();
+  await expect(block.getByRole('button')).toHaveCount(1);
+  await checkpoint(shot, 'boards-bot-consent');
+  await block.getByTestId('bot-consent-review').click();
+  const dlg = win.getByTestId('bot-consent-dialog');
+  await expect(dlg).toBeVisible();
+  await checkpoint(shot, 'boards-bot-consent-dialog');
+  // «Отклонить» closes the window and removes the block.
+  await win.getByTestId('bot-consent-deny').click();
+  await expect(dlg).toHaveCount(0);
+  await expect(block).toHaveCount(0);
+});
+
+/** Board #115: «Разрешить» in the window closes it and the block goes. */
+test('boards-bot-consent-allow', async ({ open, win, mock }) => {
+  await open();
+  seedBotAuthoredTask(mock);
+  await mainWindow(win, mock);
+  await boardsMode(win, mock);
+  await win.getByTestId('task-card').filter({ hasText: 'CAL-3' }).getByTestId('card-title').click();
+  const panel = win.getByTestId('task-panel');
+  await panel.getByTestId('bot-consent-review').click();
+  await win.getByTestId('bot-consent-allow').click();
+  await expect(win.getByTestId('bot-consent-dialog')).toHaveCount(0);
+  await expect(panel.getByTestId('bot-consent-prompt')).toHaveCount(0);
+});
+
 test('boards-task', async ({ open, win, mock, shot }) => {
   await open();
   await mainWindow(win, mock);
