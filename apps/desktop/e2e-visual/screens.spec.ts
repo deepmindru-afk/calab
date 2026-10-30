@@ -103,6 +103,7 @@ const KEY = new Set([
   'profile-birthday',
   'chat-birthday-card',
   'chat-lightbox',
+  'chat-lightbox-paged',
   'workspace-menu',
   'sidebar-create-menu',
   'self-mic-menu',
@@ -3181,6 +3182,21 @@ test('chat-lightbox', async ({ open, win, mock, shot }) => {
   await expect(box.getByRole('heading', { name: 'image.png' })).toBeVisible();
   await expect(box.getByRole('button', { name: 'Скачать' })).toBeVisible();
   await checkpoint(shot, 'chat-lightbox-untyped');
+  // Board #118: ←/→ page through the chat's photos in message order (the other message's photo
+  // first), and stop at the ends (no wrap).
+  const counter = box.locator('span.tabular-nums');
+  await expect(counter).toHaveText('3 / 3'); // the chat's three photos; this is the last
+  await win.keyboard.press('ArrowRight');
+  await expect(counter).toHaveText('3 / 3');
+  await win.keyboard.press('ArrowLeft');
+  await expect(box.getByRole('heading', { name: 'IMG_2041.png' })).toBeVisible();
+  await expect(counter).toHaveText('2 / 3');
+  await expect(frame).toHaveAttribute('data-state', 'loaded');
+  await checkpoint(shot, 'chat-lightbox-paged');
+  await win.keyboard.press('ArrowLeft');
+  await expect(counter).toHaveText('1 / 3');
+  await win.keyboard.press('ArrowLeft');
+  await expect(counter).toHaveText('1 / 3');
   await win.keyboard.press('Escape');
   await expect(box).toHaveCount(0);
 });
