@@ -475,6 +475,78 @@ test('m-chat-image', async ({ page }) => {
   await page.mouse.move(0, 0);
   await expectFeedFits(page);
   await checkpoint(page, 'm-chat-image-untyped', { main: true });
+
+  // Board #118: the viewer behaves like Telegram's. Touch is simulated with pointer events on the
+  // frame (Playwright's WebKit has no multi-touch); double tap uses real taps.
+  await untyped.click();
+  const box = page.getByTestId('lightbox');
+  const frame = box.getByTestId('lightbox-frame');
+  await expect(frame).toHaveAttribute('data-state', 'loaded');
+  const touch = (type: string, id: number, x: number, y: number): Promise<void> =>
+    frame.evaluate(
+      (el, a) => {
+        el.dispatchEvent(new PointerEvent(a.type, { bubbles: true, pointerId: a.id, pointerType: 'touch', isPrimary: a.id === 1, clientX: a.x, clientY: a.y }));
+      },
+      { type, id, x, y },
+    );
+  const center = (await frame.boundingBox()) ?? { x: 0, y: 0, width: 0, height: 0 };
+  const cx = center.x + center.width / 2;
+  const cy = center.y + center.height / 2;
+  // Pinch out: the picture grows about the fingers and fills the screen width.
+  await touch('pointerdown', 1, cx - 30, cy);
+  await touch('pointerdown', 2, cx + 30, cy);
+  for (let i = 1; i <= 6; i++) {
+    await touch('pointermove', 1, cx - 30 - i * 20, cy);
+    await touch('pointermove', 2, cx + 30 + i * 20, cy);
+  }
+  await touch('pointerup', 1, cx - 150, cy);
+  await touch('pointerup', 2, cx + 150, cy);
+  await expect.poll(async () => (await frame.boundingBox())?.width ?? 0).toBeGreaterThan(center.width * 2);
+  await checkpoint(page, 'm-lightbox-zoomed');
+  // Zoomed: a horizontal drag pans, it does not page (still the second photo).
+  await touch('pointerdown', 1, cx, cy);
+  await touch('pointermove', 1, cx - 80, cy);
+  await touch('pointerup', 1, cx - 80, cy);
+  await expect(box.getByRole('heading', { name: 'image.png' })).toBeVisible();
+  // Double tap zooms back out.
+  await page.touchscreen.tap(cx, cy);
+  await page.touchscreen.tap(cx, cy);
+  await expect.poll(async () => Math.round((await frame.boundingBox())?.width ?? 0)).toBe(Math.round(center.width));
+  // Fitted: a swipe right shows the previous photo, another one at the first photo does nothing.
+  await touch('pointerdown', 1, cx - 80, cy);
+  await touch('pointermove', 1, cx, cy);
+  await touch('pointermove', 1, cx + 120, cy);
+  await touch('pointerup', 1, cx + 120, cy);
+  const counter = box.locator('span.tabular-nums');
+  await expect(box.getByRole('heading', { name: 'IMG_2041.png' })).toBeVisible();
+  await expect(frame).toHaveAttribute('data-state', 'loaded');
+  await checkpoint(page, 'm-lightbox-paged');
+  const swipe = async (from: number, to: number): Promise<void> => {
+    await touch('pointerdown', 1, from, cy);
+    await touch('pointermove', 1, to, cy);
+    await touch('pointerup', 1, to, cy);
+  };
+  // The chat holds three photos (message order): one more swipe right reaches the first, the next does nothing.
+  await expect(counter).toHaveText('2 / 3');
+  await swipe(cx - 80, cx + 120);
+  await expect(counter).toHaveText('1 / 3');
+  await expect(frame).toHaveAttribute('data-state', 'loaded');
+  await swipe(cx - 80, cx + 120);
+  await expect(counter).toHaveText('1 / 3');
+  // Swipe left goes forward to the last one (then nothing more); swipe down closes.
+  await swipe(cx + 80, cx - 120);
+  await expect(counter).toHaveText('2 / 3');
+  await expect(frame).toHaveAttribute('data-state', 'loaded');
+  await swipe(cx + 80, cx - 120);
+  await expect(counter).toHaveText('3 / 3');
+  await expect(frame).toHaveAttribute('data-state', 'loaded');
+  await swipe(cx + 80, cx - 120);
+  await expect(counter).toHaveText('3 / 3');
+  await expect(box.getByRole('heading', { name: 'image.png' })).toBeVisible();
+  await touch('pointerdown', 1, cx, cy);
+  await touch('pointermove', 1, cx, cy + 200);
+  await touch('pointerup', 1, cx, cy + 200);
+  await expect(box).toHaveCount(0);
 });
 
 // CBF-66: a Disk folder link in a chat is its own card — name, who shared, what is inside, «Открыть».
