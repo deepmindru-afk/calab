@@ -61,6 +61,15 @@ type SessionState struct {
 	// participant_joined clears it, a device that never connects is removed after 15 s.
 	Pending  bool  `json:"p,omitempty"`
 	JoinedAt int64 `json:"j"` // unix ms
+	// Lost: the device dropped out of LiveKit involuntarily and its seat is kept (ADR-0150):
+	// others see «no connection». A /join of the device in this room or its participant_joined
+	// clears it.
+	Lost bool `json:"lo,omitempty"`
+	// Hold: unix ms until which the seat stays without a LiveKit participant (ADR-0150): set
+	// with Lost to the drop + VOICE_LOST_GRACE; a /join that takes the seat back keeps it at
+	// least connectConfirm ahead. participant_joined clears it; reconcile removes the seat once
+	// it has passed. 0 = none (the usual reconcile rules apply).
+	Hold int64 `json:"h,omitempty"`
 }
 
 // Stream is an active screen share track.
@@ -128,7 +137,8 @@ func ParseRoomName(name string) (workspaceID, roomID uuid.UUID, ok bool) {
 // workspace: the user is in the room of their most recently joined session; muted/deafened
 // = all sessions in that room are; streaming / camera / musician = any session in that room
 // is; ptt / on_phone = all sessions in that room are; pending = all
-// sessions in that room are still connecting (one connected device makes the user connected).
+// sessions in that room are still connecting (one connected device makes the user connected);
+// connection_lost = all sessions in that room lost their connection (ADR-0150).
 // Returns a state with empty RoomId when the user has no sessions.
 func Aggregate(workspaceID, userID uuid.UUID, sessions []SessionState) *v1.VoiceState {
 	out := &v1.VoiceState{WorkspaceId: workspaceID.String(), UserId: userID.String()}
@@ -146,7 +156,7 @@ func Aggregate(workspaceID, userID uuid.UUID, sessions []SessionState) *v1.Voice
 		return out
 	}
 	out.RoomId = latest.RoomID.String()
-	out.Muted, out.Deafened, out.Pending, out.Ptt, out.OnPhone = true, true, true, true, true
+	out.Muted, out.Deafened, out.Pending, out.Ptt, out.OnPhone, out.ConnectionLost = true, true, true, true, true, true
 	joined := latest.JoinedAt
 	for _, s := range sessions {
 		if s.UserID != userID || s.RoomID != latest.RoomID {
@@ -160,6 +170,7 @@ func Aggregate(workspaceID, userID uuid.UUID, sessions []SessionState) *v1.Voice
 		out.Ptt = out.Ptt && s.Ptt
 		out.OnPhone = out.OnPhone && s.OnPhone
 		out.Pending = out.Pending && s.Pending
+		out.ConnectionLost = out.ConnectionLost && s.Lost
 		joined = min(joined, s.JoinedAt)
 	}
 	out.JoinedAt = timestamppb.New(time.UnixMilli(joined))
@@ -186,7 +197,7 @@ func Equal(a, b *v1.VoiceState) bool {
 		a.GetDeafened() == b.GetDeafened() && a.GetStreaming() == b.GetStreaming() && a.GetCamera() == b.GetCamera() &&
 		a.GetJoinedAt().AsTime().Equal(b.GetJoinedAt().AsTime()) && a.GetServerMuted() == b.GetServerMuted() &&
 		a.GetPending() == b.GetPending() && a.GetMusician() == b.GetMusician() && a.GetPtt() == b.GetPtt() &&
-		a.GetOnPhone() == b.GetOnPhone()
+		a.GetOnPhone() == b.GetOnPhone() && a.GetConnectionLost() == b.GetConnectionLost()
 }
 
 // Store is the Redis-backed voice state.
@@ -487,7 +498,8 @@ func touchedRooms(cur, next *SessionState) []uuid.UUID {
 	return out
 }
 
-// occupied reports a call in rid: a device connected to it (pending ones do not count).
+// occupied reports a call in rid: a device connected to it (pending ones do not count; a seat
+// kept after a lost connection does, ADR-0150: the call goes on through a drop).
 func occupied(sessions []SessionState, rid uuid.UUID) bool {
 	for _, s := range sessions {
 		if s.RoomID == rid && !s.Pending {

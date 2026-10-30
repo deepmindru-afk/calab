@@ -775,6 +775,18 @@ test('m-room-voice-banner', async ({ page }) => {
   for (const row of await rows.all()) expect(Math.round((await row.boundingBox())?.height ?? 0), 'a 56 px person row').toBe(56);
   await expect(card.getByTestId('voice-people-join')).toBeVisible();
   await checkpoint(page, 'm-voice-people');
+  // ADR-0150: Вера's connection is lost, her seat is kept: the card row dimmed with «нет связи»,
+  // her avatar dimmed in the banner and header stacks.
+  mock.setVoiceState({ userId: IDS.users.vera, roomId: IDS.rooms.call, connectionLost: true });
+  await expect(rows.nth(1).locator('[data-voice-icon="connection-lost"]')).toBeVisible();
+  await checkpoint(page, 'm-voice-people-lost');
+  await page.keyboard.press('Escape');
+  await expect(card).toHaveCount(0);
+  await expect(banner.locator('[data-connection-lost]')).toHaveCount(1);
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await checkpoint(page, 'm-room-voice-banner-lost', { main: true });
+  await stack.tap();
+  await expect(card).toBeVisible();
   // A tap on a person: their member menu, a level over the card; back closes one level at a time.
   await rows.first().tap();
   await expect(page.getByRole('menu')).toBeVisible();

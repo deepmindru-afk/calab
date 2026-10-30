@@ -739,7 +739,7 @@ export interface MockServer {
    * `joinedAtMs`: VoiceState.joined_at (client clock — a visual test's page clock is fixed); kept
    * within the same room, none by default.
    */
-  setVoiceState(args: { userId: string; roomId: string; muted?: boolean; deafened?: boolean; streaming?: boolean; camera?: boolean; pending?: boolean; joinedAtMs?: number; musician?: boolean; ptt?: boolean; onPhone?: boolean }): void;
+  setVoiceState(args: { userId: string; roomId: string; muted?: boolean; deafened?: boolean; streaming?: boolean; camera?: boolean; pending?: boolean; joinedAtMs?: number; musician?: boolean; ptt?: boolean; onPhone?: boolean; connectionLost?: boolean }): void;
   /** Sets a user's presence and fans out PRESENCE_UPDATE. */
   setPresence(userId: string, status: PresenceStatus): void;
   /**
@@ -2591,7 +2591,7 @@ class MockImpl {
     this.fanout((u) => (u === userId || this.shareWorkspace(u, userId) ? { event: { case: 'presenceUpdate', value: { presence } } } : null));
   }
 
-  setVoice(userId: string, roomId: string, patch: { muted?: boolean; deafened?: boolean; streaming?: boolean; serverMuted?: boolean; camera?: boolean; pending?: boolean; joinedAtMs?: number; musician?: boolean; ptt?: boolean; onPhone?: boolean }): void {
+  setVoice(userId: string, roomId: string, patch: { muted?: boolean; deafened?: boolean; streaming?: boolean; serverMuted?: boolean; camera?: boolean; pending?: boolean; joinedAtMs?: number; musician?: boolean; ptt?: boolean; onPhone?: boolean; connectionLost?: boolean }): void {
     const prev = this.state.voiceStates.get(userId);
     const room = roomId ? this.state.rooms.get(roomId) : undefined;
     // ADR-0034: a DM call's voice session — no workspace; its events go to the two participants.
@@ -2617,6 +2617,7 @@ class MockImpl {
       musician: patch.musician ?? (sameRoom ? prev.musician : false),
       ptt: patch.ptt ?? (sameRoom ? prev.ptt : false),
       onPhone: patch.onPhone ?? (sameRoom ? prev.onPhone : false),
+      connectionLost: patch.connectionLost ?? (sameRoom ? prev.connectionLost : false),
       joinedAt: patch.joinedAtMs !== undefined ? timestampFromMs(patch.joinedAtMs) : sameRoom ? prev.joinedAt : undefined,
     });
     // Moving to another workspace's room: tell the old workspace the user left.
