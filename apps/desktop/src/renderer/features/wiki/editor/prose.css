@@ -223,7 +223,9 @@
   /* Columns size by their content and wrap at spaces only; when they don't fit, .tableWrapper scrolls. */
   table-layout: auto;
   width: max-content;
-  min-width: 100%;
+  /* !important: the editor's table node view sets an inline min-width (the column sum) that would win and leave
+     the table narrower than the read view. */
+  min-width: 100% !important;
   margin: var(--space-1) 0;
 }
 .wiki-prose th,

@@ -129,7 +129,8 @@ function block(n: PmNode, c: Ctx, k: string): ReactNode {
     case 'table':
       // Same DOM as the editor's table (extensions.ts): a scrolling wrapper, cells hold paragraphs.
       return (
-        <div key={k} className="tableWrapper">
+        // tabIndex: a wide table scrolls sideways, and a scroll area must be reachable from the keyboard.
+        <div key={k} className="tableWrapper" tabIndex={0}>
           <table className="wiki-table">
             <tbody>
               {(n.content ?? []).map((row, ri) => (
