@@ -79,7 +79,7 @@ import { applyBoardEvent, applySnapshotBoards, dropWorkspaceBoards, onBoardsRead
 import { onDiskItemRemove, onDiskItemUpsert, onWorkspaceStorage } from './disk';
 import { useDisk } from '../stores/disk';
 import { onWikiPageRemove, onWikiPageUpsert } from './wiki';
-import { onCanvasItemRemove, onCanvasItemUpsert } from './canvas';
+import { onCanvasItemRemove, onCanvasItemUpsert, resyncCanvasTree } from './canvas';
 import { onCanvasCommentDelete, onCanvasCommentMention, onCanvasCommentUpsert, resyncCanvasComments } from './canvasComments';
 import { restoreSectionOnBoot } from '../features/shell/sectionNav';
 import { armNavHistory } from './navHistory';
@@ -190,6 +190,8 @@ export function applyDispatch(ev: DispatchEvent): void {
       useEventComments.getState().reset();
       // Canvas comments missed while away (ADR-0127 wave 4): the held canvases read theirs again.
       resyncCanvasComments();
+      // The canvas tree and the open canvas' bits likewise (docs/09, 2026-10-21 (б)).
+      resyncCanvasTree();
       // Read receipts (docs/09 #92): workspace rooms here, DMs with their summaries (applyDm).
       useReadReceipts.getState().reset();
       useReadReceipts.getState().setFrom(r.readReceiptsFrom); // ADR-0140: no ticks before it
