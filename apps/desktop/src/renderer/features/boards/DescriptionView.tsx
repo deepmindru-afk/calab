@@ -2,7 +2,7 @@
  * The read view of a task description (docs/08 «Доски»; board #107: edit and read look the same).
  * The markdown-lite text goes through the same converter the editor starts from (descriptionDoc)
  * and is drawn as the plain DOM the compact wiki editor produces — `.wiki-editor[data-compact]
- * .wiki-prose` with the shared rules of wiki/editor/prose.css — so paragraphs, lists, headings,
+ * .wiki-prose` with the shared rules of wiki/editor/prose.css — so paragraphs, lists, headings, tables,
  * links, emoji and pictures sit where they sit while editing. No editor is mounted in read mode
  * (task panels and lists stay light); only the doc → React mapping is here.
  */
@@ -126,8 +126,26 @@ function block(n: PmNode, c: Ctx, k: string): ReactNode {
           {c.image(str(n.attrs?.['fileId']), str(n.attrs?.['alt']))}
         </div>
       );
+    case 'table':
+      // Same DOM as the editor's table (extensions.ts): a scrolling wrapper, cells hold paragraphs.
+      return (
+        <div key={k} className="tableWrapper">
+          <table className="wiki-table">
+            <tbody>
+              {(n.content ?? []).map((row, ri) => (
+                <tr key={`${k}.${ri}`}>
+                  {(row.content ?? []).map((cell, ci) => {
+                    const Cell = cell.type === 'tableHeader' ? 'th' : 'td';
+                    return <Cell key={`${k}.${ri}.${ci}`}>{blocks(cell.content, c, `${k}.${ri}.${ci}`)}</Cell>;
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
     default:
-      // Tables, callouts and the like (a pasted markdown): their text, nothing is dropped.
+      // Callouts and the like (a pasted markdown): their text, nothing is dropped.
       return n.content ? <div key={k}>{blocks(n.content, c, k)}</div> : null;
   }
 }

@@ -4506,13 +4506,25 @@ test('boards-task', async ({ open, win, mock, shot }) => {
   await win.keyboard.type('- первый пункт');
   await win.keyboard.press('Enter');
   await win.keyboard.type('второй пункт');
+  // Board #134: a pasted markdown table is a table in edit mode and stays one after saving.
+  await win.keyboard.press('Enter');
+  await win.keyboard.press('Enter');
+  await prose.evaluate((el) => {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', '| Поле | Тип | Заметка |\n| --- | --- | --- |\n| id | **uuid** | первичный ключ |\n| имя | text | |');
+    el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  });
+  await expect(prose.locator('table th')).toHaveCount(3);
   await panel.getByTestId('task-description-save').click();
   await expect(editor).toHaveCount(0);
   const read = panel.getByTestId('task-description');
   await expect(read.locator('h1')).toHaveText('Итоги звонка');
+  await expect(read.locator('table th')).toHaveCount(3);
+  await expect(read.locator('table td')).toHaveCount(6);
+  await expect(read.locator('table td strong')).toHaveText('uuid');
   const boxes = async (root: Locator): Promise<number[][]> => {
     const out: number[][] = [];
-    for (const sel of ['h1', 'p >> nth=0', 'p >> nth=1', 'li >> nth=1']) {
+    for (const sel of ['h1', 'p >> nth=0', 'p >> nth=1', 'li >> nth=1', 'table', 'th >> nth=1', 'td >> nth=4']) {
       const b = await root.locator(sel).boundingBox();
       out.push(b ? [b.x, b.y, b.width, b.height] : []);
     }
