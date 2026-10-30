@@ -31,6 +31,13 @@ const incomingCalls = env('CALAB_IOS_INCOMING_CALLS') === '1';
 if (incomingCalls && !pushEnvironment) throw new Error('CALAB_IOS_INCOMING_CALLS requires CALAB_IOS_PUSH_ENVIRONMENT');
 const nativeCallAudio = env('CALAB_IOS_NATIVE_CALL_AUDIO') === '1';
 if (nativeCallAudio && !incomingCalls) throw new Error('CALAB_IOS_NATIVE_CALL_AUDIO requires incoming calls');
+/**
+ * Android push (ADR-0070/0071, Android): the Firebase project's google-services.json for this
+ * applicationId. Optional — without it the build still succeeds and push reports `unsupported` at
+ * runtime (no default FirebaseApp). Expo's built-in `googleServicesFile` copies it and applies the
+ * Google Services Gradle plugin; no react-native-firebase.
+ */
+const googleServicesFile = env('CALAB_ANDROID_GOOGLE_SERVICES_FILE');
 const owner = env('CALAB_EXPO_OWNER');
 const projectId = env('CALAB_EAS_PROJECT_ID');
 
@@ -55,6 +62,9 @@ const config: ExpoConfig = {
     ...(linkHosts.length ? { associatedDomains: linkHosts.map((host) => `applinks:${host}`) } : {}),
     // Explicit opt-in only; requires a matching APNs-capable profile. Default local builds request no APS grant.
     ...(pushEnvironment ? { entitlements: { 'aps-environment': pushEnvironment } } : {}),
+    // Only standard encryption (HTTPS, WebRTC DTLS-SRTP): App Store Connect then stops asking
+    // the export-compliance question on every build.
+    config: { usesNonExemptEncryption: false },
     infoPlist: {
       ...(pushEnvironment ? { CalabMessagePushEnvironment: pushEnvironment } : {}),
       ...(incomingCalls ? { CalabIncomingCallsEnabled: true } : {}),
@@ -75,8 +85,10 @@ const config: ExpoConfig = {
     // Defaults to the iOS build number (CALAB_ANDROID_VERSION_CODE) so one env number drives both
     // stores unless Android needs its own, higher value (Play rejects a re-upload of the same code).
     versionCode: identity.versionCode,
-    // The WebView grants getUserMedia only for permissions the app declares.
-    permissions: ['RECORD_AUDIO', 'MODIFY_AUDIO_SETTINGS', 'CAMERA'],
+    ...(googleServicesFile ? { googleServicesFile } : {}),
+    // The WebView grants getUserMedia only for permissions the app declares. POST_NOTIFICATIONS is
+    // the Android 13+ runtime permission for push, asked only through the web client's prompt.
+    permissions: ['RECORD_AUDIO', 'MODIFY_AUDIO_SETTINGS', 'CAMERA', 'POST_NOTIFICATIONS'],
     intentFilters: [
       ...(linkHosts.length ? [{
         action: 'VIEW',
@@ -95,6 +107,10 @@ const config: ExpoConfig = {
     // iOS 27 SDK apps without the UIKit scene lifecycle trap at launch. Expo's supported SDK 57
     // opt-in: a scene manifest plus ExpoAppSceneDelegate, which owns the window and starts React.
     ['expo-build-properties', { ios: { enableSceneSupport: true } }],
+    // Android (DEV-5032): the origin for the native main-frame guard (ADR-0067) and a launch link
+    // that is not replayed when the activity is recreated (ADR-0142).
+    ['./plugins/withAndroidWebOrigin', { origin: webOrigin }],
+    './plugins/withAndroidIntentReset',
   ],
   ...(projectId ? { extra: { eas: { projectId } } } : {}),
 };

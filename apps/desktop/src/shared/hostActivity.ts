@@ -99,10 +99,17 @@ export function parseNotificationTestResult(value: unknown): HostNotificationTes
  return value === 'scheduled' || value === 'denied' || value === 'unsupported' || value === 'failed' ? value : null;
 }
 export interface HostPushReference { binding: string; eventId: string; expiresAt: number }
+/**
+ * A notification tap. `action` (Android, ADR-0071) is the button of a call notification the user
+ * pressed; absent for a plain tap and on iOS.
+ */
+export interface HostPushTap extends HostPushReference { action?: 'answer' | 'decline' }
 export interface HostNotificationState {
  permission: HostNotificationPermission;
  appId?: string; environment?: 'development' | 'production'; installationId?: string; token?: string;
- tap?: HostPushReference;
+ /** The transport of `token`: absent is APNs (iOS); `fcm` is the Android host (ADR-0070, Android). */
+ provider?: 'fcm';
+ tap?: HostPushTap;
 }
 export interface HostNotificationsCapability {
  /** A local OS banner only; does not prove remote APNs delivery. Absent on older binaries. */
@@ -119,12 +126,22 @@ export function parsePushReference(value: unknown): HostPushReference | null {
   typeof value.expiresAt !== 'number' || !Number.isSafeInteger(value.expiresAt) || value.expiresAt <= Date.now()) return null;
  return value as unknown as HostPushReference;
 }
+function parsePushTap(value: unknown): HostPushTap | null {
+ if (!record(value) || !Object.hasOwn(value, 'action')) return parsePushReference(value);
+ if (value.action !== 'answer' && value.action !== 'decline') return null;
+ const { action, ...reference } = value;
+ return parsePushReference(reference) ? { ...(reference as unknown as HostPushReference), action } : null;
+}
+/** An FCM registration token: opaque URL-safe text with `:` (no fixed format; the server caps it at 4096). */
+const FCM_TOKEN = /^[A-Za-z0-9_:.-]{32,4096}$/;
 export function parseNotificationState(value: unknown): HostNotificationState | null {
  if (!record(value) || !['unsupported', 'default', 'denied', 'granted'].includes(String(value.permission)) ||
-  Object.keys(value).some(k => !['permission','appId','environment','installationId','token','tap'].includes(k))) return null;
- if (value.token !== undefined && (value.permission !== 'granted' || typeof value.token !== 'string' || !/^[0-9a-f]{32,512}$/i.test(value.token) ||
+  Object.keys(value).some(k => !['permission','appId','environment','installationId','token','provider','tap'].includes(k))) return null;
+ const fcm = value.provider === 'fcm';
+ if (value.provider !== undefined && (!fcm || value.token === undefined || value.environment !== 'production')) return null;
+ if (value.token !== undefined && (value.permission !== 'granted' || typeof value.token !== 'string' || !(fcm ? FCM_TOKEN : /^[0-9a-f]{32,512}$/i).test(value.token) ||
   typeof value.appId !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)+$/.test(value.appId) || value.appId.length > 255 ||
   !['development','production'].includes(String(value.environment)) || typeof value.installationId !== 'string' || !/^[0-9a-f-]{36}$/i.test(value.installationId))) return null;
- if (value.tap !== undefined && !parsePushReference(value.tap)) return null;
+ if (value.tap !== undefined && !parsePushTap(value.tap)) return null;
  return value as unknown as HostNotificationState;
 }

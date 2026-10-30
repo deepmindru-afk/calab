@@ -90,6 +90,66 @@ Compose overlay `infra/docker/compose.push.yml` остаётся вариант�
 проверка его структуры: `docker compose -f compose.yml -f compose.push.yml config --quiet`.
 Он не изменяет манифесты Kubernetes.
 
+## FCM (Android, 2026-10-29)
+
+Сервер уже поддерживает FCM HTTP v1 (`fcmSender`, ADR-0070/0071 «Android»): Android-приложение
+регистрирует FCM-токен, сервер шлёт data-only push сообщений и звонков. Без полного набора
+трёх переменных FCM transport отсутствует, а Android-приложение получает
+«уведомления недоступны»; частичный набор отклоняется при старте.
+
+| Переменная API | Значение оператора |
+| --- | --- |
+| `PUSH_FCM_SERVICE_ACCOUNT_FILE` | `/run/calab-push/fcm.json` внутри контейнера (JSON service account) |
+| `PUSH_FCM_PROJECT_ID` | ID Firebase/Google Cloud проекта; должен совпадать с `project_id` в JSON |
+| `PUSH_FCM_APP_ID` | **applicationId Android-сборки** (`CALAB_ANDROID_APPLICATION_ID`), не Firebase App ID |
+
+`PUSH_FCM_APP_ID` сравнивается с `appId`, который присылает приложение (его `packageName`), и
+уходит в `restricted_package_name`. При несовпадении веб не регистрирует endpoint.
+
+Откуда что берётся (делает владелец проекта Firebase, один раз на развёртывание):
+
+1. Firebase console → новый проект (или существующий Google Cloud проект) → добавить
+   Android-приложение с тем же applicationId. Включить **Firebase Cloud Messaging API (V1)**.
+2. Скачать `google-services.json`: это клиентская конфигурация **сборки**, не секрет сервера.
+   В git не коммитить (`apps/mobile/.gitignore`). Путь к нему задаётся при сборке:
+   `CALAB_ANDROID_GOOGLE_SERVICES_FILE` (локальный `.env` или EAS file env). Без файла
+   сборка проходит, но push на ней `unsupported`. Файл должен содержать client этого
+   applicationId, иначе Gradle-плагин Google Services остановит сборку.
+3. Project settings → Service accounts → Generate new private key → JSON. Нужна только
+   отправка FCM (роль Firebase Cloud Messaging API Admin или эквивалентная). Это **секрет
+   сервера**: в Secret/Vault, не в image, не в логи. Сервер проверяет `type=service_account`,
+   совпадение `project_id`, `client_email` в `*.gserviceaccount.com`, RSA-ключ ≥ 2048 и
+   стандартный `token_uri`. Сеть до провайдера при старте не нужна.
+
+Фрагмент для Pod spec (дополняет пример APNs выше; один Secret-том может содержать оба файла):
+
+```yaml
+      env:
+        - {name: PUSH_FCM_SERVICE_ACCOUNT_FILE, value: /run/calab-push/fcm.json}
+        - name: PUSH_FCM_PROJECT_ID
+          valueFrom: {secretKeyRef: {name: calab-push-config, key: fcm-project-id}}
+        - name: PUSH_FCM_APP_ID
+          valueFrom: {secretKeyRef: {name: calab-push-config, key: fcm-app-id}}
+  volumes:
+    - name: apns-key            # тот же том /run/calab-push
+      secret:
+        secretName: calab-push-key
+        defaultMode: 0440
+        items:
+          - {key: apns.p8, path: apns.p8}
+          - {key: fcm.json, path: fcm.json}
+```
+
+Миграция БД и новые переменные сверх трёх не нужны. Звонки через FCM работают после релиза
+API/web с ADR-0071 «Android» (сервер раньше отвергал `callsEnabled` для FCM). Отмена звонка
+(`call-cancel`, ADR-0071 «Android») идёт тем же transport и отдельной настройки не требует. Проверка:
+в local-account сессии `GET /api/me/push-capabilities` объявляет FCM с нужным `appId` и
+`production`. Затем на Android-сборке с `google-services.json` разрешить уведомления,
+свернуть приложение и отправить личное сообщение с другого аккаунта (сценарий —
+[message-notifications-testing](message-notifications-testing.md#android-fcm-2026-10-29)).
+Откат: убрать все три `PUSH_FCM_*` вместе. Endpoints остаются в реестре и истекают сами,
+доставка на них прекращается сразу.
+
 ## TestFlight: переключение APNs с development на production
 
 Признак несовпадения: установленная TestFlight-сборка имеет `aps-environment=production`,

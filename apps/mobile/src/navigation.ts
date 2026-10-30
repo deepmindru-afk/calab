@@ -70,8 +70,12 @@ export function isAppSubframe(req: NavigationRequest, origin: string): boolean {
  * A navigation the WebView is about to start (`onShouldStartLoadWithRequest`). Fails closed: a
  * request that is not a proven app iframe — every Android request, an iOS top frame — is judged as
  * the top frame and may only leave for the OS, never load another origin in the WebView.
- * This is a JS decision, not a native guard: on Android the library allows the load if JS does not
- * answer within 250 ms, and the engine does not ask for POST navigations (ADR-0067).
+ * On Android the main frame is decided natively first (patched react-native-webview,
+ * CalabOriginGuard, ADR-0067): only the exact origin loads, anything else is cancelled without
+ * waiting for JS, and this function only learns of it fire-and-forget to hand the link to the OS
+ * or show the error; a main-frame request outside the origin (POST included) gets an empty 403.
+ * Android sub-frames still rely on this decision, which the library allows after 250 ms without an
+ * answer. App.tsx's `leftApp` stays as belt-and-braces after the fact.
  */
 export function decideNavigation(req: NavigationRequest, origin: string): Decision {
   if (isAppUrl(req.url, origin)) return 'load';

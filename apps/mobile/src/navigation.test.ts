@@ -36,6 +36,21 @@ describe('isAppUrl', () => {
     expect(isAppUrl('https://APP.example.com:443/invite/x?y=1#z', ORIGIN)).toBe(true);
   });
 
+  // Parity with the Android guard (CalabOriginGuard, webviewOriginGuard.test.js): only the authority decides.
+  it.each([
+    'https://app.example.com/board?filter=a|b',
+    'https://app.example.com/x#a^b',
+    'https://app.example.com/{id}?q={x}',
+    'https://app.example.com/a`b',
+    'https://app.example.com:0443/',
+  ])('accepts %s', (url) => {
+    expect(isAppUrl(url, ORIGIN)).toBe(true);
+  });
+
+  it.each(['https://app.example.com:65536/', 'https://app.example.com@evil.test/x|y'])('rejects %s', (url) => {
+    expect(isAppUrl(url, ORIGIN)).toBe(false);
+  });
+
   it.each(LOOKALIKES)('rejects the lookalike %s', (url) => {
     expect(isAppUrl(url, ORIGIN)).toBe(false);
   });

@@ -201,7 +201,8 @@ async function mobileProblems(page: Page, main: boolean): Promise<string[]> {
       const INTERACTIVE = 'button, a[href], input, select, textarea, [role="tab"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="switch"], [role="checkbox"], [role="radio"], [role="option"]';
       const ALLOW: Array<[string, string]> = [
         ['[data-inline-target]', 'a link inside a sentence of body text (e.g. the organizer mailto in «Организатор: …»), marked in code'],
-        ['[data-message-id] a[href]', 'links in message text and link-preview titles: inline in running text; the row itself is the tap / long-press target'],
+        ['.wiki-prose[contenteditable="true"] a[href]', 'links in text being edited (wiki page, task description): inline in running text, a tap places the caret'],
+        ['[data-message-id] a[href]','links in message text and link-preview titles: inline in running text; the row itself is the tap / long-press target'],
         ['[data-message-id] button[data-profile-user], [data-message-id] [data-inline-target]', 'author avatar / name and reaction chips in a feed message: dense by design (Telegram-like), the message row is the target; chips keep >= 8 px gaps'],
         ['[data-history-row] button[data-profile-user]', 'actor avatar / name in a task history row (ADR-0091): dense like the feed; the row and its 44 px details chevron are the targets'],
         ['input[type="file"], input[type="range"], input[aria-hidden="true"]', 'native input hidden behind a custom control, or a slider whose thumb row is the target'],
@@ -1178,6 +1179,49 @@ test('m-boards-task', async ({ page }) => {
   await page.keyboard.press('Enter');
   await page.keyboard.type('[] проверить на телефоне');
   await checkpoint(page, 'm-boards-task-desc', { keyboard: true });
+});
+
+// Board #107: the read view of a description is the editor's own typography — paragraphs, a list, a link, an emoji, bold.
+test('m-boards-task-desc-wysiwyg', async ({ page }) => {
+  mock.setClock(NOW.getTime());
+  const cal4 = mock.boards.taskByKey('CAL-4');
+  if (cal4) cal4.task.description = 'Эхо пропало после правки 🎉 подробности на https://calab.io/docs\n\nВторой абзац.\n\n- первый **жирный** пункт\n- второй пункт';
+  await signedIn(page);
+  await tab(page, 'boards');
+  const nav = page.getByTestId('phone-boards');
+  await nav.getByTestId('board-row').filter({ hasText: 'Разработка' }).getByRole('button').first().tap();
+  await page.getByTestId('list-row').filter({ hasText: 'CAL-4' }).getByText('Карточки задач').tap();
+  const panel = page.getByTestId('task-panel');
+  const read = panel.getByTestId('task-description');
+  await expect(read.locator('li')).toHaveCount(2);
+  // Block geometry relative to the first paragraph (the keyboard may scroll the panel).
+  const boxes = async (root: Locator): Promise<number[][]> => {
+    const first = await root.locator('p').first().boundingBox();
+    const out: number[][] = [];
+    for (const sel of ['p >> nth=1', 'li >> nth=0', 'li >> nth=1']) {
+      const b = await root.locator(sel).boundingBox();
+      out.push(b && first ? [b.x - first.x, b.y - first.y, b.width, b.height] : []);
+    }
+    return out;
+  };
+  const readBoxes = await boxes(read);
+  await checkpoint(page, 'm-boards-task-desc-read');
+  // Board #109: opening the editor on this text (it ends in a list) and re-opening it after «Готово» threw
+  // «Applying a mismatched transaction» in WebKit. The blocks stay where the read view drew them.
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  for (const pass of ['open', 'reopen']) {
+    await read.tap();
+    const prose = panel.getByTestId('task-description-editor').locator('.wiki-prose');
+    await expect(prose, pass).toBeFocused();
+    await expect(prose.locator('li')).toHaveCount(2);
+    const editBoxes = await boxes(prose);
+    for (let i = 0; i < readBoxes.length; i++) for (let j = 0; j < 4; j++) expect(Math.abs((editBoxes[i]?.[j] ?? 1e6) - (readBoxes[i]?.[j] ?? -1e6)), `${pass}: block ${i} coord ${j}: read ${String(readBoxes[i])} edit ${String(editBoxes[i])}`).toBeLessThanOrEqual(1);
+    if (pass === 'open') await checkpoint(page, 'm-boards-task-desc-edit', { keyboard: true });
+    await panel.getByTestId('task-description-save').tap();
+    await expect(panel.getByTestId('task-description-editor')).toHaveCount(0);
+  }
+  expect(errors).toEqual([]);
 });
 
 // «История» on the phone's task screen (ADR-0091): two tabs as segments, a detail opened.

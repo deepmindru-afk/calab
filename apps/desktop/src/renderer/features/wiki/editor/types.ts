@@ -1,4 +1,4 @@
-import type { Editor } from '@tiptap/core';
+import type { Editor, FocusPosition } from '@tiptap/core';
 import type { Awareness } from 'y-protocols/awareness';
 import type * as Y from 'yjs';
 import type { MentionCandidate } from '../../../lib/mentions';
@@ -108,7 +108,8 @@ export interface WikiEditorApi {
   getJSON(): unknown;
   /** Plain text (one line per block). */
   getText(): string;
-  focus(): void;
+  /** Focuses the editor, the caret at `at` ('end', 'start', a position; none: where it was). Safe on iOS (board #109). */
+  focus(at?: FocusPosition): void;
   /** The Tiptap editor (the phone toolbar runs its commands; types only outside the chunk). */
   editor: Editor;
   /** Opens the block menu (the toolbar's «+»). */
