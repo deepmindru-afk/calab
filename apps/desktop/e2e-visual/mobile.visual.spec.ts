@@ -1221,7 +1221,8 @@ test('m-boards-task', async ({ page }) => {
 test('m-boards-task-desc-wysiwyg', async ({ page }) => {
   mock.setClock(NOW.getTime());
   const cal4 = mock.boards.taskByKey('CAL-4');
-  if (cal4) cal4.task.description = 'Эхо пропало после правки 🎉 подробности на https://calab.io/docs\n\nВторой абзац.\n\n- первый **жирный** пункт\n- второй пункт';
+  if (cal4) cal4.task.description = 'Эхо пропало после правки 🎉 подробности на https://calab.io/docs\n\nВторой абзац.\n\n- первый **жирный** пункт\n- второй пункт\n\n| Поле | Тип | Обязательное | Описание |\n| --- | --- | --- | --- |\n| id | **uuid** | да | первичный ключ задачи |\n| имя | text | | |';
+  // Board #134: a table is drawn in read mode like in the editor; a wide one scrolls inside the description.
   await signedIn(page);
   await tab(page, 'boards');
   const nav = page.getByTestId('phone-boards');
@@ -1230,11 +1231,12 @@ test('m-boards-task-desc-wysiwyg', async ({ page }) => {
   const panel = page.getByTestId('task-panel');
   const read = panel.getByTestId('task-description');
   await expect(read.locator('li')).toHaveCount(2);
+  await expect(read.locator('table td')).toHaveCount(8);
   // Block geometry relative to the first paragraph (the keyboard may scroll the panel).
   const boxes = async (root: Locator): Promise<number[][]> => {
     const first = await root.locator('p').first().boundingBox();
     const out: number[][] = [];
-    for (const sel of ['p >> nth=1', 'li >> nth=0', 'li >> nth=1']) {
+    for (const sel of ['p >> nth=1', 'li >> nth=0', 'li >> nth=1', '.tableWrapper', 'th >> nth=1', 'td >> nth=4']) {
       const b = await root.locator(sel).boundingBox();
       out.push(b && first ? [b.x - first.x, b.y - first.y, b.width, b.height] : []);
     }

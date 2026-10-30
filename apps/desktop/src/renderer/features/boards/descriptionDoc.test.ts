@@ -37,6 +37,9 @@ const STABLE: Array<[string, string]> = [
   ['heading', '# Цель\nСделать хорошо\n## Детали\nтекст'],
   ['quote', '> цитата клиента\nнаш ответ'],
   ['table', '| Поле | Тип |\n| --- | --- |\n| id | uuid |'],
+  ['table with marks, links and empty cells', '| Поле | **Тип** | Ссылка |\n| --- | --- | --- |\n| `id` | *uuid* | [док](https://example.com/a) |\n| имя |  | ~~старое~~ |'],
+  ['table between text', 'Поля:\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\nИтого две.'],
+  ['table with escaped pipe', '| a | b |\n| --- | --- |\n| x \\| y | 2 |'],
   ['mixed list and text', '**Контекст**\nКлиент жалуется.\n\n**Что сделать**\n- [ ] воспроизвести\n- [ ] починить\nСрок — пятница.'],
   ['link in list', '- [макет](https://figma.com/file/x)\n- https://example.com'],
 ];
@@ -68,6 +71,15 @@ describe('task description ↔ editor doc', () => {
 
   it.each([...STABLE, ...NORMALIZED.map(([n, md]) => [n, md] as [string, string])])('builds a valid wiki doc: %s', (_name, md) => {
     expect(() => wikiSchema().nodeFromJSON(descriptionToDoc(md)).check()).not.toThrow();
+  });
+
+  it('keeps a table as a table with a header row and every cell (board #134)', () => {
+    const md = '| A | B |\n| :-- | --: |\n| 1 |  |';
+    const t = descriptionToDoc(md).content?.[0];
+    expect(t?.type).toBe('table');
+    expect(t?.content?.map((r) => r.content?.map((c) => c.type))).toEqual([['tableHeader', 'tableHeader'], ['tableCell', 'tableCell']]);
+    // Alignment is not stored (markdown-lite has none); the table itself survives a save.
+    expect(pass(md)).toBe('| A | B |\n| --- | --- |\n| 1 |  |');
   });
 
   it('reads pictures as image blocks and mentions with labels; wiki addresses stay links', () => {
