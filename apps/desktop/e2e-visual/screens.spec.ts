@@ -7,7 +7,7 @@ import { FREE_PLAN_LIMITS, defaultSettings, mockPdf, ts } from '../e2e-support/f
 import { CODE_FIXTURE, IDS, MOCK_GPTUNNEL_CODE, MOCK_GPTUNNEL_WEB, PASSWORD, RECORDING_FIXTURE, slowWebpAnimation, type MockServer } from '../e2e-support/mock-server';
 import { encodePng } from '../e2e-support/png';
 import { expect, test } from './app';
-import { NOW, checkpoint, expectAssigneeStacks, joinVoice, login, seedAssigneeCounts, seedBotAuthoredTask, seedDays, seedLabelOverflow, seedReleases, settle } from './harness';
+import { NOW, checkpoint, expectAssigneeStacks, expectToolbarHeights, joinVoice, login, seedAssigneeCounts, seedBotAuthoredTask, seedDays, seedLabelOverflow, seedReleases, settle } from './harness';
 import { DAY, seedDay } from './calendarWeb';
 import { startPublisher } from './publisher';
 
@@ -4159,6 +4159,7 @@ test('calendar-filter', async ({ open, win, mock, shot }) => {
   await expect(win.getByTestId('person-chip')).toHaveCount(2);
   await expect(win.getByTestId('busy-block')).toHaveCount(2);
   await win.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await expectToolbarHeights(win.locator('[data-bar]').filter({ has: win.getByTestId('cal-prev') }), 'calendar toolbar');
   await checkpoint(shot, 'calendar-filter');
 });
 
@@ -4330,6 +4331,8 @@ test('boards-kanban', async ({ open, win, mock, shot }) => {
   await mainWindow(win, mock);
   await boardsMode(win, mock);
   await checkpoint(shot, 'boards-kanban');
+  // Board #117: one control height in the toolbar (search, filter, sort, display, view switch, new task, more).
+  await expectToolbarHeights(win.getByTestId('board-header'), 'boards toolbar');
   // The third column («В работе», CAL-4 with five people) is past the 960 px edge: scroll the board sideways.
   await win.getByTestId('kanban').evaluate((el) => [el, ...el.querySelectorAll<HTMLElement>('*')].forEach((e) => getComputedStyle(e).overflowX === 'auto' && e.scrollWidth > e.clientWidth && (e.scrollLeft = 320)));
   await expect(win.getByTestId('task-card').filter({ hasText: 'Карточки задач' })).toBeVisible();
