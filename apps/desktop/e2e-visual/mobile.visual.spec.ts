@@ -730,6 +730,11 @@ test('m-home', async ({ page }) => {
   await seat('connected');
   const strip = page.getByTestId('mobile-voice-strip');
   await expect(strip).toBeVisible();
+  // #116: only the voice room I am in is tinted in the list; it follows a switch and clears on leave.
+  const current = list.locator('[data-testid="phone-room-row"][data-current]');
+  await expect(current).toHaveCount(1);
+  await expect(current).toHaveAttribute('data-room', IDS.rooms.call);
+  await checkpoint(page, 'm-home-in-voice');
   await page.evaluate(() => {
     const w = window as unknown as { __calabaVoiceRecovery?: (what: string) => void };
     w.__calabaVoiceRecovery?.('recovering');
