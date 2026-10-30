@@ -30,7 +30,7 @@ services:
     #  dockerfile: Caddyfile.behind-proxy
     #network_mode: host
     expose:
-      - 80:80
+      - 80
     restart: unless-stopped
     #<<: *hardening
     #cap_add: [NET_BIND_SERVICE]    # 80/443 as root without other capabilities
@@ -230,7 +230,7 @@ services:
     #network_mode: host
     restart: unless-stopped
     expose:
-      - 3000:3000
+      - 3000
     env_file:
       .env
     environment:
@@ -341,7 +341,7 @@ services:
     #ports:
     #  - "127.0.0.1:5432:5432"
     expose:
-      - 5432:5432
+      - 5432
     volumes:
       - pg_data:/var/lib/postgresql   # PG 18 images keep PGDATA in a versioned subdir here
     healthcheck:
@@ -378,7 +378,7 @@ services:
         printf 'requirepass "%s"\n' "$$pw" > /tmp/auth.conf
         exec valkey-server /tmp/auth.conf --save 60 1 --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction
     expose:
-      - 6379:6379
+      - 6379
     #ports:
     #  - "127.0.0.1:6379:6379"
     volumes:
