@@ -1,6 +1,6 @@
 # iOS native room audio — implementation plan
 
-ADR: [0147](../adr/0147-ios-native-room-audio.md). Issue: GitHub #255. Status: accepted
+ADR: [0149](../adr/0149-ios-native-room-audio.md). Issue: GitHub #255. Status: accepted
 28.10. Order: stage 1 (background and lock) first, stage 2 (the rest) after it.
 
 Goal: on an iPhone shell built with `CALAB_IOS_NATIVE_ROOM_AUDIO=1`, workspace voice rooms use native
@@ -40,7 +40,7 @@ shared web keeps UI, REST, permissions, seat state and video. Everything else ke
 
 | # | Goal (one PR) | Layers | Depends | Days | iPhone |
 |---|---|---|---|---|---|
-| R0 | ADR-0147 + this plan | docs | — | 0.5 | — |
+| R0 | ADR-0149 + this plan | docs | — | 0.5 | — |
 | R1 | Session policy, engine owner and a debug probe | Swift | R0 | 2 | gates G1–G5 |
 | R2 | `roomAudio` bridge contract and capability | TS shared, RN, Swift parsers | R0 | 1.5 | — |
 | R3 | Native room driver behind the build flag | Swift, Expo plugin | R1, R2 | 4 | G6, G8, G14 |
@@ -156,7 +156,7 @@ owner's iPhone and a desktop peer.
 
 - `docs/mobile/room-audio-testing.md` (scenario and results), `docs/02-media.md` (native exception
   covers rooms; Safari limitation), `docs/mobile/shared-web-status.md`, `TESTING.md` (≤15 lines),
-  ADR-0147 status line records the device results; a finding that contradicts it goes to a new ADR.
+  ADR-0149 status line records the device results; a finding that contradicts it goes to a new ADR.
 
 ## Critical path
 

@@ -1,4 +1,4 @@
-# ADR-0147. iOS: native audio for voice rooms in the phone shell
+# ADR-0149. iOS: native audio for voice rooms in the phone shell
 
 Status: accepted, 2026-10-28 (GitHub #255); background and lock ship first (Delivery order). Extends ADR-0067/0079; amends ADR-0004 (native
 output exception), ADR-0014 (gate implementation) and ADR-0069 (lock-screen mute). Aligned with

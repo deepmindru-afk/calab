@@ -116,3 +116,28 @@ describe('host link event (ADR-0142)', () => {
     expect(protocol.current()).toBeNull();
   });
 });
+
+describe('Android host channel (DEV-5033, ADR-0070 Android)', () => {
+  it('has no JS frame proof: the patched WebMessageListener is the boundary, hello goes straight to ready', () => {
+    const p = new ActivityProtocol(0);
+    expect(p.accept(JSON.stringify({ v: 1, type: 'proof', host: 0, document, nonce: '1-abc' }))).toBeNull();
+    expect(p.current()).toBeNull();
+    expect(p.accept(hello())).toEqual({ type: 'ready', document });
+    expect(p.accept(activity())?.type).toBe('publish');
+    expect(p.accept(JSON.stringify({ v: 1, type: 'revoke', host: 0, document, seq: 2, reason: 'logout' }))).toEqual({ type: 'end', reason: 'logout' });
+    expect(p.current()).toBeNull();
+  });
+  it('advertises only notifications and links, so the web keeps its own permission and call paths', () => {
+    const top: Record<string, unknown> = { ReactNativeWebView: { postMessage: vi.fn() }, crypto: { randomUUID: () => document } };
+    top.top = top;
+    runInNewContext(activityBootstrap(3, true, 'android'), { window: top, crypto: top.crypto });
+    const bridge = top.CalabHostActivity as Record<string, unknown>;
+    expect(bridge).toMatchObject({ version: 1, notificationsVersion: 1, notificationsTestVersion: 1, platform: 'android' });
+    for (const key of ['mediaPermissionsVersion', 'callsVersion', 'callsMuteVersion', 'callsAnswerVersion', 'callsAudioVersion']) expect(bridge[key]).toBeUndefined();
+    expect(activityBootstrap(3)).toContain('callsVersion: 1');
+    const ready = activityReady(3, document, false, true);
+    expect(ready).toContain('"links":1');
+    expect(ready).not.toContain('"calls"');
+    expect(ready).not.toContain('"permissions"');
+  });
+});

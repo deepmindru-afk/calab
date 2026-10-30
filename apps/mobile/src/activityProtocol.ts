@@ -7,10 +7,14 @@ export type ActivityAction =
   | ({ type:'calls'; document:string; request:number } & HostCallsOperation)
   | { type: 'ready'; document: string }
   | { type: 'publish'; document: string; snapshot: SessionActivitySnapshot }
-  | { type: 'end' }
+  | { type: 'end'; reason?: 'logout' }
   | { type: 'notifications'; document: string; request: number; operation: 'status' | 'request' | 'clear' | 'ack' | 'test'; eventId?: string; body?: string };
 
-/** Native has already proved frame, origin and current document. JS narrows schema and order. */
+/**
+ * Native has already proved frame and origin: on iOS the WebView patch checks WKFrameInfo and the
+ * current document, on Android the patched WebMessageListener delivers only main-frame messages of
+ * the exact app origin (ADR-0070, Android). JS parses each message once and narrows schema and order.
+ */
 export class ActivityProtocol {
   private document: string | null = null;
   private sequence = 0;
@@ -38,7 +42,7 @@ export class ActivityProtocol {
     }
     if (message.document !== this.document || message.seq <= this.sequence) return null;
     this.sequence = message.seq;
-    if (message.type === 'revoke') { this.reset(); return { type: 'end' }; }
+    if (message.type === 'revoke') { this.reset(); return message.reason === 'logout' ? { type: 'end', reason: 'logout' } : { type: 'end' }; }
     if (message.type === 'calls') return { ...message, type:'calls' };
     if (message.type === 'permissions') return { ...message, type: 'permissions' };
     if (message.type === 'notifications') return { type: 'notifications', document: message.document, request: message.request, operation: message.operation, ...(message.eventId ? { eventId: message.eventId } : {}), ...(message.body ? { body: message.body } : {}) };
@@ -52,21 +56,27 @@ export class ActivityProtocol {
  * Declaration only, main frame only. Native validation is the actual authority boundary.
  * `platform` (Platform.OS) tells the web client which store rules apply (App Store: no payment
  * UI in the iOS shell); additive — an older binary without it is treated as iOS unless its
- * user agent is Android (apps/desktop platform/nativeShell.ts).
+ * user agent is Android (apps/desktop platform/nativeShell.ts). The Android host implements
+ * notifications and links only: it does not advertise media permissions or calls, so the web
+ * keeps its browser paths for those instead of waiting for replies (ADR-0070, Android).
  */
 export function activityBootstrap(host: number, nativeAudio = false, platform: 'ios' | 'android' | null = null): string {
+  const ios = platform !== 'android';
+  const capabilities = ios ? `mediaPermissionsVersion: 1, callsVersion: 1, callsMuteVersion: 1, callsAnswerVersion: 1, ${nativeAudio ? 'callsAudioVersion: 1,' : ''}` : '';
   return `(() => {
     if (window !== window.top || !window.ReactNativeWebView || !window.crypto?.randomUUID) return;
     let documentId = crypto.randomUUID();
     Object.defineProperty(window, 'CalabHostActivity', { configurable: false, writable: false,
-      value: Object.freeze({version: 1, notificationsVersion: 1, notificationsTestVersion: 1, mediaPermissionsVersion: 1, callsVersion: 1, callsMuteVersion: 1, callsAnswerVersion: 1, ${nativeAudio ? 'callsAudioVersion: 1,' : ''} ${platform ? `platform: '${platform}',` : ''} host: ${String(host)}, get document() { return documentId; },
+      value: Object.freeze({version: 1, notificationsVersion: 1, notificationsTestVersion: 1, ${capabilities} ${platform ? `platform: '${platform}',` : ''} host: ${String(host)}, get document() { return documentId; },
         rotateDocument: () => { documentId = crypto.randomUUID(); },
         send: (data) => window.ReactNativeWebView.postMessage(data)}) });
   })(); true;`;
 }
 
-export function activityReady(host: number, document: string, activity = true): string {
-  const detail = JSON.stringify({ v: 1, host, document, capability: activity ? 'sessionActivity' : 'notifications', notifications: 1, calls: 1, permissions: 1, links: 1 });
+export function activityReady(host: number, document: string, activity = true, android = false): string {
+  const capability = activity ? 'sessionActivity' : 'notifications';
+  const detail = JSON.stringify(android ? { v: 1, host, document, capability, notifications: 1, links: 1 }
+    : { v: 1, host, document, capability, notifications: 1, calls: 1, permissions: 1, links: 1 });
   return `window.dispatchEvent(new CustomEvent('calab-host-activity-ready', {detail: ${detail}})); true;`;
 }
 

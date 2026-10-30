@@ -344,6 +344,35 @@ describe('WikiEditor', () => {
     });
     expect(document.querySelectorAll('[role=option]')).toHaveLength(0);
   });
+  // Board #109: iOS focuses the DOM inside Tiptap's focus command, before the command's transaction is
+  // dispatched; the focus event's own transaction ran first and (on a doc ending in a list) the
+  // trailing-node plugin reshaped the doc under it — `Applying a mismatched transaction`.
+  it('opens focused at the end on iOS when the text ends in a list (no mismatched transaction)', () => {
+    const platform = vi.spyOn(navigator, 'platform', 'get').mockReturnValue('iPhone');
+    try {
+      let api: WikiEditorApi | null = null;
+      const { editor } = mount(null as unknown as Y.Doc, true, {
+        doc: null,
+        content: fromMarkdown('# Заголовок\n\nТекст со **жирным** и [ссылкой](https://calab.io)\n\n- первый\n- второй'),
+        blocks: ['text', 'bullet'],
+        onReady: (a) => {
+          api = a;
+          a?.focus('end');
+        },
+      });
+      expect(api).not.toBeNull();
+      expect(editor().view.hasFocus()).toBe(true);
+      // The caret at the end of the text — in the last list item, not the trailing paragraph.
+      const { $from } = editor().state.selection;
+      expect($from.parent.textContent).toBe('второй');
+      expect($from.parentOffset).toBe('второй'.length);
+      // The initial text is unchanged and undo has nothing to take back.
+      expect(toMarkdown(editor().getJSON() as PmNode, { lite: true })).toContain('- второй');
+      expect(editor().can().undo()).toBe(false);
+    } finally {
+      platform.mockRestore();
+    }
+  });
 });
 
 

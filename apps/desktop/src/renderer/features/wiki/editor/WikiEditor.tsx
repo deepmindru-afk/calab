@@ -5,6 +5,7 @@
  * tree does not re-render on transactions (`shouldRerenderOnTransaction: false`) — the menus
  * subscribe to exactly what they show.
  */
+import { resolveFocusPosition, type Editor, type FocusPosition } from '@tiptap/core';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { t } from '../../../i18n';
@@ -15,6 +16,7 @@ import { buildExtensions } from './extensions';
 import { BubbleBar, SuggestionMenu, TableBar } from './Menus';
 import { offeredBlocks } from './suggestions';
 import type { WikiEditorProps } from './types';
+import './prose.css';
 import './wiki.css';
 
 type EnvProps = Pick<WikiEditorProps, 'onUploadImage' | 'mentionSource' | 'pageSource' | 'imagePath' | 'onError' | 'blocks' | 'highlight' | 'onKey'>;
@@ -31,6 +33,22 @@ function assignEnv(env: EditorEnv, p: EnvProps): EditorEnv {
   env.imagePath = p.imagePath ?? ((id) => `/api/files/${id}`);
   env.onError = p.onError ?? ((m) => console.warn(m));
   return env;
+}
+
+/**
+ * The caret first, the DOM focus after — never Tiptap's `focus` command on an unfocused editor. On
+ * iOS that command focuses the DOM synchronously (to raise the keyboard) before dispatching its own
+ * transaction: the focus event dispatches one first, a plugin appends to it (the trailing paragraph
+ * after a final list or heading, on the editor's first transaction), and the command's transaction,
+ * built from the older state, throws «Applying a mismatched transaction» (board #109). Here the
+ * selection transaction goes first (taking any such reshaping with it, out of the undo history), and
+ * ProseMirror's own focus dispatches nothing stale.
+ */
+function focusAt(editor: Editor, at: FocusPosition = null): void {
+  if (editor.isDestroyed) return;
+  const sel = resolveFocusPosition(editor.state.doc, at) ?? editor.state.selection;
+  editor.view.dispatch(editor.state.tr.setSelection(sel).scrollIntoView().setMeta('addToHistory', false));
+  editor.view.focus();
 }
 
 export default function WikiEditor({ doc, content, awareness, editable, me, onUploadImage, mentionSource, pageSource, imagePath, onError, onReady, phone, blocks, highlight, placeholder, label, onKey, compact, className }: WikiEditorProps): ReactNode {
@@ -111,7 +129,7 @@ export default function WikiEditor({ doc, content, awareness, editable, me, onUp
     ready.current?.({
       getJSON: () => editor.getJSON(),
       getText: () => editor.getText({ blockSeparator: '\n' }),
-      focus: () => editor.commands.focus(),
+      focus: (at) => focusAt(editor, at),
       editor,
       openBlocks: () => {
         if (editor.isDestroyed || !editor.isEditable) return;

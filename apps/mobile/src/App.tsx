@@ -17,15 +17,16 @@ import { strings } from './strings';
 import { callsOperation, callsReply, subscribeCalls, callAudioEnabled } from './incomingCalls';
 import { ActivityProtocol, activityBootstrap, activityReady, linkEvent } from './activityProtocol';
 import { appUrlForLink } from './links';
-import { acknowledgeNotification, hostChannelEnabled, notificationReply, notificationState, subscribeNotifications, testNotification, notificationTestReply } from './notifications';
+import { acknowledgeNotification, hostChannelEnabled, notificationReply, notificationState, setNotificationsDocument, subscribeNotifications, testNotification, notificationTestReply } from './notifications';
 import { endSessionActivity, publishSessionActivity, sessionActivityEnabled } from './sessionActivity';
 import { permissionsOperation, permissionsReply, subscribePermissions } from './mediaPermissions';
 import { SHELL_UA_MARKER } from '../../desktop/src/shared/nativeShell';
 
 /**
  * The phone host (ADR-0067): one full-screen WebView with the web client — the same DOM, router and
- * MobileShell as in a browser — plus a load error surface. A status-only capability (ADR-0069)
- * is offered on iOS after a native main-frame/origin/current-document handshake. File hand-off is iOS-native (ADR-0068): the web's
+ * MobileShell as in a browser — plus a load error surface. The host channel (ADR-0069/0070) is
+ * offered after a native main-frame/origin handshake in the WebView patch (iOS also checks the
+ * current document); Android offers notifications and links only. File hand-off is iOS-native (ADR-0068): the web's
  * `<a download>` of its own blob: from the app's main frame goes to the share sheet, decided in the
  * react-native-webview patch without JS or page input. Incoming universal / app / `calab://` links
  * (ADR-0142) open the same route of the web client. The WebView is edge to edge; the web client applies
@@ -59,6 +60,9 @@ const LINK_HOSTS = (() => {
 /** Every URL reaches `onShouldStart`: the library's own origin list matches by prefix and opens misses via Linking. */
 const ANY_ORIGIN = ['*'];
 
+/** Android announces notifications and links only (ADR-0070, Android). */
+const ANDROID = Platform.OS === 'android';
+
 function openExternal(url: string): void {
   Linking.openURL(url).catch(() => undefined);
 }
@@ -81,6 +85,7 @@ function Host({ origin }: { origin: string }) {
   const resetActivity = useCallback(() => {
     activity.current.reset();
     endSessionActivity();
+    setNotificationsDocument(null, false);
   }, []);
   useEffect(() => {
     activity.current = new ActivityProtocol(state.generation);
@@ -90,7 +95,8 @@ function Host({ origin }: { origin: string }) {
     const action = activity.current.accept(nativeEvent.data);
     if (action?.type === 'ready') {
       endSessionActivity();
-      web.current?.injectJavaScript(activityReady(state.generation, action.document, sessionActivityEnabled));
+      setNotificationsDocument(action.document, false);
+      web.current?.injectJavaScript(activityReady(state.generation, action.document, sessionActivityEnabled, ANDROID));
     } else if (action?.type === 'calls') {
       void callsOperation(action.document, action).then(value => {
         if (activity.current.belongsTo(state.generation) && activity.current.isCurrent(action.document))
@@ -102,7 +108,7 @@ function Host({ origin }: { origin: string }) {
           web.current?.injectJavaScript(permissionsReply(state.generation, action.document, action.request, reply));
       });
     } else if (action?.type === 'publish') publishSessionActivity(action.document, action.snapshot);
-    else if (action?.type === 'end') endSessionActivity();
+    else if (action?.type === 'end') { endSessionActivity(); setNotificationsDocument(null, action.reason === 'logout'); }
     else if (action?.type === 'notifications' && action.operation === 'ack' && action.eventId) acknowledgeNotification(action.document, action.eventId);
     else if (action?.type === 'notifications' && action.operation === 'test' && action.body) {
       void testNotification(action.document, action.body).then(result => {
@@ -140,7 +146,7 @@ function Host({ origin }: { origin: string }) {
   /**
    * An incoming link (ADR-0142). A running page with the host channel takes it in place, as a click
    * on the same link would (`calab-host-link`): no reload, an ongoing call stays. Otherwise — cold
-   * start, still loading, error screen, no channel (Android) or no handshake yet — the WebView
+   * start, still loading, error screen, no channel or no handshake yet — the WebView
    * remounts on the app URL and the web's `takeDeepLink` reads it from `location.pathname`.
    */
   const deliverLink = useRef<(raw: string) => void>(() => undefined);
@@ -177,8 +183,10 @@ function Host({ origin }: { origin: string }) {
   }, []);
 
   /**
-   * The top frame left the app anyway (an Android POST or a decision past the library's 250 ms):
-   * stop and show the error. After the fact, not a boundary: the page has already started loading.
+   * The top frame reports a URL outside the app anyway: stop and show the error. A last resort, not
+   * the boundary — both WebView patches already refuse such main-frame loads natively (iOS policy;
+   * Android CalabOriginGuard incl. POST via shouldInterceptRequest, DEV-5032), so this fires only if
+   * a navigation slips past them (e.g. an engine path the guard does not see).
    */
   const leftApp = useCallback(
     (url: string): boolean => {

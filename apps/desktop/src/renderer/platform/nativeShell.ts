@@ -11,8 +11,9 @@
  *     older binary without the field, a newer bridge version, an iPad with a desktop user agent,
  *     anything unproven is iOS.
  *  2. the UA marker `SHELL_UA_MARKER` the shell's WebView appends to its user agent (DEV-4947):
- *     the bridge is iOS-only (`hostChannelEnabled`, apps/mobile/src/notifications.ts), so Android
- *     has no other signal. With the marker and no bridge, the user agent alone decides Android vs.
+ *     Android binaries before DEV-5033 declare no bridge (`hostChannelEnabled`,
+ *     apps/mobile/src/notifications.ts), so this is their only signal; newer ones declare the
+ *     bridge with `platform: 'android'`. With the marker and no bridge, the user agent alone decides Android vs.
  *     iOS. With both present, the bridge's iOS rule above still wins (fail closed on iOS).
  * No new binary is needed for either platform: the user agent tells Android shells apart.
  */

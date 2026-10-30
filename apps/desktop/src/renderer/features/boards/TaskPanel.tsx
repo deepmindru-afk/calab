@@ -27,7 +27,6 @@ import { useShallow } from 'zustand/react/shallow';
 import { Button, CloseButton, IconButton, MOD, Modal, Spinner, Tip, cx } from '../../components/ui';
 import { Choice as ChoiceSwitch } from '../../components/Choice';
 import { t } from '../../i18n';
-import { Markdown } from '../../lib/markdown/Markdown';
 import type { ActivityTab } from '../../lib/boards/activity';
 import { approvalsWouldReset, blockedStatusIds, decidedApprovers, gateReason } from '../../lib/boards/approvals';
 import { addAssignee, draftsOf, removeAssignee, replaceAssignee, setLead, setNote, MAX_NOTE } from '../../lib/boards/assignees';
@@ -75,7 +74,7 @@ import { ApprovalsSection } from './Approvals';
 import { WatchersSection } from './Watchers';
 import { GitSection, ReleaseValues } from './GitLinks';
 import { AttachmentChip } from './AttachmentChip';
-import { splitDescription } from './inlineImages';
+import { DescriptionView } from './DescriptionView';
 import { descriptionToDoc, docToDescription } from './descriptionDoc';
 import { RichDescription } from './RichDescription';
 import { preloadWikiEditor, type UploadedImage, type WikiEditorApi } from '../wiki/editor';
@@ -411,10 +410,10 @@ const DescriptionImage = memo(function DescriptionImage({ id, name, list }: { id
     // Not a <button>: the description is itself a button («edit»); the chip below the text is the keyboard path.
     <div
       onClick={(e) => { e.stopPropagation(); openAttachment(f, list); }}
-      className="my-1 w-fit max-w-full cursor-zoom-in rounded-[var(--radius-card)] border border-line"
+      className="max-w-full cursor-zoom-in"
       data-testid="task-description-img"
     >
-      <AttachmentImg f={f} thumb={thumbWidthPath(thumbnailPath(f.id), THUMB_LARGE)} alt={name} loading="lazy" className="block max-h-[420px] max-w-full rounded-[var(--radius-card)] object-contain" />
+      <AttachmentImg f={f} thumb={thumbWidthPath(thumbnailPath(f.id), THUMB_LARGE)} alt={name} loading="lazy" className="wiki-image-img" />
     </div>
   );
 });
@@ -515,7 +514,7 @@ export function DescriptionEditor({ task, canEdit, attachments }: { task: Task; 
   const stableKey = useCallback((e: KeyboardEvent) => keyRef.current(e), []);
   const onReady = useCallback((a: WikiEditorApi | null) => {
     api.current = a;
-    a?.editor.commands.focus('end');
+    a?.focus('end');
   }, []);
   // CBF-59: a picture pasted / dropped / picked in the editor becomes an attachment of the task at once; the text refers to it.
   const upload = useCallback(
@@ -547,7 +546,7 @@ export function DescriptionEditor({ task, canEdit, attachments }: { task: Task; 
     }
   };
   const removeAttachment = (f: FileMeta): void => guard(() => void setTaskAttachments(task.id, task.attachments.filter((x) => x.id !== f.id).map((x) => x.id)));
-  const mention = useCallback((val: string, key: string) => <span key={key} className="font-medium text-accent-text">@{memberName(task.workspaceId, val)}</span>, [task.workspaceId]);
+  const image = useCallback((id: string, name: string) => <DescriptionImage id={id} name={name} list={task.attachments} />, [task.attachments]);
   const view = (
     <div
       role={canEdit && !editing ? 'button' : undefined}
@@ -556,10 +555,10 @@ export function DescriptionEditor({ task, canEdit, attachments }: { task: Task; 
       onPointerEnter={canEdit ? preloadWikiEditor : undefined}
       onFocus={canEdit ? preloadWikiEditor : undefined}
       onKeyDown={(e) => e.key === 'Enter' && start()}
-      className={cx('selectable min-h-8 whitespace-pre-wrap break-words rounded-[var(--radius-row)] text-body', canEdit && 'cursor-text hover:bg-[color-mix(in_srgb,var(--color-fill)_40%,transparent)]', !task.description && 'text-faint')}
+      className={cx('selectable min-h-8 rounded-[var(--radius-row)] text-body', canEdit && 'cursor-text hover:bg-[color-mix(in_srgb,var(--color-fill)_40%,transparent)]', !task.description && 'text-faint')}
       data-testid="task-description"
     >
-      {task.description ? splitDescription(task.description).map((seg, i) => seg.k === 'text' ? <Markdown key={i} text={seg.v} mention={mention} /> : <DescriptionImage key={i} id={seg.id} name={seg.name} list={task.attachments} />) : canEdit ? t('boards.descriptionPlaceholder') : t('boards.noDescription')}
+      {task.description ? <DescriptionView workspaceId={task.workspaceId} description={task.description} image={image} /> : canEdit ? t('boards.descriptionPlaceholder') : t('boards.noDescription')}
     </div>
   );
   return (
