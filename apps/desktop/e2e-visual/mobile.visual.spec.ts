@@ -5,7 +5,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import { AiState, FormerMemberReason, Plan, RecordingStatus, SipCallStatus, WorkspaceRole } from '@calaba/protocol';
 import { ts } from '../e2e-support/fixtures';
 import { CANVAS_PUBLIC_CODE, CODE_FIXTURE, IDS, MOCK_GPTUNNEL_WEB, WIKI_PUBLIC_CODE, startMockServer, type MockServer } from '../e2e-support/mock-server';
-import { expectAccessible, expectAssigneeStacks, layoutProblems, NOW, PASSWORD, seedAssigneeCounts, seedDays, seedLabelOverflow, seedReleases, settle } from './harness';
+import { expectAccessible, expectAssigneeStacks, layoutProblems, NOW, PASSWORD, seedAssigneeCounts, seedBotAuthoredTask, seedDays, seedLabelOverflow, seedReleases, settle } from './harness';
 import { seedDay } from './calendarWeb';
 
 /**
@@ -1143,6 +1143,23 @@ test('m-boards-list', async ({ page }) => {
   await expect(panel.getByTestId('prop-release')).toHaveText(['stage · 1288', 'prod · 4929cf3']);
   await panel.getByTestId('prop-release').last().evaluate((el) => el.scrollIntoView({ block: 'center' }));
   await checkpoint(page, 'm-boards-task-release');
+});
+
+// Board #115: the bot's «act on your behalf» request in the task screen and its window.
+test('m-boards-bot-consent', async ({ page }) => {
+  mock.setClock(NOW.getTime());
+  seedBotAuthoredTask(mock);
+  await signedIn(page);
+  await tab(page, 'boards');
+  await page.getByTestId('phone-boards').getByTestId('board-row').filter({ hasText: 'Разработка' }).getByRole('button').first().tap();
+  await page.getByTestId('list-row').filter({ hasText: 'CAL-3' }).getByText('Эхо в звонке').tap();
+  const block = page.getByTestId('task-panel').getByTestId('bot-consent-prompt');
+  await block.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+  await expect(block).toBeVisible();
+  await checkpoint(page, 'm-boards-bot-consent');
+  await block.getByTestId('bot-consent-review').tap();
+  await expect(page.getByTestId('bot-consent-dialog')).toBeVisible();
+  await checkpoint(page, 'm-boards-bot-consent-dialog');
 });
 
 // Owner 07.10: the create dialog has the start date (when the board's dates are on).

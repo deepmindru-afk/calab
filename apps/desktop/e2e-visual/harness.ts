@@ -436,3 +436,36 @@ export async function expectAssigneeStacks(page: Page): Promise<void> {
   expect(new Set(boxes.map((b) => b.h)).size, JSON.stringify(boxes)).toBe(1);
   expect(new Set(boxes.map((b) => b.right)).size, JSON.stringify(boxes)).toBe(1);
 }
+
+/** Board #115: CAL-3 made by the «Погода» bot, which asks me (an assignee) to act on my behalf. Call after open(). */
+export function seedBotAuthoredTask(mock: MockServer): void {
+  mock.seedBots();
+  const t = mock.boards.taskByKey('CAL-3');
+  if (!t) throw new Error('no CAL-3');
+  t.task.createdBy = IDS.bots.weather;
+}
+
+/**
+ * Board #117: every visible control of a toolbar (buttons, fields, segmented controls) is one
+ * height - `--control-h-bar` - within 0.5 px, and sits centred on the toolbar's midline.
+ */
+export async function expectToolbarHeights(bar: Locator, name: string): Promise<void> {
+  const rows = await bar.evaluate((root) => {
+    const rb = root.getBoundingClientRect();
+    const out: Array<{ what: string; h: number; mid: number }> = [];
+    root.querySelectorAll<HTMLElement>('button, input, select, [role=radiogroup]').forEach((el) => {
+      const inner = el.parentElement?.getBoundingClientRect().height ?? 0;
+      if (el.getAttribute('role') !== 'radiogroup' && Math.abs(inner - el.getBoundingClientRect().height - 4) < 0.6 && el.parentElement?.matches('div, span')) return; // a segment inside its 2 px padded track
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0 || getComputedStyle(el).visibility === 'hidden') return;
+      out.push({ what: el.getAttribute('data-testid') ?? el.getAttribute('aria-label') ?? el.textContent?.trim().slice(0, 20) ?? el.tagName, h: r.height, mid: r.top + r.height / 2 - (rb.top + rb.height / 2) });
+    });
+    return out;
+  });
+  expect(rows.length, `${name}: controls found`).toBeGreaterThan(2);
+  const target = rows.find((r) => r.what === 'new-task')?.h ?? rows[0]?.h ?? 0;
+  for (const r of rows) {
+    expect(Math.abs(r.h - target), `${name}: ${r.what} is ${r.h}px, expected ${target}px`).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(r.mid), `${name}: ${r.what} is off the bar's midline by ${r.mid}px`).toBeLessThanOrEqual(1);
+  }
+}
