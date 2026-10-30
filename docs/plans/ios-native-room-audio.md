@@ -140,7 +140,7 @@ owner's iPhone and a desktop peer.
 ### R7. Live Activity and lock-screen mute
 
 - Files: `ios/CalabSessionActivityModule.swift`, `ios/CalabVoiceAttributes.swift`, widget extension
-  intent under `widgets/`, `plugins/withSessionActivity.js`; ADR-0069 status line points to 0147.
+  intent under `widgets/`, `plugins/withSessionActivity.js`; ADR-0069 status line points to 0149.
 - Tests: Swift merge rule (native phase/mute vs newer web snapshot), plugin test for the intent.
 - iPhone: G12, G13.
 
