@@ -3119,9 +3119,15 @@ type VoiceState struct {
 	// On a phone call (ADR-0133): every device of the user in this room is parked there while the
 	// user talks on an inbound phone call - connected, nothing published or received. Others show
 	// the row dimmed with a phone icon. Set through PATCH /api/voice/self.
-	OnPhone       bool `protobuf:"varint,13,opt,name=on_phone,json=onPhone,proto3" json:"on_phone,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	OnPhone bool `protobuf:"varint,13,opt,name=on_phone,json=onPhone,proto3" json:"on_phone,omitempty"`
+	// Connection lost (ADR-0150): every device of the user in this room dropped out of LiveKit
+	// involuntarily (a frozen phone, a lost network) and the server keeps the seat for
+	// VOICE_LOST_GRACE (60 s by default). Others show the row dimmed with «no connection», play no
+	// leave cue, and no join cue when the device comes back in time. The seat still counts against
+	// the room's user_limit. When the grace ends the state goes like a leave (empty room_id).
+	ConnectionLost bool `protobuf:"varint,14,opt,name=connection_lost,json=connectionLost,proto3" json:"connection_lost,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *VoiceState) Reset() {
@@ -3241,6 +3247,13 @@ func (x *VoiceState) GetPtt() bool {
 func (x *VoiceState) GetOnPhone() bool {
 	if x != nil {
 		return x.OnPhone
+	}
+	return false
+}
+
+func (x *VoiceState) GetConnectionLost() bool {
+	if x != nil {
+		return x.ConnectionLost
 	}
 	return false
 }
@@ -3732,8 +3745,14 @@ type Ready struct {
 	// ADR-0140: the uuidv7 lower bound of the start of read receipts — own messages with a smaller
 	// id have no ticks (no retroactive «read»); empty — a server before ADR-0140.
 	ReadReceiptsFrom string `protobuf:"bytes,18,opt,name=read_receipts_from,json=readReceiptsFrom,proto3" json:"read_receipts_from,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// ADR-0151: the bots the recipient owns (bots.owner_user_id). A task created by one of them
+	// counts as the recipient's own for author rights (isTaskAuthor in packages/protocol: edit and
+	// archive with CREATE_TASKS, create-only visibility). A bot the recipient creates later comes
+	// as BOT_CREATE with owner_user_id = the recipient; a deleted one may stay until the next READY
+	// (the server decides anyway).
+	MyBotIds      []string `protobuf:"bytes,19,rep,name=my_bot_ids,json=myBotIds,proto3" json:"my_bot_ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Ready) Reset() {
@@ -3890,6 +3909,13 @@ func (x *Ready) GetReadReceiptsFrom() string {
 		return x.ReadReceiptsFrom
 	}
 	return ""
+}
+
+func (x *Ready) GetMyBotIds() []string {
+	if x != nil {
+		return x.MyBotIds
+	}
+	return nil
 }
 
 // A guest knocks on a room (ADR-0040); to the room's deciders.
@@ -7628,7 +7654,7 @@ const file_calaba_v1_gateway_proto_rawDesc = "" +
 	"\vbot_user_id\x18\x02 \x01(\tR\tbotUserId\x129\n" +
 	"\n" +
 	"created_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12.\n" +
-	"\x05event\x18\x04 \x01(\v2\x18.calaba.v1.DispatchEventR\x05event\"\x88\x03\n" +
+	"\x05event\x18\x04 \x01(\v2\x18.calaba.v1.DispatchEventR\x05event\"\xb1\x03\n" +
 	"\n" +
 	"VoiceState\x12!\n" +
 	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\x12\x17\n" +
@@ -7644,7 +7670,8 @@ const file_calaba_v1_gateway_proto_rawDesc = "" +
 	" \x01(\bR\apending\x12\x1a\n" +
 	"\bmusician\x18\v \x01(\bR\bmusician\x12\x10\n" +
 	"\x03ptt\x18\f \x01(\bR\x03ptt\x12\x19\n" +
-	"\bon_phone\x18\r \x01(\bR\aonPhone\"\xb6\x03\n" +
+	"\bon_phone\x18\r \x01(\bR\aonPhone\x12'\n" +
+	"\x0fconnection_lost\x18\x0e \x01(\bR\x0econnectionLost\"\xb6\x03\n" +
 	"\bPresence\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x121\n" +
 	"\x06status\x18\x02 \x01(\x0e2\x19.calaba.v1.PresenceStatusR\x06status\x127\n" +
@@ -7700,7 +7727,7 @@ const file_calaba_v1_gateway_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\x04R\x05value:\x028\x01\x1a]\n" +
 	"\x15RoomLastMessagesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12.\n" +
-	"\x05value\x18\x02 \x01(\v2\x18.calaba.v1.DmLastMessageR\x05value:\x028\x01\"\xec\a\n" +
+	"\x05value\x18\x02 \x01(\v2\x18.calaba.v1.DmLastMessageR\x05value:\x028\x01\"\x8a\b\n" +
 	"\x05Ready\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1d\n" +
@@ -7725,7 +7752,9 @@ const file_calaba_v1_gateway_proto_rawDesc = "" +
 	"\x1bemail_verification_optional\x18\x0f \x01(\bR\x19emailVerificationOptional\x120\n" +
 	"\x14email_invite_pending\x18\x10 \x01(\bR\x12emailInvitePending\x12,\n" +
 	"\x12billing_self_serve\x18\x11 \x01(\bR\x10billingSelfServe\x12,\n" +
-	"\x12read_receipts_from\x18\x12 \x01(\tR\x10readReceiptsFrom\"N\n" +
+	"\x12read_receipts_from\x18\x12 \x01(\tR\x10readReceiptsFrom\x12\x1c\n" +
+	"\n" +
+	"my_bot_ids\x18\x13 \x03(\tR\bmyBotIds\"N\n" +
 	"\x14RoomAdmissionRequest\x126\n" +
 	"\tadmission\x18\x01 \x01(\v2\x18.calaba.v1.RoomAdmissionR\tadmission\"N\n" +
 	"\x14RoomAdmissionDecided\x126\n" +

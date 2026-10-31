@@ -5,7 +5,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import { AiState, FormerMemberReason, Plan, RecordingStatus, SipCallStatus, WorkspaceRole } from '@calaba/protocol';
 import { ts } from '../e2e-support/fixtures';
 import { CANVAS_PUBLIC_CODE, CODE_FIXTURE, IDS, MOCK_GPTUNNEL_WEB, WIKI_PUBLIC_CODE, startMockServer, type MockServer } from '../e2e-support/mock-server';
-import { expectAccessible, expectAssigneeStacks, layoutProblems, NOW, PASSWORD, seedAssigneeCounts, seedDays, seedLabelOverflow, seedReleases, settle } from './harness';
+import { expectAccessible, expectAssigneeStacks, layoutProblems, NOW, PASSWORD, seedAssigneeCounts, seedBotAuthoredTask, seedDays, seedLabelOverflow, seedReleases, settle } from './harness';
 import { seedDay } from './calendarWeb';
 
 /**
@@ -475,6 +475,78 @@ test('m-chat-image', async ({ page }) => {
   await page.mouse.move(0, 0);
   await expectFeedFits(page);
   await checkpoint(page, 'm-chat-image-untyped', { main: true });
+
+  // Board #118: the viewer behaves like Telegram's. Touch is simulated with pointer events on the
+  // frame (Playwright's WebKit has no multi-touch); double tap uses real taps.
+  await untyped.click();
+  const box = page.getByTestId('lightbox');
+  const frame = box.getByTestId('lightbox-frame');
+  await expect(frame).toHaveAttribute('data-state', 'loaded');
+  const touch = (type: string, id: number, x: number, y: number): Promise<void> =>
+    frame.evaluate(
+      (el, a) => {
+        el.dispatchEvent(new PointerEvent(a.type, { bubbles: true, pointerId: a.id, pointerType: 'touch', isPrimary: a.id === 1, clientX: a.x, clientY: a.y }));
+      },
+      { type, id, x, y },
+    );
+  const center = (await frame.boundingBox()) ?? { x: 0, y: 0, width: 0, height: 0 };
+  const cx = center.x + center.width / 2;
+  const cy = center.y + center.height / 2;
+  // Pinch out: the picture grows about the fingers and fills the screen width.
+  await touch('pointerdown', 1, cx - 30, cy);
+  await touch('pointerdown', 2, cx + 30, cy);
+  for (let i = 1; i <= 6; i++) {
+    await touch('pointermove', 1, cx - 30 - i * 20, cy);
+    await touch('pointermove', 2, cx + 30 + i * 20, cy);
+  }
+  await touch('pointerup', 1, cx - 150, cy);
+  await touch('pointerup', 2, cx + 150, cy);
+  await expect.poll(async () => (await frame.boundingBox())?.width ?? 0).toBeGreaterThan(center.width * 2);
+  await checkpoint(page, 'm-lightbox-zoomed');
+  // Zoomed: a horizontal drag pans, it does not page (still the second photo).
+  await touch('pointerdown', 1, cx, cy);
+  await touch('pointermove', 1, cx - 80, cy);
+  await touch('pointerup', 1, cx - 80, cy);
+  await expect(box.getByRole('heading', { name: 'image.png' })).toBeVisible();
+  // Double tap zooms back out.
+  await page.touchscreen.tap(cx, cy);
+  await page.touchscreen.tap(cx, cy);
+  await expect.poll(async () => Math.round((await frame.boundingBox())?.width ?? 0)).toBe(Math.round(center.width));
+  // Fitted: a swipe right shows the previous photo, another one at the first photo does nothing.
+  await touch('pointerdown', 1, cx - 80, cy);
+  await touch('pointermove', 1, cx, cy);
+  await touch('pointermove', 1, cx + 120, cy);
+  await touch('pointerup', 1, cx + 120, cy);
+  const counter = box.locator('span.tabular-nums');
+  await expect(box.getByRole('heading', { name: 'IMG_2041.png' })).toBeVisible();
+  await expect(frame).toHaveAttribute('data-state', 'loaded');
+  await checkpoint(page, 'm-lightbox-paged');
+  const swipe = async (from: number, to: number): Promise<void> => {
+    await touch('pointerdown', 1, from, cy);
+    await touch('pointermove', 1, to, cy);
+    await touch('pointerup', 1, to, cy);
+  };
+  // The chat holds three photos (message order): one more swipe right reaches the first, the next does nothing.
+  await expect(counter).toHaveText('2 / 3');
+  await swipe(cx - 80, cx + 120);
+  await expect(counter).toHaveText('1 / 3');
+  await expect(frame).toHaveAttribute('data-state', 'loaded');
+  await swipe(cx - 80, cx + 120);
+  await expect(counter).toHaveText('1 / 3');
+  // Swipe left goes forward to the last one (then nothing more); swipe down closes.
+  await swipe(cx + 80, cx - 120);
+  await expect(counter).toHaveText('2 / 3');
+  await expect(frame).toHaveAttribute('data-state', 'loaded');
+  await swipe(cx + 80, cx - 120);
+  await expect(counter).toHaveText('3 / 3');
+  await expect(frame).toHaveAttribute('data-state', 'loaded');
+  await swipe(cx + 80, cx - 120);
+  await expect(counter).toHaveText('3 / 3');
+  await expect(box.getByRole('heading', { name: 'image.png' })).toBeVisible();
+  await touch('pointerdown', 1, cx, cy);
+  await touch('pointermove', 1, cx, cy + 200);
+  await touch('pointerup', 1, cx, cy + 200);
+  await expect(box).toHaveCount(0);
 });
 
 // CBF-66: a Disk folder link in a chat is its own card — name, who shared, what is inside, «Открыть».
@@ -723,6 +795,35 @@ test('m-home', async ({ page }) => {
   await page.keyboard.press('Escape');
   await expect(card).toHaveCount(0);
   await expect(page.getByTestId('phone-tabbar')).toBeVisible();
+  // Voice audio recovery (#255) without LiveKit: «in voice» by store state (__calabaVoiceSeat), the
+  // recovery signals through the voice service's own paths: the strip above the tab bar and the sound prompt.
+  const seat = (phase: 'connected' | 'reconnecting'): Promise<void> =>
+    page.evaluate(([roomId, workspaceId, ph]) => (window as unknown as { __calabaVoiceSeat?: (s: object) => void }).__calabaVoiceSeat?.({ roomId, workspaceId, phase: ph }), [IDS.rooms.call, IDS.workspaces.main, phase] as const);
+  await seat('connected');
+  const strip = page.getByTestId('mobile-voice-strip');
+  await expect(strip).toBeVisible();
+  // #116: only the voice room I am in is tinted in the list; it follows a switch and clears on leave.
+  const current = list.locator('[data-testid="phone-room-row"][data-current]');
+  await expect(current).toHaveCount(1);
+  await expect(current).toHaveAttribute('data-room', IDS.rooms.call);
+  await checkpoint(page, 'm-home-in-voice');
+  await page.evaluate(() => {
+    const w = window as unknown as { __calabaVoiceRecovery?: (what: string) => void };
+    w.__calabaVoiceRecovery?.('recovering');
+    w.__calabaVoiceRecovery?.('playback');
+  });
+  // The mic state is the strip's line only; the refused sound is the one toast, with its action.
+  await expect(page.getByTestId('toast')).toHaveCount(1);
+  await expect(page.getByTestId('toast').filter({ hasText: 'Вы не слышите собеседников' })).toBeVisible();
+  await expect(page.getByTestId('toast').getByRole('button', { name: 'Включить звук' })).toBeVisible();
+  await expect(strip.getByTestId('mobile-voice-status')).toHaveText('Вас не слышно'); // yellow: being restored
+  // Two lines at this width: the room name gives way instead of a cramped third line.
+  await expect(strip.getByTestId('mobile-voice-label')).toHaveCount(0);
+  await checkpoint(page, 'm-voice-recovery');
+  await page.evaluate(() => (window as unknown as { __calabaVoiceRecovery?: (w: string) => void }).__calabaVoiceRecovery?.('unheard'));
+  await expect(strip.getByTestId('mobile-voice-status')).toHaveText('Вас не слышно');
+  await expect(page.getByTestId('toast')).toHaveCount(1); // no mic toast
+  await checkpoint(page, 'm-voice-recovery-unheard');
 });
 
 // ADR-0073 §4: people in the room's voice, I am not — the banner under the header with «Присоединиться».
@@ -751,6 +852,18 @@ test('m-room-voice-banner', async ({ page }) => {
   for (const row of await rows.all()) expect(Math.round((await row.boundingBox())?.height ?? 0), 'a 56 px person row').toBe(56);
   await expect(card.getByTestId('voice-people-join')).toBeVisible();
   await checkpoint(page, 'm-voice-people');
+  // ADR-0150: Вера's connection is lost, her seat is kept: the card row dimmed with «нет связи»,
+  // her avatar dimmed in the banner and header stacks.
+  mock.setVoiceState({ userId: IDS.users.vera, roomId: IDS.rooms.call, connectionLost: true });
+  await expect(rows.nth(1).locator('[data-voice-icon="connection-lost"]')).toBeVisible();
+  await checkpoint(page, 'm-voice-people-lost');
+  await page.keyboard.press('Escape');
+  await expect(card).toHaveCount(0);
+  await expect(banner.locator('[data-connection-lost]')).toHaveCount(1);
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await checkpoint(page, 'm-room-voice-banner-lost', { main: true });
+  await stack.tap();
+  await expect(card).toBeVisible();
   // A tap on a person: their member menu, a level over the card; back closes one level at a time.
   await rows.first().tap();
   await expect(page.getByRole('menu')).toBeVisible();
@@ -1109,6 +1222,23 @@ test('m-boards-list', async ({ page }) => {
   await checkpoint(page, 'm-boards-task-release');
 });
 
+// Board #115: the bot's «act on your behalf» request in the task screen and its window.
+test('m-boards-bot-consent', async ({ page }) => {
+  mock.setClock(NOW.getTime());
+  seedBotAuthoredTask(mock);
+  await signedIn(page);
+  await tab(page, 'boards');
+  await page.getByTestId('phone-boards').getByTestId('board-row').filter({ hasText: 'Разработка' }).getByRole('button').first().tap();
+  await page.getByTestId('list-row').filter({ hasText: 'CAL-3' }).getByText('Эхо в звонке').tap();
+  const block = page.getByTestId('task-panel').getByTestId('bot-consent-prompt');
+  await block.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+  await expect(block).toBeVisible();
+  await checkpoint(page, 'm-boards-bot-consent');
+  await block.getByTestId('bot-consent-review').tap();
+  await expect(page.getByTestId('bot-consent-dialog')).toBeVisible();
+  await checkpoint(page, 'm-boards-bot-consent-dialog');
+});
+
 // Owner 07.10: the create dialog has the start date (when the board's dates are on).
 test('m-boards-create', async ({ page }) => {
   mock.setClock(NOW.getTime());
@@ -1185,7 +1315,8 @@ test('m-boards-task', async ({ page }) => {
 test('m-boards-task-desc-wysiwyg', async ({ page }) => {
   mock.setClock(NOW.getTime());
   const cal4 = mock.boards.taskByKey('CAL-4');
-  if (cal4) cal4.task.description = 'Эхо пропало после правки 🎉 подробности на https://calab.io/docs\n\nВторой абзац.\n\n- первый **жирный** пункт\n- второй пункт';
+  if (cal4) cal4.task.description = 'Эхо пропало после правки 🎉 подробности на https://calab.io/docs\n\nВторой абзац.\n\n- первый **жирный** пункт\n- второй пункт\n\n| Поле | Тип | Обязательное | Описание |\n| --- | --- | --- | --- |\n| id | **uuid** | да | первичный ключ задачи |\n| имя | text | | |';
+  // Board #134: a table is drawn in read mode like in the editor; a wide one scrolls inside the description.
   await signedIn(page);
   await tab(page, 'boards');
   const nav = page.getByTestId('phone-boards');
@@ -1194,11 +1325,12 @@ test('m-boards-task-desc-wysiwyg', async ({ page }) => {
   const panel = page.getByTestId('task-panel');
   const read = panel.getByTestId('task-description');
   await expect(read.locator('li')).toHaveCount(2);
+  await expect(read.locator('table td')).toHaveCount(8);
   // Block geometry relative to the first paragraph (the keyboard may scroll the panel).
   const boxes = async (root: Locator): Promise<number[][]> => {
     const first = await root.locator('p').first().boundingBox();
     const out: number[][] = [];
-    for (const sel of ['p >> nth=1', 'li >> nth=0', 'li >> nth=1']) {
+    for (const sel of ['p >> nth=1', 'li >> nth=0', 'li >> nth=1', '.tableWrapper', 'th >> nth=1', 'td >> nth=4']) {
       const b = await root.locator(sel).boundingBox();
       out.push(b && first ? [b.x - first.x, b.y - first.y, b.width, b.height] : []);
     }
@@ -1714,6 +1846,13 @@ test('m-settings', async ({ page }) => {
     return el.getBoundingClientRect().bottom <= innerHeight + 1 && el.scrollTop > 0;
   });
   expect(fits, 'settings section scrolls on its screen').toBe(true);
+  // Board #114: WebKit keeps its own NS (no `noiseSuppression` constraint) — RNNoise is off and
+  // disabled here, with the reason under it.
+  const noise = panel.getByRole('switch', { name: 'Шумоподавление' });
+  await noise.scrollIntoViewIfNeeded();
+  await expect(noise).toBeDisabled();
+  await expect(panel.getByText('На этом устройстве шум убирает сама система', { exact: false })).toBeVisible();
+  await checkpoint(page, 'm-settings-voice-noise', { snapshot: false });
 });
 
 // Owner 07.10: no workspace rail — the header's «Команда Calab ⌄» opens the switcher (the desktop's

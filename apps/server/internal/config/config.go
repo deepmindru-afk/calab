@@ -119,6 +119,10 @@ type Config struct {
 	LiveKitAPIKey          string `env:"LIVEKIT_API_KEY"`
 	LiveKitAPISecret       string `env:"LIVEKIT_API_SECRET"`
 	LiveKitMaxParticipants uint32 `env:"LIVEKIT_MAX_PARTICIPANTS" envDefault:"50"`
+	// How long a device's voice seat outlives an involuntary LiveKit drop (ADR-0150): others see
+	// it as «no connection» and a /join of the device within this time takes it back without a
+	// leave/join. 0 = off (the seat goes with the drop). At most 10m.
+	VoiceLostGrace time.Duration `env:"VOICE_LOST_GRACE" envDefault:"60s"`
 	// IVR worker (cmd/ivr, ADR-0117 §2): the shared token of its WebSocket to the API (both sides'
 	// env). Empty = no worker: inbound calls cannot be switched on. With it, inbound calls work in
 	// the workspaces whose admin switched them on (no server switch, ADR-0121).
@@ -310,6 +314,9 @@ func (c *Config) Validate() error {
 	// its socket (ADR-0121 §4).
 	if c.SIPRegAgentToken != "" && c.SIPRegAgentToken == c.IVRAgentToken {
 		errs = append(errs, errors.New("SIPREG_AGENT_TOKEN must differ from IVR_AGENT_TOKEN"))
+	}
+	if c.VoiceLostGrace < 0 || c.VoiceLostGrace > 10*time.Minute {
+		errs = append(errs, errors.New("VOICE_LOST_GRACE must be between 0 (off) and 10m"))
 	}
 	lk := []string{c.LiveKitURL, c.LiveKitInternalURL, c.LiveKitAPIKey, c.LiveKitAPISecret}
 	if n := countSet(lk); n != 0 && n != len(lk) {

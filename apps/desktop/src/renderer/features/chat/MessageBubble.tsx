@@ -13,7 +13,7 @@ import { firstLink, isEmojiOnly, parseMarkdown } from '../../lib/markdown/parse'
 import { filePreview } from '../../lib/filePreview';
 import { officeOpens } from '../disk/office/bridge';
 import { isImageAttachment } from '../../lib/imageAttachment';
-import type { LightboxImage } from '../../lib/lightbox';
+import { chatGallery, type LightboxImage } from '../../lib/lightbox';
 import { AttachmentImg } from '../../components/AttachmentImg';
 import { downloadFile, openAttachment } from '../../services/files';
 import { can } from '../../lib/permissions';
@@ -492,7 +492,7 @@ function Bubble({
         ) : null}
         {m.replyToId ? <ReplyQuote roomId={roomId} workspaceId={workspaceId} replyToId={m.replyToId} padTop={!showName} /> : null}
         {images.length ? (
-          <ImageGrid files={images} padTop={showName || !!m.replyToId || !!fwd} overlay={imageOnly ? metaNode : null} />
+          <ImageGrid files={images} roomId={roomId} padTop={showName || !!m.replyToId || !!fwd} overlay={imageOnly ? metaNode : null} />
         ) : null}
         {videos.length ? (
           <div className={cx('flex flex-col gap-0.5', (showName || !!m.replyToId || !!fwd || images.length > 0) && 'pt-1.5')}>
@@ -918,14 +918,26 @@ function Thumb({ f, boxW, boxH, onGone }: { f: FileMeta; boxW: number; boxH: num
 /** The Lightbox list of a message's images. */
 const lightboxImages = (files: FileMeta[]): LightboxImage[] => files.map((g) => ({ fileId: g.id, name: g.name, mime: g.mime, width: g.width, height: g.height }));
 
-function ImageGrid({ files, padTop, overlay }: { files: FileMeta[]; padTop: boolean; overlay: ReactNode }): ReactNode {
+/** The pictures of the room's loaded, sent messages, oldest first (the store holds them ascending). */
+function chatImageFiles(roomId: string): FileMeta[][] {
+  const items = useMessages.getState().rooms[roomId]?.items ?? [];
+  const out: FileMeta[][] = [];
+  for (const c of items) {
+    if (c.status !== 'sent') continue;
+    const pics = c.msg.attachments.filter(isImage);
+    if (pics.length) out.push(pics);
+  }
+  return out;
+}
+
+function ImageGrid({ files, roomId, padTop, overlay }: { files: FileMeta[]; roomId: string; padTop: boolean; overlay: ReactNode }): ReactNode {
   const single = files.length === 1 ? files[0] : undefined;
   const boxPx = single ? imageBoxPx(files) : (IMAGE_MAX - 2) / 2; // grid: square cells, gap-0.5
   const boxH = single ? (single.width && single.height ? (boxPx * single.height) / single.width : boxPx * 0.75) : boxPx;
   return (
     <div className={cx('relative grid gap-0.5', files.length > 1 && 'grid-cols-2', padTop && 'pt-1.5')} style={{ width: '100%' }}>
-      {files.map((f, index) => (
-        <ImageTile key={f.id} f={f} files={files} index={index} single={!!single} boxW={boxPx} boxH={boxH} />
+      {files.map((f) => (
+        <ImageTile key={f.id} f={f} files={files} roomId={roomId} single={!!single} boxW={boxPx} boxH={boxH} />
       ))}
       {overlay ? (
         <span className="pointer-events-none absolute bottom-1.5 right-1.5 rounded-full bg-[rgb(0_0_0/50%)] px-1.5 py-1 [--bubble-meta:var(--color-on-accent)]">{overlay}</span>
@@ -939,7 +951,7 @@ function ImageGrid({ files, padTop, overlay }: { files: FileMeta[]; padTop: bool
  * click opens the Lightbox over the message's pictures. A file whose preview does not load at all
  * (not a picture after all) stays in its box as a file: icon, name, a click downloads.
  */
-function ImageTile({ f, files, index, single, boxW, boxH }: { f: FileMeta; files: FileMeta[]; index: number; single: boolean; boxW: number; boxH: number }): ReactNode {
+function ImageTile({ f, files, roomId, single, boxW, boxH }: { f: FileMeta; files: FileMeta[]; roomId: string; single: boolean; boxW: number; boxH: number }): ReactNode {
   const open = useUi((s) => s.openDialog);
   const [gone, setGone] = useState(false);
   const onGone = useCallback(() => setGone(true), []);
@@ -948,7 +960,15 @@ function ImageTile({ f, files, index, single, boxW, boxH }: { f: FileMeta; files
     <button
       type="button"
       aria-label={gone ? `${t('chat.download')} ${f.name}` : t('chat.openImage', { name: f.name })}
-      onClick={() => (gone ? downloadFile(f) : open({ kind: 'image', images: lightboxImages(files), index }))}
+      onClick={() => {
+        if (gone) {
+          downloadFile(f);
+          return;
+        }
+        // The viewer pages through the chat's loaded photos (board #118), read once at the click.
+        const g = chatGallery(chatImageFiles(roomId), f.id, files);
+        open({ kind: 'image', images: lightboxImages(g.files), index: g.index });
+      }}
       {...dragOutAttrs(f)}
       {...dragOutHandlers}
       className="block overflow-hidden bg-[color-mix(in_srgb,var(--bubble-accent)_10%,transparent)] focus-visible:outline-offset-[-2px]"

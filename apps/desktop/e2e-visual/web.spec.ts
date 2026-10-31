@@ -45,13 +45,15 @@ for (const theme of THEMES) {
         const box = await bar.boundingBox();
         expect(box?.height, 'web top bar height').toBe(38);
         expect(box?.y).toBe(0);
-        // No traffic-light inset (Electron on macOS only): the workspace menu starts at the normal
-        // left padding (docs/09 #140; no «‹ ›»; owner 07.10).
+        // No traffic-light inset (Electron on macOS only): «‹ ›» start at the normal left padding,
+        // the workspace menu is in the right group before the search (board #113).
         const title = bar.getByTestId('titlebar-title');
         await expect(title).toContainText('Команда Calab');
-        await expect(bar.getByRole('button', { name: 'Назад' })).toHaveCount(0);
+        const back = await bar.getByTestId('nav-back').boundingBox();
+        expect(back?.x ?? 99, '«‹» at the left padding').toBeLessThanOrEqual(8);
         const box2 = await title.boundingBox();
-        expect(box2?.x ?? 99, 'workspace menu at the left padding').toBeLessThanOrEqual(8);
+        const search = await bar.getByRole('button', { name: 'Поиск' }).boundingBox();
+        expect((box2?.x ?? 0) + (box2?.width ?? 0), 'workspace menu before the search').toBeLessThanOrEqual(search?.x ?? 0);
         await expect(bar.getByRole('button', { name: /^Упоминания/ })).toBeVisible();
         await expect(bar.getByRole('button', { name: 'Горячие клавиши' })).toBeVisible();
         // The search pill: at every width (docs/09 #53, no field in the room header).

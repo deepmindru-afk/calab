@@ -24,7 +24,7 @@ shared web keeps UI, REST, permissions, seat state and video. Everything else ke
 
 ## Alignment with parallel work
 
-- ADR-0148 seat grace (PR #257, VOICE_LOST_GRACE 60 s, `connection_lost`):
+- ADR-0150 seat grace (PR #257, VOICE_LOST_GRACE 60 s, `connection_lost`):
   R5 starts after it merges; companion rules sit next to `seatAfterDrop`/`explicitRelease` and never
   feed them. R3's reconnect schedule is tested to end inside the grace: a LiveKit reconnect after
   the grace would recreate the seat through `participant_joined`.
@@ -54,7 +54,7 @@ why), so it stays with internal testers.
 
 | # | Goal (one PR) | Layers | Depends | Days | iPhone |
 |---|---|---|---|---|---|
-| R5 | Server companion identity and endpoint | proto, Go | R0, ADR-0148 | 3 | — |
+| R5 | Server companion identity and endpoint | proto, Go | R0, ADR-0150 | 3 | — |
 | R6 | Web companion connection for video and data | web | R4, R5 | 2.5 | G10 |
 | R7 | Live Activity updates and lock-screen mute | Swift, widget | R3 | 2 | G12, G13 |
 | R8 | CallKit coexistence through the engine owner | Swift | R1, R3 | 1.5 | G11, G15 |

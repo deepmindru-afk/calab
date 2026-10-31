@@ -1,5 +1,5 @@
 import { expect, test } from './app';
-import { checkpoint, joinVoice } from './harness';
+import { checkpoint, expectToolbarHeights, joinVoice } from './harness';
 
 /**
  * «Диск» on the desktop (ADR-0094 §8, docs/08 «Диск»): the root as tiles and as a list, the
@@ -23,6 +23,7 @@ test('disk-tiles', async ({ open, win, shot, theme }) => {
   await expect(tiles).toHaveCount(9);
   await expect(tiles.first()).toContainText('Дизайн');
   await expect(win.getByTestId('disk-meter')).toBeVisible();
+  await expectToolbarHeights(win.getByTestId('disk-bar'), 'disk toolbar');
   await checkpoint(shot, 'disk-tiles');
 });
 

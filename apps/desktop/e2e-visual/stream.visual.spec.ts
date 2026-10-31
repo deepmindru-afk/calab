@@ -140,7 +140,7 @@ function annotSender(p: Publisher): (m: AnnotInit) => Promise<void> {
   return (m) => p.send(toBinary(AnnotMessageSchema, create(AnnotMessageSchema, { color: 0x30d158, ...m, seq: ++seq })), 'annot');
 }
 
-test('stream-annotate', async ({ open, win, shot }) => {
+test('stream-annotate', async ({ open, win, mock, shot }) => {
   await open();
   await inVoice(win);
   // Вера streams (and, as the presenter, points and draws); I watch on the stage.
@@ -198,6 +198,8 @@ test('stream-annotate', async ({ open, win, shot }) => {
     await expect.poll(() => inkAt(win, 'stream-stage', 0.3, 0.22)).toBe(true);
     await checkpoint(shot, 'stream-annotate');
 
+    // Issue #110 setup: one message read (the chat shows once collapsed), so the reopened room has a read marker.
+    mock.injectMessage({ roomId: IDS.rooms.meeting, authorId: IDS.users.vera, content: 'Начинаем' });
     // CBF-67: with another chat selected, the LIVE row opens the room and the stream on the stage.
     await stage.getByRole('button', { name: 'Свернуть' }).first().click();
     await expect(stage).toHaveCount(0);
@@ -207,6 +209,24 @@ test('stream-annotate', async ({ open, win, shot }) => {
     await expect(win.getByRole('heading', { name: 'Переговорка', exact: true })).toBeVisible();
     await expect(stage).toBeVisible();
     await checkpoint(shot, 'stream-live-other-chat');
+
+    // Issue #110: a message in this room while the stage hides the feed. The blue banner sits
+    // below the streamer chip / «Chat» row (no overlap) and its text opens the chat like «Чат».
+    mock.injectMessage({ roomId: IDS.rooms.meeting, authorId: IDS.users.vera, content: 'Видно слайд?' });
+    const banner = win.getByTestId('unread-banner');
+    await expect(banner).toBeVisible();
+    const chatBtn = stage.getByRole('button', { name: /^Чат/ });
+    const [bb, cb] = [await banner.boundingBox(), await chatBtn.boundingBox()];
+    if (!bb || !cb) throw new Error('banner / Chat button not laid out');
+    expect(bb.y).toBeGreaterThanOrEqual(cb.y + cb.height);
+    await checkpoint(shot, 'stream-new-message-banner');
+    await banner.getByRole('button', { name: /новое сообщение/ }).click();
+    await expect(stage).toHaveCount(0);
+    await expect(win.getByTestId('stream-pip')).toBeVisible();
+    await expect(win.getByTestId('unread-banner')).toHaveCount(0);
+    await checkpoint(shot, 'stream-new-message-chat-open');
+    await win.getByTestId('stream-pip').getByRole('button', { name: 'Развернуть' }).first().click();
+    await expect(stage).toBeVisible();
   } finally {
     if (ping) clearInterval(ping);
     await vera.stop();

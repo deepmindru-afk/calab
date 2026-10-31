@@ -608,6 +608,7 @@ export function VoiceBar(): ReactNode {
   const canStream = useVoice((s) => s.canStream);
   const micError = useVoice((s) => s.micError);
   const micAction = useVoice((s) => s.micErrorAction);
+  const micTrouble = useVoice((s) => s.micTrouble);
   const serverMuted = useVoice((s) => s.serverMuted);
   const room = useRooms((s) => (roomId ? s.byId[roomId] : undefined));
   const wsName = useWorkspaces((s) => (wsId ? s.byId[wsId]?.ws.name : undefined));
@@ -632,16 +633,20 @@ export function VoiceBar(): ReactNode {
   const openRoom = useUi((s) => s.openRoom);
   const open = useUi((s) => s.openDialog);
   if (!roomId) return null;
+  // The mic muted by the system: its state takes «Голос подключён»'s place, as on the phone strip.
+  const trouble = phase === 'connected' && !dialing ? micTrouble : null;
   const phaseText =
     dialing && (phase === 'connected' || phase === 'connecting')
       ? t('telc.call.dialing')
-      : phase === 'connected'
-        ? t('voice.connected')
-        : phase === 'reconnecting'
-          ? t('voice.reconnecting')
-          : phase === 'blocked'
-            ? t('voice.blocked')
-            : t('voice.connecting');
+      : trouble
+        ? t(trouble === 'recovering' ? 'voice.micRecovering' : 'voice.micUnheard')
+        : phase === 'connected'
+          ? t('voice.connected')
+          : phase === 'reconnecting'
+            ? t('voice.reconnecting')
+            : phase === 'blocked'
+              ? t('voice.blocked')
+              : t('voice.connecting');
   const retry = offerRetry(phase, link.attempts);
   const host = link.blockedHost ?? link.rtcHost ?? '';
   const full =
@@ -666,7 +671,7 @@ export function VoiceBar(): ReactNode {
       <div className="flex items-center gap-2">
         <QualityButton phase={phase} />
         <div className="min-w-0 flex-1" aria-live="polite">
-          <div className={cx('truncate text-[14px] font-semibold leading-[18px]', phase === 'connected' && !dialing ? 'text-ok' : 'text-warn')} data-testid="voice-phase">
+          <div className={cx('truncate text-[14px] font-semibold leading-[18px]', trouble === 'unheard' ? 'text-danger-text' : phase === 'connected' && !dialing && !trouble ? 'text-ok' : 'text-warn')} data-testid="voice-phase">
             {phaseText}
           </div>
           <button type="button" className="block max-w-full truncate text-left text-[13px] leading-[18px] text-muted hover:text-fg hover:underline" onClick={goRoom} title={full}>

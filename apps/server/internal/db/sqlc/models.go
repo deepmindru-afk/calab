@@ -740,6 +740,7 @@ type CanvasItem struct {
 	TrashedAt   *time.Time
 	TrashedBy   *uuid.UUID
 	TrashedRoot bool
+	Emoji       string
 }
 
 type CanvasItemHead struct {
@@ -760,6 +761,7 @@ type CanvasItemHead struct {
 	TrashedAt   *time.Time
 	TrashedBy   *uuid.UUID
 	TrashedRoot bool
+	Emoji       string
 }
 
 type CanvasLink struct {

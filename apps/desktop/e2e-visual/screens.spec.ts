@@ -7,7 +7,7 @@ import { FREE_PLAN_LIMITS, defaultSettings, mockPdf, ts } from '../e2e-support/f
 import { CODE_FIXTURE, IDS, MOCK_GPTUNNEL_CODE, MOCK_GPTUNNEL_WEB, PASSWORD, RECORDING_FIXTURE, slowWebpAnimation, type MockServer } from '../e2e-support/mock-server';
 import { encodePng } from '../e2e-support/png';
 import { expect, test } from './app';
-import { NOW, checkpoint, expectAssigneeStacks, joinVoice, login, seedAssigneeCounts, seedDays, seedLabelOverflow, seedReleases, settle } from './harness';
+import { NOW, checkpoint, expectAssigneeStacks, expectToolbarHeights, joinVoice, login, seedAssigneeCounts, seedBotAuthoredTask, seedDays, seedLabelOverflow, seedReleases, settle } from './harness';
 import { DAY, seedDay } from './calendarWeb';
 import { startPublisher } from './publisher';
 
@@ -103,6 +103,7 @@ const KEY = new Set([
   'profile-birthday',
   'chat-birthday-card',
   'chat-lightbox',
+  'chat-lightbox-paged',
   'workspace-menu',
   'sidebar-create-menu',
   'self-mic-menu',
@@ -181,6 +182,7 @@ const KEY = new Set([
   'boards-status-menu',
   'boards-create-menu',
   'boards-task',
+  'boards-bot-consent',
   // «Комментарии | История» of the task panel (ADR-0091).
   'boards-task-comments',
   'boards-task-comments-days',
@@ -981,6 +983,14 @@ test('main-members-toggled', async ({ open, win, mock, shot }) => {
   // Members: a column from 1200 px (open by default), a floating panel below (closed by default).
   await win.getByRole('button', { name: 'Участники' }).click();
   await checkpoint(shot, 'main-members-toggled');
+  // ADR-0150: Вера's connection is lost (the seat is kept): dimmed, a crossed wifi instead of her
+  // other icons, in the sidebar voice row and the members list; next to Борис (muted). Server-side state only, no LiveKit.
+  mock.setVoiceState({ userId: IDS.users.vera, roomId: IDS.rooms.meeting, streaming: false, connectionLost: true });
+  const sidebar = win.locator('aside').first();
+  await expect(sidebar.getByRole('listitem', { name: /Вера/ }).locator('[data-voice-icon="connection-lost"]')).toHaveCount(1);
+  await expect(sidebar.getByRole('listitem', { name: /Борис Петров/ }).locator('[data-voice-icon="muted"]')).toHaveCount(1);
+  await expect(win.getByRole('complementary', { name: 'Участники' }).locator('[data-voice-icon="connection-lost"]')).toHaveCount(1);
+  await checkpoint(shot, 'main-members-voice-lost');
 });
 
 test('members-profile', async ({ open, win, mock, shot }) => {
@@ -1515,18 +1525,86 @@ test('self-mic-menu', async ({ open, win, mock, shot }) => {
   await expect(menu.getByTestId('mic-ptt-key')).toBeVisible();
   await expect(menu.getByTestId('ptt-release-compact')).toBeVisible();
   await checkpoint(shot, 'self-mic-menu');
+  // Voice audio recovery (#255) without LiveKit: the voice panel is shown from store state alone
+  // (__calabaVoiceSeat), the recovery signals come through the voice service's own paths.
+  await win.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await win.evaluate(([roomId, workspaceId]) => (window as unknown as { __calabaVoiceSeat?: (s: object) => void }).__calabaVoiceSeat?.({ roomId, workspaceId }), [IDS.rooms.meeting, IDS.workspaces.main]);
+  await expect(win.getByText('Голос подключён')).toBeVisible();
+  await win.evaluate(() => (document.activeElement as HTMLElement | null)?.blur()); // no focus ring / tooltip of the mic button
+  // The system holds the mic: the panel header says so in place of «Голос подключён», no line under
+  // the buttons, no toast. The refused sound is the one toast.
+  await win.evaluate(() => {
+    const w = window as unknown as { __calabaVoiceRecovery?: (what: string) => void };
+    w.__calabaVoiceRecovery?.('recovering');
+    w.__calabaVoiceRecovery?.('playback');
+  });
+  await expect(win.getByTestId('voice-phase')).toHaveText('Ждём микрофон');
+  await expect(win.getByRole('region', { name: 'Голосовое подключение' }).getByRole('alert')).toHaveCount(0); // no red line under the buttons
+  await expect(win.getByTestId('toast')).toHaveCount(1);
+  await expect(win.getByTestId('toast').filter({ hasText: 'Вы не слышите собеседников' })).toBeVisible();
+  await expect(win.getByTestId('toast').getByRole('button', { name: 'Включить звук' })).toBeVisible();
+  await checkpoint(shot, 'voice-audio-recovery-seat');
+  await win.evaluate(() => (window as unknown as { __calabaVoiceRecovery?: (w: string) => void }).__calabaVoiceRecovery?.('unheard'));
+  await expect(win.getByTestId('voice-phase')).toHaveText('Вас не слышно');
+  await expect(win.getByTestId('toast')).toHaveCount(1); // still only the sound prompt
+  await checkpoint(shot, 'voice-audio-recovery-unheard');
+  // Outside «Команда» the island is folded (ADR-0146): the avatar's mark carries the state.
+  await win.getByTestId('toast').getByRole('button', { name: 'Закрыть' }).click();
+  await win.getByTestId('section-calendar').click();
+  const mark = win.getByTestId('island-call-mark');
+  await expect(mark).toHaveAttribute('data-trouble', 'unheard');
+  await checkpoint(shot, 'voice-audio-recovery-folded-unheard');
+  await win.evaluate(() => (window as unknown as { __calabaVoiceRecovery?: (w: string) => void }).__calabaVoiceRecovery?.('recovering'));
+  await expect(mark).toHaveAttribute('data-trouble', 'recovering');
+  await checkpoint(shot, 'voice-audio-recovery-folded');
 });
 
 test('workspace-menu', async ({ open, win, mock, shot }) => {
   await open();
   await mainWindow(win, mock);
+  // «‹ ›» (board #113): left after the traffic lights; a room opened from another — back on, forward off.
+  const bar = win.getByTestId('titlebar');
+  await win.locator('aside').getByRole('button', { name: /разработка/ }).first().click();
+  await expect(win.getByRole('heading', { name: 'разработка' })).toBeVisible();
+  await expect(bar.getByTestId('nav-back')).toBeEnabled();
+  await expect(bar.getByTestId('nav-forward')).toBeDisabled();
+  await expect(win.locator('[data-message-id]').first()).toBeVisible();
+  await settle(win);
+  await win.locator('[data-virtuoso-scroller]').first().evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+  // The picker sits in the right group, before the search.
+  const pickerBox = await bar.getByTestId('titlebar-title').boundingBox();
+  const searchBox = await bar.getByRole('button', { name: 'Поиск' }).boundingBox();
+  const backBox = await bar.getByTestId('nav-back').boundingBox();
+  expect((pickerBox?.x ?? 0) + (pickerBox?.width ?? 0), 'picker before the search').toBeLessThanOrEqual(searchBox?.x ?? 0);
+  expect(backBox?.x ?? 0, 'back left of the picker').toBeLessThan(pickerBox?.x ?? 0);
+  await checkpoint(shot, 'titlebar-history');
+  // Back returns to «общий», forward turns on.
+  await bar.getByTestId('nav-back').click();
+  await expect(win.getByRole('heading', { name: 'общий' })).toBeVisible();
+  await expect(bar.getByTestId('nav-forward')).toBeEnabled();
   // The workspace switcher (ADR-0074 §2): every workspace, then create / find, then this one's items.
-  await win.getByTestId('titlebar-title').click();
+  await bar.getByTestId('titlebar-title').click();
   await expect(win.getByRole('menu')).toBeVisible();
   await expect(win.getByTestId('switcher-row')).toHaveCount(2);
   await expect(win.getByTestId('switcher-row').first()).toHaveAttribute('aria-current', 'true');
   await expect(win.getByRole('menuitem', { name: 'Создать пространство' })).toBeVisible();
+  // Opened from the right: the sheet stays inside the window.
+  const menuBox = await win.getByTestId('workspace-switcher').boundingBox();
+  expect((menuBox?.x ?? 0) + (menuBox?.width ?? 0), 'switcher menu inside the window').toBeLessThanOrEqual(shot.viewport.width);
+  expect(menuBox?.x ?? -1).toBeGreaterThanOrEqual(0);
   await checkpoint(shot, 'workspace-menu');
+  await win.keyboard.press('Escape');
+  await expect(win.getByRole('menu')).toHaveCount(0);
+  // Esc returns the focus to the trigger (a keyboard ring): drop it for the shot.
+  await win.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  // A long workspace name truncates in the right group.
+  const ws = mock.state.workspaces.get(IDS.workspaces.main);
+  if (!ws) throw new Error('no main workspace');
+  ws.name = 'Очень длинное название пространства для проверки обрезки';
+  mock.dispatch({ event: { case: 'workspaceUpdate', value: { workspace: ws } } });
+  await expect(bar.getByTestId('titlebar-title')).toContainText('Очень длинное');
+  await checkpoint(shot, 'titlebar-long-name');
 });
 
 /** «+» in the room column header (owner, 28.09): «Создать комнату» / «Создать категорию». */
@@ -3104,6 +3182,21 @@ test('chat-lightbox', async ({ open, win, mock, shot }) => {
   await expect(box.getByRole('heading', { name: 'image.png' })).toBeVisible();
   await expect(box.getByRole('button', { name: 'Скачать' })).toBeVisible();
   await checkpoint(shot, 'chat-lightbox-untyped');
+  // Board #118: ←/→ page through the chat's photos in message order (the other message's photo
+  // first), and stop at the ends (no wrap).
+  const counter = box.locator('span.tabular-nums');
+  await expect(counter).toHaveText('3 / 3'); // the chat's three photos; this is the last
+  await win.keyboard.press('ArrowRight');
+  await expect(counter).toHaveText('3 / 3');
+  await win.keyboard.press('ArrowLeft');
+  await expect(box.getByRole('heading', { name: 'IMG_2041.png' })).toBeVisible();
+  await expect(counter).toHaveText('2 / 3');
+  await expect(frame).toHaveAttribute('data-state', 'loaded');
+  await checkpoint(shot, 'chat-lightbox-paged');
+  await win.keyboard.press('ArrowLeft');
+  await expect(counter).toHaveText('1 / 3');
+  await win.keyboard.press('ArrowLeft');
+  await expect(counter).toHaveText('1 / 3');
   await win.keyboard.press('Escape');
   await expect(box).toHaveCount(0);
 });
@@ -3360,6 +3453,17 @@ test('voice-reconnecting', async ({ open, win, mock, shot }) => {
   await win.evaluate(() => (window as unknown as { __calabaVoicePhase?: (p: string) => void }).__calabaVoicePhase?.('reconnecting'));
   await expect(win.getByTestId('voice-reconnecting')).toBeVisible();
   await checkpoint(shot, 'voice-reconnecting');
+  // Back from the background: the mic is being restored (the panel header) and the remote audio
+  // waits for a tap («Вы не слышите собеседников»).
+  await win.evaluate(() => {
+    const w = window as unknown as { __calabaVoicePhase?: (p: string) => void; __calabaVoiceRecovery?: (what: string) => void };
+    w.__calabaVoicePhase?.('connected');
+    w.__calabaVoiceRecovery?.('recovering');
+    w.__calabaVoiceRecovery?.('playback');
+  });
+  await expect(win.getByTestId('voice-phase')).toHaveText('Ждём микрофон');
+  await expect(win.getByTestId('toast').filter({ hasText: 'Вы не слышите собеседников' })).toBeVisible();
+  await checkpoint(shot, 'voice-audio-recovery');
 });
 
 test('voice-member-menu', async ({ open, win, mock, shot }) => {
@@ -4079,6 +4183,7 @@ test('calendar-filter', async ({ open, win, mock, shot }) => {
   await expect(win.getByTestId('person-chip')).toHaveCount(2);
   await expect(win.getByTestId('busy-block')).toHaveCount(2);
   await win.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await expectToolbarHeights(win.locator('[data-bar]').filter({ has: win.getByTestId('cal-prev') }), 'calendar toolbar');
   await checkpoint(shot, 'calendar-filter');
 });
 
@@ -4250,6 +4355,8 @@ test('boards-kanban', async ({ open, win, mock, shot }) => {
   await mainWindow(win, mock);
   await boardsMode(win, mock);
   await checkpoint(shot, 'boards-kanban');
+  // Board #117: one control height in the toolbar (search, filter, sort, display, view switch, new task, more).
+  await expectToolbarHeights(win.getByTestId('board-header'), 'boards toolbar');
   // The third column («В работе», CAL-4 with five people) is past the 960 px edge: scroll the board sideways.
   await win.getByTestId('kanban').evaluate((el) => [el, ...el.querySelectorAll<HTMLElement>('*')].forEach((e) => getComputedStyle(e).overflowX === 'auto' && e.scrollWidth > e.clientWidth && (e.scrollLeft = 320)));
   await expect(win.getByTestId('task-card').filter({ hasText: 'Карточки задач' })).toBeVisible();
@@ -4355,6 +4462,42 @@ test('boards-smart-task', async ({ open, win, mock, shot }) => {
 });
 
 /** The task full screen over the board: properties, two assignees, relations, comments. */
+/** Board #115: the bot's «act on your behalf» request in the task: a warn block, one button, a window with «Разрешить» / «Отклонить». */
+test('boards-bot-consent', async ({ open, win, mock, shot }) => {
+  await open();
+  seedBotAuthoredTask(mock);
+  await mainWindow(win, mock);
+  await boardsMode(win, mock);
+  await win.getByTestId('task-card').filter({ hasText: 'CAL-3' }).getByTestId('card-title').click();
+  const panel = win.getByTestId('task-panel');
+  const block = panel.getByTestId('bot-consent-prompt');
+  await expect(block).toBeVisible();
+  await expect(block.getByRole('button')).toHaveCount(1);
+  await checkpoint(shot, 'boards-bot-consent');
+  await block.getByTestId('bot-consent-review').click();
+  const dlg = win.getByTestId('bot-consent-dialog');
+  await expect(dlg).toBeVisible();
+  await checkpoint(shot, 'boards-bot-consent-dialog');
+  // «Отклонить» closes the window and removes the block.
+  await win.getByTestId('bot-consent-deny').click();
+  await expect(dlg).toHaveCount(0);
+  await expect(block).toHaveCount(0);
+});
+
+/** Board #115: «Разрешить» in the window closes it and the block goes. */
+test('boards-bot-consent-allow', async ({ open, win, mock }) => {
+  await open();
+  seedBotAuthoredTask(mock);
+  await mainWindow(win, mock);
+  await boardsMode(win, mock);
+  await win.getByTestId('task-card').filter({ hasText: 'CAL-3' }).getByTestId('card-title').click();
+  const panel = win.getByTestId('task-panel');
+  await panel.getByTestId('bot-consent-review').click();
+  await win.getByTestId('bot-consent-allow').click();
+  await expect(win.getByTestId('bot-consent-dialog')).toHaveCount(0);
+  await expect(panel.getByTestId('bot-consent-prompt')).toHaveCount(0);
+});
+
 test('boards-task', async ({ open, win, mock, shot }) => {
   await open();
   await mainWindow(win, mock);
@@ -4427,13 +4570,25 @@ test('boards-task', async ({ open, win, mock, shot }) => {
   await win.keyboard.type('- первый пункт');
   await win.keyboard.press('Enter');
   await win.keyboard.type('второй пункт');
+  // Board #134: a pasted markdown table is a table in edit mode and stays one after saving.
+  await win.keyboard.press('Enter');
+  await win.keyboard.press('Enter');
+  await prose.evaluate((el) => {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', '| Поле | Тип | Заметка |\n| --- | --- | --- |\n| id | **uuid** | первичный ключ |\n| имя | text | |');
+    el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  });
+  await expect(prose.locator('table th')).toHaveCount(3);
   await panel.getByTestId('task-description-save').click();
   await expect(editor).toHaveCount(0);
   const read = panel.getByTestId('task-description');
   await expect(read.locator('h1')).toHaveText('Итоги звонка');
+  await expect(read.locator('table th')).toHaveCount(3);
+  await expect(read.locator('table td')).toHaveCount(6);
+  await expect(read.locator('table td strong')).toHaveText('uuid');
   const boxes = async (root: Locator): Promise<number[][]> => {
     const out: number[][] = [];
-    for (const sel of ['h1', 'p >> nth=0', 'p >> nth=1', 'li >> nth=1']) {
+    for (const sel of ['h1', 'p >> nth=0', 'p >> nth=1', 'li >> nth=1', 'table', 'th >> nth=1', 'td >> nth=4']) {
       const b = await root.locator(sel).boundingBox();
       out.push(b ? [b.x, b.y, b.width, b.height] : []);
     }

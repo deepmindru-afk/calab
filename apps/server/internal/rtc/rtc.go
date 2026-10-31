@@ -42,6 +42,9 @@ type Config struct {
 	PublicURL       string // LIVEKIT_URL, given to clients
 	APIKey, Secret  string
 	MaxParticipants uint32
+	// LostGrace: how long a seat outlives an involuntary LiveKit drop (VOICE_LOST_GRACE,
+	// ADR-0150); 0 = the seat goes with the drop.
+	LostGrace time.Duration
 }
 
 // Service implements the rtc endpoints and background sync.
@@ -311,7 +314,8 @@ func (s *Service) join(w http.ResponseWriter, r *http.Request) error {
 // recordPending records the device in the room as pending under the workspace voice lock
 // (with the occupancy check when adm is active) and publishes the new state. A device already
 // recorded in the room is left as it is: pending reports whether it still waits for its
-// LiveKit connection, joinedAt identifies that wait (expectConnect). A device recorded in
+// LiveKit connection, joinedAt identifies that wait (expectConnect) — except a seat held after
+// a lost connection, which the device takes back (seatOnRejoin, ADR-0150). A device recorded in
 // another room (switching rooms) moves here and keeps its mute / deafen / musician mode.
 func (s *Service) recordPending(ctx context.Context, room wsRoom, uid, sid uuid.UUID, adm admission) (pending bool, joinedAt int64, err error) {
 	var c voice.Change
@@ -328,6 +332,9 @@ func (s *Service) recordPending(ctx context.Context, room wsRoom, uid, sid uuid.
 		c, err = s.voice.UpdateLocked(ctx, room.WorkspaceID, uid, sid, func(cur *voice.SessionState) *voice.SessionState {
 			if cur != nil && cur.RoomID == room.ID {
 				pending, joinedAt = cur.Pending, cur.JoinedAt
+				if n, ok := seatOnRejoin(*cur, time.Now()); ok {
+					return &n // the device is back after a lost connection: the seat is its own (ADR-0150)
+				}
 				return cur // repeated /join: idempotent
 			}
 			n := voice.SessionState{RoomID: room.ID, Pending: true, JoinedAt: time.Now().UnixMilli()}
@@ -849,7 +856,9 @@ func (s *Service) disconnectMember(w http.ResponseWriter, r *http.Request) error
 		if err := s.lk.RemoveParticipant(r.Context(), name, voice.Identity(st.UserID, st.SessionID)); err != nil && !IsNotFound(err) {
 			return httpx.Unavailable(err)
 		}
-		// Voice state is cleared by the participant_left webhook (or reconcile).
+		// Voice state is cleared by the participant_left webhook (or reconcile); a seat without
+		// a connection (pending, or held after a drop) has none and goes here.
+		s.dropPending(r.Context(), room.WorkspaceID, st)
 	}
 	httpx.NoContent(w)
 	return nil

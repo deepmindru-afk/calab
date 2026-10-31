@@ -402,6 +402,10 @@ export const es: Dict = {
   // voice
   'voice.connecting': 'Conectando…',
   'voice.reconnecting': 'Reconectando…',
+  'voice.audioBlocked': 'No oyes a los demás',
+  'voice.audioBlockedAction': 'Activar sonido',
+  'voice.micRecovering': 'Esperando micro',
+  'voice.micUnheard': 'No se te oye',
   'voice.connected': 'Voz conectada',
   'voice.blocked': 'Voz no disponible',
   'voice.quality': 'Calidad de conexión · latencia {rtt} ms · pérdida {loss}%',
@@ -472,6 +476,7 @@ export const es: Dict = {
   'voice.pttMac': 'macOS: requiere los permisos «Accesibilidad» y «Monitoreo de entrada».',
   'voice.rnnoise': 'Supresión de ruido',
   'voice.rnnoiseHint': 'Elimina el ruido del teclado y el ruido de fondo. Consume más CPU: desactivado por defecto',
+  'voice.rnnoisePlatform': 'En este dispositivo el sistema elimina el ruido por sí mismo; un segundo supresor encima distorsionaría tu voz',
   'voice.red': 'Resiliencia a redes deficientes',
   'voice.redHint': 'Menos cortes de voz en Wi-Fi débil o VPN, al doble de tráfico',
   'voice.myBitrate': 'Calidad de mi voz',

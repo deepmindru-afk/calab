@@ -375,6 +375,12 @@ message VoiceState {
   // user talks on an inbound phone call - connected, nothing published or received. Others show
   // the row dimmed with a phone icon. Set through PATCH /api/voice/self.
   bool on_phone = 13;
+  // Connection lost (ADR-0150): every device of the user in this room dropped out of LiveKit
+  // involuntarily (a frozen phone, a lost network) and the server keeps the seat for
+  // VOICE_LOST_GRACE (60 s by default). Others show the row dimmed with «no connection», play no
+  // leave cue, and no join cue when the device comes back in time. The seat still counts against
+  // the room's user_limit. When the grace ends the state goes like a leave (empty room_id).
+  bool connection_lost = 14;
 }
 
 message Presence {
@@ -512,6 +518,12 @@ message Ready {
   // ADR-0140: the uuidv7 lower bound of the start of read receipts — own messages with a smaller
   // id have no ticks (no retroactive «read»); empty — a server before ADR-0140.
   string read_receipts_from = 18;
+  // ADR-0151: the bots the recipient owns (bots.owner_user_id). A task created by one of them
+  // counts as the recipient's own for author rights (isTaskAuthor in packages/protocol: edit and
+  // archive with CREATE_TASKS, create-only visibility). A bot the recipient creates later comes
+  // as BOT_CREATE with owner_user_id = the recipient; a deleted one may stay until the next READY
+  // (the server decides anyway).
+  repeated string my_bot_ids = 19;
 }
 
 // A guest knocks on a room (ADR-0040); to the room's deciders.

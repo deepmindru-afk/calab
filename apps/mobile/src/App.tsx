@@ -305,8 +305,9 @@ function Host({ origin }: { origin: string }) {
         allowUniversalAccessFromFileURLs={false}
         mixedContentMode="never"
         allowsInlineMediaPlayback
-        // A CallKit answer is a native gesture; async RTC audio has no web playback gesture.
-        mediaPlaybackRequiresUserAction={!callAudioEnabled}
+        // Remote voice <audio> is created asynchronously (CallKit answer, room rejoin after the app
+        // was in the background): there is no web gesture to play it. Only the Calab origin loads here.
+        mediaPlaybackRequiresUserAction={false}
         allowsBackForwardNavigationGestures={false}
         contentInsetAdjustmentBehavior="never"
         automaticallyAdjustContentInsets={false}

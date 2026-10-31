@@ -644,6 +644,8 @@ export function createWebPlatform(): Platform {
       takeDeepLink,
       // Phone host links of a running page (ADR-0142); a plain browser has none.
       onDeepLink: onHostLink ?? noop,
+      // The browser's only power-like event: `online` as 'resume'. services/session.ts probes the
+      // gateway for it (lib/powerGateway.ts) instead of the desktop's reconnect after sleep.
       onPower: (cb: (e: PowerEvent) => void) => {
         const online = (): void => cb('resume');
         window.addEventListener('online', online);

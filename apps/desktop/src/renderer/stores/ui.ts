@@ -1,10 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { emptyHistory, pushLoc, step, type History, type Loc } from '../lib/roomHistory';
+import { emptyHistory, type History } from '../lib/navHistory';
 import { emptyPhoneNav, openChat, visibleRoom, type PhoneNav } from '../lib/phoneNav';
 import { HOME } from './dms';
-import { RoomType } from '@calaba/protocol';
-import { useRooms } from './rooms';
 import type { LightboxImage } from '../lib/lightbox';
 import { useBoardsUi } from './boardsUi';
 import { useWebApps } from './webApps';
@@ -124,10 +122,11 @@ interface UiState {
   toggleMembers: () => void;
   setReply: (roomId: string, messageId: string | undefined) => void;
   setEditing: (id: string | null) => void;
-  /** Room navigation history (title bar ← →); not persisted. */
+  /**
+   * Navigation history (title bar ‹ ›, board #113): recorded and replayed by services/navHistory.ts
+   * from the section stores; not persisted.
+   */
   history: History;
-  goBack: () => void;
-  goForward: () => void;
   /** Collapsed room categories (category id → true), persisted. */
   collapsed: Record<string, true>;
   toggleCategory: (categoryId: string) => void;
@@ -217,7 +216,7 @@ export const useUi = create<UiState>()(
       calView: 'day',
       setCalView: (calView) => set({ calView }),
       setWorkspace: (id) =>
-        set((s) => {
+        set(() => {
           // A click on a workspace (the open one too) leads back to its rooms (ADR-0050 §3).
           if (useWebApps.getState().open) useWebApps.getState().setOpen(null);
           leaveMail();
@@ -225,7 +224,6 @@ export const useUi = create<UiState>()(
           calDay: null,
           calEvent: null,
           activeWorkspaceId: id,
-          history: id ? pushLoc(s.history, here(s), { ws: id, room: s.lastRoom[id] ?? null }) : s.history,
           };
         }),
       openRoom: (wsId, roomId) =>
@@ -248,12 +246,9 @@ export const useUi = create<UiState>()(
           membersOverlay: false,
           // Phone (ADR-0073 §1): the room / DM is pushed over its tab's root.
           phone: s.phone.on ? openChat(s.phone, wsId === HOME ? { kind: 'dm', room: roomId } : { kind: 'room', ws: wsId, room: roomId }) : s.phone,
-          history: pushLoc(s.history, here(s), { ws: wsId, room: roomId }),
           };
         }),
       selectDefaultRoom: (wsId, roomId) => set((s) => ({ lastRoom: { ...s.lastRoom, [wsId]: roomId } })),
-      goBack: () => set((s) => travel(s, -1)),
-      goForward: () => set((s) => travel(s, 1)),
       toggleCategory: (id) =>
         set((s) => {
           const collapsed = { ...s.collapsed };
@@ -293,39 +288,6 @@ export const useUi = create<UiState>()(
 useBoardsUi.subscribe((s, prev) => {
   if (s.active && !prev.active && useUi.getState().calDay !== null) useUi.getState().closeCalendar();
 });
-
-function here(s: Pick<UiState, 'activeWorkspaceId' | 'lastRoom'>): Loc | null {
-  return s.activeWorkspaceId ? { ws: s.activeWorkspaceId, room: s.lastRoom[s.activeWorkspaceId] ?? null } : null;
-}
-
-/** A history entry is still reachable: the room exists (or the entry is workspace-only). */
-function reachable(l: Loc): boolean {
-  const rooms = useRooms.getState().byId;
-  if (l.ws === HOME) return !l.room || rooms[l.room]?.type === RoomType.DM || rooms[l.room]?.type === RoomType.NOTES;
-  if (l.room) return rooms[l.room]?.workspaceId === l.ws;
-  return Object.values(rooms).some((r) => r.workspaceId === l.ws);
-}
-
-function travel(s: UiState, dir: -1 | 1): Partial<UiState> {
-  const r = step(s.history, here(s), dir, reachable);
-  if (!r) return {};
-  if (useWebApps.getState().open) useWebApps.getState().setOpen(null);
-  leaveMail();
-  leaveDisk();
-  leaveWiki();
-  leaveCanvas();
-  leaveTelephony();
-  const { ws, room } = r.to;
-  return {
-    calDay: null,
-    calEvent: null,
-    history: r.history,
-    activeWorkspaceId: ws,
-    lastRoom: room ? { ...s.lastRoom, [ws]: room } : s.lastRoom,
-    editing: null,
-    membersOverlay: false,
-  };
-}
 
 export const canGoBack = (s: UiState): boolean => s.history.back.length > 0;
 export const canGoForward = (s: UiState): boolean => s.history.forward.length > 0;

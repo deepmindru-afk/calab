@@ -1,5 +1,6 @@
 import { confirmAction } from '../../components/Confirm';
 import { plural, t } from '../../i18n';
+import { replaceNextNav } from '../../services/navHistory';
 import { toast } from '../../stores/toasts';
 import { emptyFolder, inTrash, markAllReadCount, markAllReadTargets, markFoldersRead, type MailBox, moveMessages, moveRows, openRow, setMessageFlags, setRowFlags, useMail, type MoveOp } from '../../stores/mail';
 import { actionKeys, clearPicked, useMailUi } from '../../stores/mailUi';
@@ -164,7 +165,11 @@ export function stepSelection(dir: -1 | 1): void {
   if (!s.order.length) return;
   const at = s.selected ? s.order.indexOf(s.selected) : -1;
   const next = s.order[at < 0 ? (dir > 0 ? 0 : s.order.length - 1) : Math.max(0, Math.min(s.order.length - 1, at + dir))];
-  if (next && next !== s.selected) openRow(next);
+  if (next && next !== s.selected) {
+    // Stepping through the list moves within the history entry (board #113), like J/K in a task.
+    replaceNextNav();
+    openRow(next);
+  }
 }
 
 // The message opened is marked read after 1 s (§8) — once: a «Не прочитано» right after opening

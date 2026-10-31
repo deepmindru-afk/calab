@@ -296,7 +296,7 @@ func New(d Deps) *App {
 		}
 		rtcSvc = rtc.NewService(rtc.Config{
 			PublicURL: d.Config.LiveKitURL, APIKey: d.Config.LiveKitAPIKey, Secret: d.Config.LiveKitAPISecret,
-			MaxParticipants: d.Config.LiveKitMaxParticipants,
+			MaxParticipants: d.Config.LiveKitMaxParticipants, LostGrace: d.Config.VoiceLostGrace,
 		}, d.DB, d.Redis, lk, base)
 		rtcSvc.Plans = planSvc
 		pub = rtc.SyncPublisher{Publisher: base, S: rtcSvc}

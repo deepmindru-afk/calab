@@ -47,9 +47,10 @@ import { ECHO, EchoRiskDetector, RemoteActivity, duckWanted, duckable } from '..
 import { RateTracker, audioSourceEcho, candidatePair, inboundAudio, inboundVideo, outboundAudio, outboundVideo, transportBytes } from '../lib/media/stats';
 import { VoiceGate, rmsToDb } from '../lib/media/vad';
 import { denoiseMode, wakeDbFor } from '../lib/media/denoiseSleep';
+import { rnnoiseSupported } from '../lib/media/rnnoiseSupport';
 import { isMobileNow } from '../lib/mobile';
 import { playSound } from '../lib/sounds';
-import { joinLeaveCue, joinLeaveSoundMax } from '../lib/media/joinLeaveSound';
+import { SeatCues, joinLeaveCue, joinLeaveSoundMax, type SeatVerdict } from '../lib/media/joinLeaveSound';
 import { PttRelease } from '../lib/pttRelease';
 import { SpeakingDebouncer, speakingUserIds } from '../lib/speaking';
 import { AUTO_MUTE_TOAST, AutoMuteTimer, autoMuteArmed, type AutoMuteSec } from '../lib/autoMute';
@@ -57,6 +58,7 @@ import { REMOTE_LEVEL, RemoteLevelSpeaking, readLevel, type LevelSample } from '
 import { audioDevices, deviceName, deviceSwitches, type AudioDevice } from '../lib/deviceSwitch';
 import { answerCallSelf, canSpeakFrom, isDeviceGone, meterUpdate, micModeFor, mySeat, pttAllowed, pttCue, qualityOf, remoteAudio, toggleDeafen, toggleMute, transmitDecision, withUserMuted, withUserVolume } from '../lib/voiceLogic';
 import { RemoteAudioOut } from '../lib/media/remoteAudioOut';
+import { captureOnOutputHeadset, livekitOutputStale, outputSink, outputsChanged } from '../lib/media/outputRoute';
 import { useMessages } from '../stores/messages';
 import { useRooms } from '../stores/rooms';
 import { isTempRoom } from '../lib/tempRooms';
@@ -76,6 +78,20 @@ import { ActiveSpeaker } from '../lib/activeSpeaker';
 import { lastSpoke, speakingStarts } from '../lib/lastSpoke';
 import { cspBlockedHost, describeConnectError, describeDisconnect, hostOfUrl } from '../lib/voiceLink';
 import { seatAction, seatRefused, type SeatView } from '../lib/voiceSeat';
+import {
+  AUDIO_SETTLE_MS,
+  MIC_SETTLE_MS,
+  PLAYBACK_PROMPT_MS,
+  RESUBSCRIBE_GAP_MS,
+  RESUBSCRIBE_TRIES,
+  VISIBLE_SETTLE_MS,
+  afterVisible,
+  audioFixes,
+  captureWaitsForVisible,
+  micFix,
+  seatGraceMs,
+  type MicPubView,
+} from '../lib/voiceRecovery';
 import { SELF_SYNC_LAG_MS, SelfStateSync, type SelfFlags } from '../lib/selfStateSync';
 import { CONNECT_STUCK_MS, ConnectWatchdog, DISCONNECT_WAIT_MS, RECONNECT_STUCK_MS, STOP_STREAM_WAIT_MS, TEARDOWN_WAIT_MS, reconnectVerdict, rejectAfter, settleWithin, type ConnectStage, type StuckKind } from '../lib/voiceWatchdog';
 import { annot } from './annot';
@@ -128,6 +144,21 @@ const SEAT_SELF_GRACE_MS = 3000;
  */
 const REMOVED_GRACE_MS = 500;
 /**
+ * Rejoin backoff (#255): 1, 2, 4, 8 s, then at most 15 s apart; at least 5 attempts and 90 s — the
+ * server's default seat hold after a drop (VOICE_LOST_GRACE 60 s, removed by the next 30 s
+ * reconcile, ADR-0150) — before «Не удалось вернуться в голосовую комнату».
+ */
+const REJOIN_MIN_ATTEMPTS = 5;
+const REJOIN_MAX_BACKOFF_MS = 15_000;
+const REJOIN_GIVE_UP_MS = 90_000;
+/** `devicechange` comes in bursts while the OS switches the output: re-bind the elements once it settles (#255). */
+const REBIND_SETTLE_MS = 400;
+/**
+ * The capture opened on the headset the voices play to (CBF-108): macOS moves a Bluetooth headset
+ * to the HFP profile, which takes about a second and fires no `devicechange` — re-bind after it.
+ */
+const HEADSET_ROUTE_SETTLE_MS = 1500;
+/**
  * Mic track mute / unmute (ADR-0134): an op unsettled after this counts as failed (a lock held
  * across a dead link), and a failed one is retried after MUTE_RETRY_MS (by attempt, capped) —
  * never at once, so a link that refuses it cannot spin the renderer.
@@ -144,6 +175,13 @@ interface ConnectAttempt {
 /** Room.on whose listeners run only while that room is the engine's current one (VoiceEngine.wire). */
 interface GuardedRoom {
   on<E extends keyof RoomEventCallbacks>(ev: E, fn: RoomEventCallbacks[E]): GuardedRoom;
+}
+
+declare global {
+  interface Window {
+    /** Visual tests only (CALABA_VISUAL_TEST): the «tap to turn the sound on» prompt / my mic trouble, without a real interruption. */
+    __calabaVoiceRecovery?: (what: 'playback' | 'recovering' | 'unheard') => void;
+  }
 }
 
 /** LiveKit identity is `<user_id>:<session_id>` (rtc.proto). */
@@ -219,6 +257,10 @@ class VoiceEngine {
   private trackLag = false;
   private trackLagTimer: number | null = null;
   private muteRetryTimer: number | null = null;
+  /** scheduleRebind: the settle timer after an output device change. */
+  private rebindTimer: number | null = null;
+  /** performance.now() the pending re-bind is due at: a later request never brings it forward. */
+  private rebindDue = 0;
   private muteFails = 0;
   private room: Room | null = null;
   private nativeAudio: HostCallAudioSession | null = null;
@@ -327,7 +369,10 @@ class VoiceEngine {
     this.audioSink.id = 'remote-audio-sink';
     this.audioSink.hidden = true;
     document.body.appendChild(this.audioSink);
-    document.addEventListener('visibilitychange', () => this.applyWatching());
+    document.addEventListener('visibilitychange', () => {
+      this.applyWatching();
+      this.onVisibility();
+    });
     // My camera was the last video on the call view: back to the chat.
     useVoice.subscribe((s, p) => {
       if (s.camera === 'off' && p.camera !== 'off' && s.stage === 'expanded' && !s.watching && s.cameras.length === 0) setVoice({ stage: 'pip' });
@@ -335,10 +380,12 @@ class VoiceEngine {
       const kind: StuckKind | null = s.joining !== null || s.phase === 'connecting' ? 'connecting' : s.phase === 'reconnecting' ? 'reconnecting' : null;
       this.watchdog.update(kind, s.joining?.roomId ?? s.roomId);
       if (s.phase === 'connected' && s.joining === null) this.stuckRetries = 0;
+      if (s.phase !== p.phase) this.onPhaseChange(s.phase, p.phase);
       // Deafen, from wherever it is written: the elements at once, then the subscriptions.
       if (s.deafened !== p.deafened) {
         this.applyVolumes();
         this.applyAudioSubscriptions();
+        if (!s.deafened) this.scheduleAudioCheck('undeafened');
       }
       // A moderator mute / lost SPEAK lands here without applyTransmit: the auto-mute stops too.
       if (s.muted !== p.muted || s.deafened !== p.deafened || s.serverMuted !== p.serverMuted || s.canSpeak !== p.canSpeak) this.syncAutoMute();
@@ -352,7 +399,8 @@ class VoiceEngine {
       this.snapshotDevices(true);
       void this.onDevicesChanged();
       // macOS moves the default output (charger, dock, headphones): re-assert our sink and the
-      // playback state (deafen!) on every remote element once the switch has settled.
+      // playback state (deafen!) on every remote element; the snapshot re-binds them once the
+      // switch has settled — only when the outputs changed (snapshotDevices).
       void this.applyOutputDevice();
     });
     this.snapshotDevices(false);
@@ -379,6 +427,12 @@ class VoiceEngine {
       if (s.byId !== p.byId) this.guardMusician(false);
     });
     void this.syncPttBinding();
+    if (useSession.getState().appInfo?.visualTest) {
+      window.__calabaVoiceRecovery = (what) => {
+        if (what === 'playback') this.offerPlayback();
+        else this.setMicTrouble(what);
+      };
+    }
   }
 
   // ------------------------------------------------------------ prefs
@@ -400,7 +454,9 @@ class VoiceEngine {
     if (s.outputDeviceId !== p.outputDeviceId || s.micDeviceId !== p.micDeviceId) this.resetEcho();
     // Without RNNoise the pipeline has a gain stage only in the speakerphone modes: rebuild when that flips.
     const gainFlips = s.echoMode !== p.echoMode && this.mic !== null && this.mic.duckable !== (this.mic.rnnoise || duckable(s.echoMode));
-    if ((s.rnnoise !== p.rnnoise || s.micDeviceId !== p.micDeviceId || gainFlips) && this.mic) void this.restartMic();
+    // The synced RNNoise pref flipped on another device changes nothing where RNNoise can't run.
+    const denoiseFlips = s.rnnoise !== p.rnnoise && rnnoiseSupported();
+    if ((denoiseFlips || s.micDeviceId !== p.micDeviceId || gainFlips) && this.mic) void this.restartMic();
     if (s.echoMode !== p.echoMode) this.applyDuck();
     if (s.red !== p.red && this.micTrack && this.room) void this.republishMic();
     if (s.personalBitrateKbps !== p.personalBitrateKbps) this.applyMicTier();
@@ -471,6 +527,7 @@ class VoiceEngine {
     this.takenOverRoom = null;
     this.stuckRetries = 0;
     this.resumedJoin = opts.resumed === true;
+    this.linkDownAt = null; // a new room: not the old one's outage clock
     // «Войти и смотреть» (ADR-0066 §3): the call view opens as soon as the cameras are known.
     this.videoOnJoin = opts.video === true ? roomId : null;
     // The chat follows the voice (issue #127): a user join shows the room's own chat, so a message
@@ -682,8 +739,8 @@ class VoiceEngine {
         dynacast: true,
         webAudioMix: false, // echo rule 1
         disconnectOnPageLeave: true,
-        // LiveKit re-selects the output on `devicechange` unless it knows ours (RoomEvent.ActiveDeviceChanged below).
-        ...(prefs().outputDeviceId ? { audioOutput: { deviceId: prefs().outputDeviceId ?? '' } } : {}),
+        // LiveKit applies its output id to every new remote track: it must be ours (lib/media/outputRoute).
+        ...(this.outputSinkNow() ? { audioOutput: { deviceId: this.outputSinkNow() } } : {}),
       });
       this.room = room;
       // H.264 «Авто» = High on the wire (hardware on macOS): codec preferences set between
@@ -701,6 +758,7 @@ class VoiceEngine {
         autoSubscribe: false,
         ...(relayOnly ? { rtcConfig: { iceTransportPolicy: 'relay' } } : {}),
       });
+      this.reachedConnected.add(room);
       if (seq !== this.joinSeq) {
         if (this.room === room) this.room = null;
         await room.disconnect(false);
@@ -732,9 +790,11 @@ class VoiceEngine {
         if (this.anyCamera() && !useVoice.getState().watching) setVoice({ stage: 'expanded', videoPip: true });
       }
       // Back in after a lost connection (the rejoin cycle) or a reload: «reconnect», else «join».
-      playSound(quiet || this.resumedJoin ? 'reconnect' : 'join');
+      const cue = quiet || this.resumedJoin ? 'reconnect' : 'join';
+      if (cue === 'join' || !this.cuesQuiet()) playSound(cue);
       this.resumedJoin = false;
       this.syncTray();
+      this.afterLinkBack(quiet ? 'rejoined' : 'connected');
     } catch (err) {
       if (seq !== this.joinSeq) return;
       if (moved) {
@@ -818,15 +878,21 @@ class VoiceEngine {
   /** Bumped by every user join/leave: a running rejoin loop stops when it changes. */
   private rejoinGen = 0;
 
+  /** Rooms whose room.connect() succeeded: only their Disconnected starts a rejoin cycle (#255). */
+  private readonly reachedConnected = new WeakSet<Room>();
+
   /** Bumped by every connect() and leave(): a connect still tearing down the old room bails out. */
   private intentSeq = 0;
 
   /**
-   * Rejoin after an unexpected disconnect: 1 s, 2 s, 4 s … up to 5 attempts. The seat (room id,
-   * phase 'reconnecting') stays in the store for the whole cycle: the voice panel keeps its
-   * state and open menus instead of remounting on every attempt.
+   * Rejoin after an unexpected disconnect: 1 s, 2 s, 4 s, 8 s, then every 15 s (`now`: the first one
+   * at once), for at least 5 attempts and REJOIN_GIVE_UP_MS — as long as the server holds a dropped
+   * seat (ADR-0150), so a metro tunnel or a Wi-Fi ↔ LTE switch does not end the call while the
+   * others still see «Нет связи». The network coming back wakes the next attempt at once. The seat
+   * (room id, phase 'reconnecting') stays in the store for the whole cycle: the voice panel keeps
+   * its state and open menus instead of remounting on every attempt.
    */
-  private async rejoin(seatRoom?: string, seatWs?: string): Promise<void> {
+  private async rejoin(seatRoom?: string, seatWs?: string, now = false): Promise<void> {
     const roomId = seatRoom ?? this.roomId;
     const wsId = seatWs ?? useVoice.getState().workspaceId;
     // A call's session has workspace '' (ADR-0034): it reconnects like a room.
@@ -840,12 +906,14 @@ class VoiceEngine {
     this.rejoinRoomId = roomId;
     try {
       await this.teardown(false, true);
-      for (let attempt = 0; attempt < 5; attempt++) {
+      const started = Date.now();
+      for (let attempt = 0; attempt < REJOIN_MIN_ATTEMPTS || Date.now() - started < REJOIN_GIVE_UP_MS; attempt++) {
         if (gen !== this.rejoinGen) return; // the user left or switched meanwhile
         setVoice({ roomId, workspaceId: wsId, phase: 'reconnecting', serverMuted });
         // The backoff ends early when the gateway is back (the network is): checkSeat wakes it.
         await new Promise<void>((r) => {
-          const timer = setTimeout(r, 1000 * 2 ** attempt);
+          // `now`: the page is back after a long hide — the first attempt without the 1 s wait.
+          const timer = setTimeout(r, now && attempt === 0 ? 0 : Math.min(1000 * 2 ** attempt, REJOIN_MAX_BACKOFF_MS));
           this.rejoinWake = () => {
             clearTimeout(timer);
             r();
@@ -855,6 +923,14 @@ class VoiceEngine {
         if (gen !== this.rejoinGen) return;
         await this.connect(roomId, wsId, true, undefined, serverMuted);
         if (gen !== this.rejoinGen) return;
+        // A Disconnected between room.connect() resolving and here is ignored by its handler
+        // (a rejoin is running): a room that is not Connected now is not back — drop it, go on.
+        if (this.room && this.room.state !== ConnectionState.Connected && !this.nativeAudio?.connected) {
+          log.info(`voice: rejoin attempt ${attempt + 1} got a room that is ${this.room.state} already`);
+          await this.teardown(false, true);
+          if (gen !== this.rejoinGen) return;
+          continue;
+        }
         if (this.room || this.nativeAudio?.connected) {
           if (stream) toast.info(t('mediaErr.stream.restart'));
           // The camera comes back by itself (a new capture, no preview); start() explains a failure.
@@ -863,6 +939,9 @@ class VoiceEngine {
         }
       }
       toast.error(t('mediaErr.voice.lost'));
+      // Gave up: release the held seat now (best effort, offline it just expires on the server),
+      // so the others do not keep seeing «Нет связи» for someone who is out. A call ends by itself.
+      if (wsId !== '') this.sendLeave(roomId);
       await this.teardown(false);
     } finally {
       if (this.rejoinGen === gen) this.rejoinRoomId = null;
@@ -1074,13 +1153,20 @@ class VoiceEngine {
         this.rejoinWake?.();
         return;
       case 'watch': {
-        // LiveKit is resuming by itself: a moment for it, then a fresh token instead.
+        // LiveKit is resuming by itself: a moment for it, then a fresh token instead. Visible, its
+        // resume gets up to VISIBLE_RESUME_MS in all (a rejoin starts a new session).
         const room = this.room;
         const native = this.nativeAudio;
-        await new Promise((r) => setTimeout(r, SEAT_RECONNECT_GRACE_MS));
+        const now = Date.now();
+        const grace = seatGraceMs({
+          visible: !document.hidden,
+          reconnectingVisibleMs: now - Math.max(this.lkReconnectingSince ?? now, this.visibleAt),
+          hiddenGraceMs: SEAT_RECONNECT_GRACE_MS,
+        });
+        await new Promise((r) => setTimeout(r, grace));
         if (((room && this.room === room && room.state !== ConnectionState.Connected) ||
           (native && this.nativeAudio === native && !native.connected)) && !this.rejoinRoomId) {
-          log.info('voice: LiveKit still reconnecting after the gateway is back, rejoining');
+          log.info(`voice: LiveKit still reconnecting ${Math.round(grace / 1000)} s after the gateway is back, rejoining`);
           void this.rejoin();
           return;
         }
@@ -1572,6 +1658,7 @@ class VoiceEngine {
       this.stopMicPipeline();
     }
     for (const el of this.audioOut.clear()) el.remove();
+    this.resetRecovery(keepSeat || park);
     this.viewers.clear();
     this.wanted.clear();
     this.announced = null;
@@ -1597,7 +1684,7 @@ class VoiceEngine {
       stats: null,
     });
     // My own leave / hang-up: the heavier «disconnect» cue (others leaving play «leave»).
-    if (sound && room) playSound('disconnect');
+    if (sound && room && !this.cuesQuiet()) playSound('disconnect');
     this.syncTray();
   }
 
@@ -1618,10 +1705,12 @@ class VoiceEngine {
         if (this.room !== room) return;
         const was = useVoice.getState().phase;
         if (st === ConnectionState.Reconnecting || st === ConnectionState.SignalReconnecting) {
-          if (was === 'connected') playSound('disconnect');
+          this.lkReconnectingSince ??= Date.now();
+          if (was === 'connected' && !this.cuesQuiet()) playSound('disconnect');
           setVoice({ phase: 'reconnecting' });
         } else if (st === ConnectionState.Connected) {
-          if (was === 'reconnecting') playSound('reconnect');
+          this.lkReconnectingSince = null;
+          if (was === 'reconnecting' && !this.cuesQuiet()) playSound('reconnect');
           setVoice({ phase: 'connected' });
           setLink({ attempts: 0, blockedHost: null });
         }
@@ -1661,6 +1750,11 @@ class VoiceEngine {
         }
         else if (reason !== DisconnectReason.CLIENT_INITIATED) {
           setLink({ lastError: describeDisconnect(reason === undefined ? undefined : DisconnectReason[reason]) });
+          // A connect that never got in: livekit-client emits Disconnected right before
+          // room.connect() rejects, and connect()'s own failure path handles it (a rejoin attempt
+          // counts it and backs off; a user join reports it). A new cycle from here restarted the
+          // backoff at 1 s on every failure: /join every ~1.2 s for minutes, never the «lost» exit (#255).
+          if (!this.reachedConnected.has(room) || this.rejoinRoomId !== null) return;
           // Network-type loss that LiveKit could not resume itself (sleep, long freeze,
           // server restart): rejoin with a fresh token instead of dropping the user.
           void this.rejoin();
@@ -1689,6 +1783,14 @@ class VoiceEngine {
         this.clearMuteRetry();
         this.applyTransmit();
         this.pushSelfState();
+        this.afterLinkBack('reconnected');
+      })
+      // Autoplay refused the remote audio (no gesture yet: a reload, the iOS shell, a page back
+      // from the background): «Вы не слышите собеседников» until a tap runs room.startAudio().
+      .on(RoomEvent.AudioPlaybackStatusChanged, () => this.onPlaybackStatus(room))
+      .on(RoomEvent.TrackSubscriptionFailed, (sid) => {
+        log.info(`voice: subscription to ${sid} failed`);
+        this.scheduleAudioCheck('subscription failed');
       })
       // LiveKit switched the remote audio output itself (a device appeared / went away): its
       // setSinkId hit our elements — put our sink and the playback state (deafen) back.
@@ -1721,12 +1823,13 @@ class VoiceEngine {
         if (pub.source === Track.Source.ScreenShare || pub.source === Track.Source.Camera) setVoice({ trackEpoch: useVoice.getState().trackEpoch + 1 });
       })
       .on(RoomEvent.ParticipantConnected, (p) => {
-        if (this.joinLeaveCue(room, p.identity)) playSound('join');
+        this.peerCue(room, userIdOf(p.identity), true);
       })
       .on(RoomEvent.ParticipantDisconnected, (p) => {
         const gone = userIdOf(p.identity);
-        if (![...room.remoteParticipants.values()].some((o) => userIdOf(o.identity) === gone)) this.active.drop(gone);
-        if (this.joinLeaveCue(room, p.identity)) playSound('leave');
+        const still = [...room.remoteParticipants.values()].some((o) => userIdOf(o.identity) === gone);
+        if (!still) this.active.drop(gone);
+        if (!still) this.peerCue(room, gone, false);
         for (const set of this.viewers.values()) set.delete(p.identity);
         annot.participantLeft(p.identity);
         this.publishViewers();
@@ -2115,11 +2218,67 @@ class VoiceEngine {
   }
 
   /** Others' join/leave cue: only while the room with that person has ≤ join_leave_sound_max people. */
-  private joinLeaveCue(room: Room, identity: string): boolean {
+  private joinLeaveCue(room: Room, who: string): boolean {
     const max = joinLeaveSoundMax(this.roomId ? useRooms.getState().byId[this.roomId]?.media : undefined);
     if (max <= 0) return false;
     const others = Array.from(room.remoteParticipants.values(), (o) => userIdOf(o.identity));
-    return joinLeaveCue(others, userIdOf(identity), userIdOf(room.localParticipant.identity), max);
+    return joinLeaveCue(others, who, userIdOf(room.localParticipant.identity), max);
+  }
+
+  /** Whose LiveKit connection went while the server keeps their seat (ADR-0150), per room. */
+  private seatCues = new SeatCues();
+  private seatCuesRoom: Room | null = null;
+  private seatCuesOff: (() => void) | null = null;
+
+  /**
+   * Someone's (last) LiveKit connection in my room appeared or went: the cue follows the server's
+   * seat (ADR-0150, SeatCues) — no «leave» while the seat is kept after a lost connection, no
+   * «join» when they come back to it, «leave» when the server removes it.
+   */
+  private peerCue(room: Room, who: string, joined: boolean): void {
+    if (this.seatCuesRoom !== room) this.resetSeatCues(room);
+    const seat = this.seatOf(who);
+    const due = joined ? this.seatCues.connected(who, seat) : this.seatCues.disconnected(who, seat);
+    if (due && this.joinLeaveCue(room, who)) playSound(joined ? 'join' : 'leave');
+    this.watchSeats();
+  }
+
+  /** The server's seat of `who` in my voice room (a DM call has no per-user seats here: gone). */
+  private seatOf(who: string): SeatVerdict {
+    const { workspaceId, roomId } = useVoice.getState();
+    const v = workspaceId && roomId ? useWorkspaces.getState().byId[workspaceId]?.voice[who] : undefined;
+    if (!v || v.roomId !== roomId) return 'gone';
+    return v.connectionLost ? 'lost' : 'present';
+  }
+
+  /** Follows the voice states only while someone's seat awaits the server's word: no timer. */
+  private watchSeats(): void {
+    if (this.seatCues.size === 0) {
+      this.seatCuesOff?.();
+      this.seatCuesOff = null;
+      return;
+    }
+    if (this.seatCuesOff) return;
+    this.seatCuesOff = useWorkspaces.subscribe((s, prev) => {
+      const ws = useVoice.getState().workspaceId;
+      if (!ws || s.byId[ws]?.voice === prev.byId[ws]?.voice) return;
+      const room = this.seatCuesRoom;
+      if (!room || room !== this.room) {
+        this.resetSeatCues(null);
+        return;
+      }
+      for (const who of this.seatCues.settle((id) => this.seatOf(id))) {
+        if (this.joinLeaveCue(room, who)) playSound('leave');
+      }
+      if (this.seatCues.size === 0) this.watchSeats();
+    });
+  }
+
+  private resetSeatCues(room: Room | null): void {
+    this.seatCues.clear();
+    this.seatCuesRoom = room;
+    this.seatCuesOff?.();
+    this.seatCuesOff = null;
   }
 
   private inRoom(userId: string): boolean {
@@ -2248,9 +2407,32 @@ class VoiceEngine {
     this.audioOut.applyAll();
   }
 
-  /** Echo rule 2: switch output with setSinkId on the same <audio> elements (and re-apply deafen). */
-  private async applyOutputDevice(): Promise<void> {
-    await this.audioOut.setSink(prefs().outputDeviceId ?? '');
+  /** Remote output routes run one at a time, each after the device snapshot queued before it. */
+  private outputOps: Promise<void> = Promise.resolve();
+
+  /** The sink remote voices use now: the chosen device while present, else the default (CBF-108). */
+  private outputSinkNow(): string {
+    return outputSink(this.devices, prefs().outputDeviceId);
+  }
+
+  /**
+   * Echo rule 2: switch output with setSinkId on the same <audio> elements (and re-apply deafen).
+   * LiveKit is told the same id: it re-applies its own to every new remote track, and in
+   * Chromium one element's setSinkId moves all remote voices (lib/media/outputRoute).
+   */
+  private applyOutputDevice(): Promise<void> {
+    const run = this.outputOps.then(() => this.devicesOps).then(async () => {
+      const sink = this.outputSinkNow();
+      await this.audioOut.setSink(sink);
+      const room = this.room;
+      // WebKit without element setSinkId: LiveKit refuses the switch (the OS picks the output there).
+      if (typeof HTMLMediaElement !== 'undefined' && !('setSinkId' in HTMLMediaElement.prototype)) return;
+      if (!room || !livekitOutputStale(sink, room.options.audioOutput?.deviceId, room.getActiveDevice('audiooutput'))) return;
+      // Its setSinkId on our elements is a no-op now (same id); ActiveDeviceChanged comes back here, in sync.
+      await room.switchActiveDevice('audiooutput', sink).catch((e: unknown) => log.warn('voice: LiveKit output switch failed', e));
+    });
+    this.outputOps = run.catch(() => undefined);
+    return this.outputOps;
   }
 
   /** Mute someone for me only (CHAT-SHELL, member menu); persisted per device like volumes. */
@@ -2339,15 +2521,20 @@ class VoiceEngine {
       }
       const prev = this.devices;
       this.devices = next;
+      // An input / camera change leaves the remote renderers alone (CBF-108).
+      if (announce && outputsChanged(prev, next)) this.scheduleRebind();
       if (!announce || !prev || !this.roomId) return;
       const p = prefs();
       for (const sw of deviceSwitches(prev, next, { micDeviceId: p.micDeviceId, outputDeviceId: p.outputDeviceId })) announceDeviceSwitch(sw);
     });
   }
 
-  private queueMic(op: () => Promise<void>): Promise<void> {
+  private queueMic<T>(op: () => Promise<T>): Promise<T> {
     const run = this.micOps.then(op);
-    this.micOps = run.catch(() => undefined);
+    this.micOps = run.then(
+      () => undefined,
+      () => undefined,
+    );
     return run;
   }
 
@@ -2390,6 +2577,13 @@ class VoiceEngine {
       onEnded: () => {
         if (built !== null && built === this.mic) this.onMicLost();
       },
+      // Another app / an interruption holds the mic, the system suspended the context.
+      onMute: (muted: boolean) => {
+        if (built !== null && built === this.mic) this.onMicMute(muted);
+      },
+      onContextState: (state: string) => {
+        if (built !== null && built === this.mic) this.onMicContext(state);
+      },
     };
     try {
       built = await MicPipeline.start({ ...opts, deviceId: p.micDeviceId });
@@ -2406,6 +2600,8 @@ class VoiceEngine {
       this.micFallback = true;
     }
     this.micLost = false;
+    // The capture opened on the headset the voices play to: re-bind them once its route settled.
+    if (this.room && captureOnOutputHeadset(this.devices, built.deviceLabel, this.outputSinkNow())) this.scheduleRebind(HEADSET_ROUTE_SETTLE_MS);
     // Capture permission reveals device labels: the list the next change is diffed against needs them.
     this.snapshotDevices(false, true);
     this.gate.reset();
@@ -2414,8 +2610,13 @@ class VoiceEngine {
   }
 
   private onMicLost(): void {
-    log.warn('mic capture ended (device lost?), restarting');
     this.micLost = true;
+    if (!this.canCapture()) {
+      // WebKit would queue the capture until the page is visible: the visible check restarts it.
+      log.info('mic capture ended while the page is hidden, restarting it when visible');
+      return;
+    }
+    log.warn('mic capture ended (device lost?), restarting');
     void this.restartMic();
   }
 
@@ -2446,18 +2647,22 @@ class VoiceEngine {
     this.setSelfSpeaking(false);
   }
 
-  /** Device or RNNoise changed / device lost: rebuild capture, swap the published track in place. */
-  private restartMic(): Promise<void> {
+  /**
+   * Device or RNNoise changed / device lost / the capture broken: rebuild capture, swap
+   * the published track in place. 'skipped': nothing to restart, or left / replaced meanwhile.
+   */
+  /** `quiet`: the automatic mic check, whose failure the panel header reports («Вас не слышно»), not the error line. */
+  private restartMic(quiet = false): Promise<'ok' | 'failed' | 'skipped'> {
     return this.queueMic(async () => {
       const old = this.mic;
-      if (!old) return;
+      if (!old) return 'skipped';
       let next: MicPipeline | null = null;
       try {
         next = await this.buildMic();
         // Stopped (left the call / test) or replaced meanwhile: never keep an orphan capture.
         if (this.mic !== old || !this.micWanted()) {
           next.stop();
-          return;
+          return 'skipped';
         }
         const t = this.micTrack;
         if (t) {
@@ -2469,7 +2674,7 @@ class VoiceEngine {
           next.track.enabled = !t.isMuted && this.gateWantsAudio();
           if (this.mic !== old || !this.micWanted()) {
             next.stop(); // torn down while the track was being swapped
-            return;
+            return 'skipped';
           }
         }
         // Only now is `next` the live capture: a failed swap keeps `old` (still published)
@@ -2479,10 +2684,16 @@ class VoiceEngine {
         // Invariant: every capture swap ends with the transmit decision applied to the live
         // track (gate, PTT, explicit mute; ADR-0134 convergence) — and denoise with it.
         this.applyTransmit();
+        log.info('[mic] capture restarted');
+        return 'ok';
       } catch (err) {
         if (next && this.mic !== next) next.stop();
-        const h = humanMediaError(err, 'mic');
-        setVoice({ micError: h.text, micErrorAction: h.action });
+        log.warn('[mic] capture restart failed', err);
+        if (!quiet) {
+          const h = humanMediaError(err, 'mic');
+          setVoice({ micError: h.text, micErrorAction: h.action });
+        }
+        return 'failed';
       }
     });
   }
@@ -3286,6 +3497,396 @@ class VoiceEngine {
     const sid = this.screen?.video.sid;
     if (!my || !sid) return;
     setVoice({ myStream: { ...my, viewers: this.viewers.get(sid)?.size ?? 0 } });
+  }
+
+  // ------------------------------------------------------------ the page away and back
+  //
+  // An iPhone screen lock, another app's audio (music, a video note), Safari's background tab: the
+  // link may come back while the remote <audio> stays paused, a subscribed mic has no element, or
+  // the capture is muted / its AudioContext suspended. Decisions in lib/voiceRecovery.ts; here only
+  // events (visibility, pageshow, Reconnected, a rejoin, a capture interruption) and one-shot
+  // timers armed by them — no new continuous timer in a call (docs/14-energy.md).
+
+  /** Date.now() when the page went hidden (null = visible) and when it last became visible. */
+  private hiddenAt: number | null = document.hidden ? Date.now() : null;
+  private visibleAt = Date.now();
+  /** Date.now() when the LiveKit room went Reconnecting; null while it is not. */
+  private lkReconnectingSince: number | null = null;
+  /** Date.now() when my link went down (phase connected → reconnecting): logged on its return. */
+  private linkDownAt: number | null = null;
+  private settleTimer: number | null = null;
+  private audioCheckTimer: number | null = null;
+  private micCheckTimer: number | null = null;
+  /** Resubscriptions spent per remote mic publication on this connection (bounded). */
+  private readonly resubscribes = new Map<string, number>();
+  /** The mic check's episode: muted since, resumes / rebuilds spent (reset when healthy or the page is back). */
+  private micMutedAt: number | null = null;
+  private micResumes = 0;
+  private micRestarts = 0;
+  /** «Ждём микрофон» / «Вас не слышно» in the voice panel header and the phone strip status. */
+  private micTrouble: 'recovering' | 'unheard' | null = null;
+  /** WebKit queues a hidden page's getUserMedia: the capture is never restarted there while hidden. */
+  private readonly captureNeedsVisible = captureWaitsForVisible(platform.kind === 'web', typeof navigator === 'undefined' ? '' : navigator.userAgent);
+
+  /** A hidden web page: my own «disconnect» / «reconnect» cues stay quiet (the phone in a pocket, another app playing). */
+  private cuesQuiet(): boolean {
+    return platform.kind === 'web' && document.hidden;
+  }
+
+  private canCapture(): boolean {
+    return !(this.captureNeedsVisible && document.hidden);
+  }
+
+  /** I hold a voice seat: connected, reconnecting, or between the attempts of a rejoin. */
+  private hasSeat(): boolean {
+    const v = useVoice.getState();
+    return v.roomId !== null && v.joining === null && (v.phase === 'connected' || v.phase === 'reconnecting');
+  }
+
+  private onVisibility(): void {
+    const now = Date.now();
+    if (document.hidden) {
+      if (this.hiddenAt !== null) return;
+      this.hiddenAt = now;
+      if (this.hasSeat()) log.info('voice: page hidden');
+      return;
+    }
+    if (this.hiddenAt === null) return; // not a transition
+    const hiddenMs = now - this.hiddenAt;
+    this.hiddenAt = null;
+    this.visibleAt = now;
+    if (!this.hasSeat()) return;
+    log.info(`voice: page visible after ${Math.round(hiddenMs / 1000)} s hidden`);
+    // A new mic episode: whatever held the mic may have let it go.
+    this.micResumes = 0;
+    this.micRestarts = 0;
+    this.recoverLink(hiddenMs, false);
+    this.afterLinkBack('visible');
+  }
+
+  /**
+   * The page is back while I hold a seat (lib/voiceRecovery.afterVisible): after a long hide a
+   * LiveKit that is not connected is not waited for (rejoin now, not after the 5 s / 30 s timers);
+   * a short hide gives its resume the visible grace (the seat check); a rejoin backoff is cut short.
+   */
+  private recoverLink(hiddenMs: number, settled: boolean): void {
+    if (this.settleTimer !== null) window.clearTimeout(this.settleTimer);
+    this.settleTimer = null;
+    if (!this.hasSeat()) return;
+    const livekit = this.seatView().livekit;
+    switch (afterVisible({ hiddenMs, livekit, loop: this.rejoinRoomId !== null, waiting: this.rejoinWake !== null, settled })) {
+      case 'ok':
+        return;
+      case 'wake':
+        log.info('voice: page back, the rejoin goes on without its backoff');
+        this.rejoinWake?.();
+        return;
+      case 'rejoin': {
+        const v = useVoice.getState();
+        log.info(`voice: page back after ${Math.round(hiddenMs / 1000)} s hidden, LiveKit ${livekit}: rejoining now`);
+        void this.rejoin(v.roomId ?? undefined, v.workspaceId ?? undefined, true);
+        return;
+      }
+      case 'watch':
+        this.checkSeat();
+        return;
+      case 'settle':
+        this.settleTimer = window.setTimeout(() => {
+          this.settleTimer = null;
+          if (!document.hidden) this.recoverLink(hiddenMs, true);
+        }, VISIBLE_SETTLE_MS);
+    }
+  }
+
+  /** The link or the page is back: remote audio plays, every mic has its element, the capture is healthy. */
+  private afterLinkBack(why: string): void {
+    if (!this.room) return;
+    this.replayAudio(why);
+    this.scheduleAudioCheck(why);
+    this.scheduleMicCheck(why);
+  }
+
+  /** `pageshow` (services/resumeVoice.ts): a page back from the back/forward cache plays its audio again. */
+  onPageShow(persisted: boolean): void {
+    if (persisted) log.info('voice: page restored from the back/forward cache');
+    this.afterLinkBack('pageshow');
+  }
+
+  /** The voice link's outage (connected → reconnecting → connected) is logged once it is back; no toast (#255). */
+  private onPhaseChange(phase: VoicePhase, was: VoicePhase): void {
+    if (phase === 'reconnecting' && was === 'connected') {
+      this.linkDownAt ??= Date.now();
+      return;
+    }
+    if (phase === 'connected' && this.linkDownAt !== null) {
+      const ms = Date.now() - this.linkDownAt;
+      this.linkDownAt = null;
+      log.info(`voice: link back after ${Math.round(ms / 1000)} s`);
+      return;
+    }
+    if (phase === 'idle' || phase === 'blocked') this.linkDownAt = null;
+  }
+
+  /** Room-bound recovery state; `keepSeat` (a rejoin, a park) keeps the outage clock and the prompt. */
+  private resetRecovery(keepSeat: boolean): void {
+    this.lkReconnectingSince = null;
+    for (const id of [this.audioCheckTimer, this.micCheckTimer]) if (id !== null) window.clearTimeout(id);
+    this.audioCheckTimer = null;
+    this.micCheckTimer = null;
+    this.resubscribes.clear();
+    this.micMutedAt = null;
+    this.micResumes = 0;
+    this.micRestarts = 0;
+    this.setMicTrouble(null);
+    if (keepSeat) return;
+    if (this.settleTimer !== null) window.clearTimeout(this.settleTimer);
+    this.settleTimer = null;
+    this.closePlaybackPrompt();
+  }
+
+  /**
+   * Headphones switched (#255): the elements opened before the switch could stay silent — re-bind
+   * them once the burst of `devicechange` events has settled (one timeout, no polling).
+   */
+  private scheduleRebind(ms = REBIND_SETTLE_MS): void {
+    const now = performance.now();
+    if (this.rebindTimer !== null) {
+      window.clearTimeout(this.rebindTimer);
+      ms = Math.max(ms, this.rebindDue - now);
+    }
+    this.rebindDue = now + ms;
+    this.rebindTimer = window.setTimeout(() => {
+      this.rebindTimer = null;
+      const room = this.room;
+      if (!room || this.audioOut.size === 0) return;
+      void this.audioOut.rebind().then((r) => {
+        if (this.room !== room) return;
+        log.info(`voice: output devices changed, ${r.rebound} remote audio element(s) re-bound`);
+        if (r.blocked > 0 && !document.hidden) this.offerPlayback();
+      });
+    }, ms);
+  }
+
+  /** One pass of «play what the system paused» (RemoteAudioOut.replayPaused); a refusal offers the tap. */
+  private replayAudio(why: string): void {
+    const room = this.room;
+    if (!room || document.hidden) return; // the page coming back runs a pass
+    if (!room.canPlaybackAudio) this.offerPlayback();
+    if (this.audioOut.size === 0) return;
+    void this.audioOut.replayPaused().then((r) => {
+      if (this.room !== room) return;
+      if (r.resumed > 0) log.info(`voice: ${r.resumed} paused remote audio element(s) playing again (${why})`);
+      if (r.blocked > 0) {
+        log.info(`voice: ${r.blocked} remote audio element(s) refused to play without a tap (${why})`);
+        this.offerPlayback();
+      }
+    });
+  }
+
+  private onPlaybackStatus(room: Room): void {
+    if (room.canPlaybackAudio) {
+      this.closePlaybackPrompt();
+      return;
+    }
+    log.info('voice: canPlaybackAudio=false, the others are silent until a tap');
+    if (!document.hidden) this.offerPlayback(); // hidden: offered when the page is back (replayAudio)
+  }
+
+  /** «Вы не слышите собеседников» — a plain toast, raised once while it is on screen, never held back by another toast. */
+  private playbackToast: number | null = null;
+
+  private offerPlayback(): void {
+    const { items, push } = useToasts.getState();
+    if (this.playbackToast !== null && items.some((x) => x.id === this.playbackToast)) return;
+    this.playbackToast = push('info', t('voice.audioBlocked'), { label: t('voice.audioBlockedAction'), run: () => this.enablePlayback() }, PLAYBACK_PROMPT_MS);
+  }
+
+  private closePlaybackPrompt(): void {
+    if (this.playbackToast !== null) useToasts.getState().dismiss(this.playbackToast);
+    this.playbackToast = null;
+  }
+
+  /**
+   * The tap on «Включить звук» — a user gesture: LiveKit's startAudio() plays every remote element
+   * inside it (its play() calls run before its first await); the capture's context resumes with it.
+   */
+  private enablePlayback(): void {
+    void this.mic?.resumeContext();
+    const room = this.room;
+    if (!room) return;
+    room.startAudio().then(
+      () => {
+        log.info('voice: remote audio enabled by a tap');
+        this.replayAudio('tap');
+      },
+      (e: unknown) => {
+        log.warn('voice: startAudio failed', e);
+        if (this.room === room) this.offerPlayback();
+      },
+    );
+  }
+
+  private scheduleAudioCheck(why: string): void {
+    if (!this.room) return;
+    if (this.audioCheckTimer !== null) window.clearTimeout(this.audioCheckTimer);
+    this.audioCheckTimer = window.setTimeout(() => {
+      this.audioCheckTimer = null;
+      this.checkAudio(why);
+    }, AUDIO_SETTLE_MS);
+  }
+
+  /**
+   * Every subscribed remote mic has its <audio> (lib/voiceRecovery.audioFixes): a missing element is
+   * attached, a publication without a track is resubscribed (bounded), never a rejoin for it.
+   */
+  private checkAudio(why: string): void {
+    const room = this.room;
+    if (!room || document.hidden) return; // the page coming back checks again
+    const pubs = new Map<string, { pub: RemoteTrackPublication; p: RemoteParticipant }>();
+    const views: MicPubView[] = [];
+    for (const p of room.remoteParticipants.values()) {
+      for (const pub of p.trackPublications.values()) {
+        if (pub.source !== Track.Source.Microphone || !pub.trackSid) continue;
+        const trackSid = pub.track?.sid;
+        const element = trackSid !== undefined && this.audioOut.has(trackSid);
+        if (element) this.resubscribes.delete(pub.trackSid); // healthy again: fresh tries next time
+        pubs.set(pub.trackSid, { pub, p });
+        views.push({ sid: pub.trackSid, desired: pub.isDesired, track: pub.track !== undefined, element, tries: this.resubscribes.get(pub.trackSid) ?? 0 });
+      }
+    }
+    let again = false;
+    for (const fix of audioFixes(views, { deafened: useVoice.getState().deafened, maxTries: RESUBSCRIBE_TRIES })) {
+      const hit = pubs.get(fix.sid);
+      if (!hit) continue;
+      const { pub, p } = hit;
+      if (fix.kind === 'attach') {
+        if (!pub.track) continue;
+        log.info(`voice: mic ${fix.sid} of ${p.identity} subscribed without an <audio>, attaching (${why})`);
+        this.attachAudio(pub.track, p, false);
+      } else if (fix.kind === 'subscribe') {
+        log.info(`voice: mic ${fix.sid} of ${p.identity} not subscribed, subscribing (${why})`);
+        pub.setSubscribed(true);
+        again = true;
+      } else {
+        const n = (this.resubscribes.get(fix.sid) ?? 0) + 1;
+        this.resubscribes.set(fix.sid, n);
+        log.info(`voice: mic ${fix.sid} of ${p.identity} subscribed without a track, resubscribing (${n}/${RESUBSCRIBE_TRIES}, ${why})`);
+        pub.setSubscribed(false);
+        window.setTimeout(() => {
+          if (this.room === room && !useVoice.getState().deafened) pub.setSubscribed(true);
+        }, RESUBSCRIBE_GAP_MS);
+        again = true;
+      }
+    }
+    if (again) this.scheduleAudioCheck(why); // verify: bounded by the tries
+  }
+
+  private scheduleMicCheck(why: string, ms: number = MIC_SETTLE_MS): void {
+    if (!this.room || !this.mic) return;
+    if (this.micCheckTimer !== null) window.clearTimeout(this.micCheckTimer);
+    this.micCheckTimer = window.setTimeout(() => {
+      this.micCheckTimer = null;
+      this.checkMic(why);
+    }, ms);
+  }
+
+  /**
+   * The capture works (lib/voiceRecovery.micFix): the context runs, the raw track is live and not
+   * muted, the worklet reports. Muted by the system (lock, another app, an interruption) → «Ждём
+   * микрофон», not a reconnect; still muted after ~2 s visible, or ended → one rebuild; that failing → «Вас не слышно».
+   * Never a new capture while a WebKit page is hidden (it would queue until visible).
+   */
+  private checkMic(why: string): void {
+    const mic = this.mic;
+    if (!mic || !this.room || this.nativeAudio) return;
+    const h = mic.health();
+    const now = Date.now();
+    if (!h.muted) this.micMutedAt = null;
+    else this.micMutedAt ??= now;
+    const mutedMs = this.micMutedAt === null ? 0 : now - Math.max(this.micMutedAt, this.visibleAt);
+    const fix = micFix({ canCapture: this.canCapture(), ctx: h.ctx, ended: h.ended, muted: h.muted, mutedMs, reportAgeMs: h.reportAgeMs, resumes: this.micResumes, restarts: this.micRestarts });
+    switch (fix.kind) {
+      case 'ok':
+        this.micResumes = 0;
+        this.micRestarts = 0;
+        this.setMicTrouble(null);
+        return;
+      case 'wait':
+        return;
+      case 'muted':
+        this.setMicTrouble('recovering');
+        this.scheduleMicCheck('still muted', fix.recheckMs);
+        return;
+      case 'resume':
+        this.micResumes++;
+        void mic.resumeContext().then((running) => {
+          log.info(`voice: mic AudioContext resumed (${why}): ${running ? 'running' : mic.health().ctx}`);
+          if (this.mic !== mic) return;
+          this.applyTransmit();
+          this.scheduleMicCheck('after resume');
+        });
+        return;
+      case 'restart':
+        this.micRestarts++;
+        log.info(`voice: restarting the mic capture (${fix.reason}, ${why})`);
+        void this.restartMic(true).then((r) => {
+          if (r === 'failed') this.setMicTrouble('unheard');
+          else if (r === 'ok') {
+            this.micMutedAt = null;
+            this.scheduleMicCheck('after restart');
+          }
+        });
+        return;
+      case 'give-up':
+        log.warn(`voice: the mic capture is still broken after a restart (${why})`);
+        this.setMicTrouble('unheard');
+    }
+  }
+
+  /** The raw capture muted / unmuted by the system (another app, an interruption, a hidden WebKit page). */
+  private onMicMute(muted: boolean): void {
+    log.info(`voice: mic capture ${muted ? 'muted' : 'unmuted'} by the system${document.hidden ? ' (page hidden)' : ''}`);
+    if (muted) {
+      this.micMutedAt ??= Date.now();
+      this.closeGate(); // silence now: the gate must not stay open on its last report
+    } else {
+      this.micMutedAt = null;
+      this.interruptionEnded('mic unmuted');
+    }
+    this.scheduleMicCheck(muted ? 'mic muted' : 'mic unmuted');
+  }
+
+  private onMicContext(state: string): void {
+    log.info(`voice: mic AudioContext ${state}`);
+    if (state === 'running') this.interruptionEnded('audio context running');
+    // No reports while suspended / interrupted: the voice gate would freeze as it was.
+    else if (state !== 'closed') this.closeGate();
+    this.scheduleMicCheck(`audio context ${state}`);
+  }
+
+  /** An interruption ended (the capture unmuted, its context running): resume, re-evaluate the gate, play again. */
+  private interruptionEnded(why: string): void {
+    void this.mic?.resumeContext();
+    this.applyTransmit();
+    this.replayAudio(why);
+  }
+
+  private closeGate(): void {
+    this.gate.reset();
+    if (useVoice.getState().gateOpen) setVoice({ gateOpen: false });
+    this.applyTransmit();
+  }
+
+  /**
+   * «Ждём микрофон» / «Вас не слышно» in place of «Голос подключён» (the panel header and the
+   * phone strip status), or neither. The cause is not known (the browser only says «muted»): it goes
+   * to the log, not on screen. Never micError: that line is for device and permission errors.
+   */
+  private setMicTrouble(kind: 'recovering' | 'unheard' | null): void {
+    if (kind === this.micTrouble) return;
+    this.micTrouble = kind;
+    setVoice({ micTrouble: kind });
+    if (kind) log.info(`voice: mic trouble shown: ${kind}`);
   }
 
   // ------------------------------------------------------------ stats / quality
