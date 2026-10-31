@@ -164,3 +164,22 @@ func TestSeatOnRejoin(t *testing.T) {
 		t.Fatal("held()")
 	}
 }
+
+func TestSeatBack(t *testing.T) {
+	seen := voice.SessionState{Lost: true, Hold: 1000}
+	same := seen
+	seatBack(seen)(&same)
+	if same.Pending || same.Lost || same.Hold != 0 {
+		t.Fatalf("the device is back: %+v", same)
+	}
+	pending := voice.SessionState{Pending: true}
+	seatBack(pending)(&pending)
+	if pending.Pending {
+		t.Fatalf("participant_joined was lost, the listing has the device: %+v", pending)
+	}
+	newer := voice.SessionState{Lost: true, Hold: 2000}
+	seatBack(seen)(&newer)
+	if !newer.Lost || newer.Hold != 2000 {
+		t.Fatalf("dropped again since the snapshot, the new hold stays: %+v", newer)
+	}
+}

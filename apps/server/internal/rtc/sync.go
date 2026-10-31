@@ -301,9 +301,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		for _, st := range states {
 			if rid, ok := present[voice.Identity(st.UserID, st.SessionID)]; ok && rid == st.RoomID {
 				if st.Pending || held(st) { // connected, but participant_joined was lost
-					_ = s.setFlag(ctx, wid, st.RoomID, st.UserID, st.SessionID, func(n *voice.SessionState) {
-						n.Pending, n.Lost, n.Hold = false, false, 0
-					})
+					_ = s.setFlag(ctx, wid, st.RoomID, st.UserID, st.SessionID, seatBack(st))
 				}
 				continue
 			}
