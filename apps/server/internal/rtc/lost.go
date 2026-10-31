@@ -115,6 +115,18 @@ func seatOnRejoin(cur voice.SessionState, now time.Time) (voice.SessionState, bo
 // connected yet).
 func held(st voice.SessionState) bool { return st.Lost || st.Hold > 0 }
 
+// seatBack clears a held or pending seat whose device is in the LiveKit listing (Reconcile). A seat
+// that dropped again since the snapshot (its hold changed) keeps the new hold: cleared, the next
+// pass would remove it as a plain leave, without the grace.
+func seatBack(seen voice.SessionState) func(*voice.SessionState) {
+	return func(n *voice.SessionState) {
+		if n.Hold != seen.Hold {
+			return
+		}
+		n.Pending, n.Lost, n.Hold = false, false, 0
+	}
+}
+
 // expireSeat removes a held seat whose grace has passed (Reconcile), exactly as a leave:
 // VOICE_STATE_UPDATE with an empty room, the camera reservation and a moderator's camera stop go,
 // the last person out hangs up a phone call (ADR-0046). A seat that reconnected, moved or was
