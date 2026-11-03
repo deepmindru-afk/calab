@@ -1,13 +1,13 @@
 import { seedInlineButtons } from '../e2e-support/inline-buttons';
 import { readFileSync } from 'node:fs';
 import { create } from '@bufbuild/protobuf';
-import { AiState, FormerMemberReason, PERMISSION_BITS, PermissionTargetType, Plan, RecordingStatus, RoomPermissionOverrideSchema, UserSchema, WorkspaceBanSchema, WorkspacePlanSchema, WorkspaceRole, WorkspaceSuspensionSchema } from '@calaba/protocol';
+import { AiState, FormerMemberReason, PERMISSION_BITS, PermissionTargetType, Plan, RecordingStatus, ReportReason, RoomPermissionOverrideSchema, UserReportSchema, UserSchema, WorkspaceBanSchema, WorkspacePlanSchema, WorkspaceRole, WorkspaceSuspensionSchema } from '@calaba/protocol';
 import type { Locator, Page } from '@playwright/test';
 import { FREE_PLAN_LIMITS, defaultSettings, mockPdf, ts } from '../e2e-support/fixtures';
 import { CODE_FIXTURE, IDS, MOCK_GPTUNNEL_CODE, MOCK_GPTUNNEL_WEB, PASSWORD, RECORDING_FIXTURE, slowWebpAnimation, type MockServer } from '../e2e-support/mock-server';
 import { encodePng } from '../e2e-support/png';
 import { expect, test } from './app';
-import { NOW, checkpoint, expectAssigneeStacks, expectToolbarHeights, joinVoice, login, seedAssigneeCounts, seedBotAuthoredTask, seedDays, seedLabelOverflow, seedReleases, settle } from './harness';
+import { NOW, checkpoint, expectAssigneeStacks, expectToolbarHeights, joinVoice, login, seedAssigneeCounts, seedBotAuthoredTask, seedDays, seedLabelOverflow, seedReleases, seedRichComments, seedViaMcp, settle } from './harness';
 import { DAY, seedDay } from './calendarWeb';
 import { startPublisher } from './publisher';
 
@@ -59,6 +59,7 @@ const KEY = new Set([
   'chat-context-menu',
   'room-notify-menu',
   'inbox-popover',
+  'inbox-badge-rooms',
   'dm-list',
   'nav-badges',
   'dm-archive',
@@ -99,6 +100,7 @@ const KEY = new Set([
   'members-menu',
   'members-profile-switch',
   'profile-dialog',
+  'settings-profile-delete', // ADR-0153: account deletion (entry, blocker, password step)
   'profile-menu',
   'profile-birthday',
   'chat-birthday-card',
@@ -186,6 +188,7 @@ const KEY = new Set([
   // «Комментарии | История» of the task panel (ADR-0091).
   'boards-task-comments',
   'boards-task-comments-days',
+  'boards-task-comments-rich',
   'boards-task-history',
   'boards-list',
   'boards-labels-overflow',
@@ -643,6 +646,11 @@ test('main-chat', async ({ open, win, mock, shot }) => {
   await open();
   await mainWindow(win, mock);
   await checkpoint(shot, 'main-chat');
+  // Board #145: READY leaves the open workspace out while its access lease is pending — «Подключение…»
+  // in its place (the other workspaces stay on the rail), never «Создать пространство».
+  mock.readyPending(IDS.workspaces.main);
+  await expect(win.getByTestId('shell-connecting')).toBeVisible();
+  await checkpoint(shot, 'workspace-pending');
 });
 
 /**
@@ -1052,6 +1060,34 @@ test('members-menu', async ({ open, win, mock, shot }) => {
   await expect(roles.getByRole('menuitemcheckbox')).toHaveCount(3);
   await expect(roles.getByRole('menuitemcheckbox', { name: 'Администратор' })).toBeChecked();
   await checkpoint(shot, 'members-menu', { keepPointer: true });
+  // ADR-0154: «Пожаловаться…» → the report dialog (reason picked, a comment).
+  await win.keyboard.press('Escape');
+  await win.keyboard.press('Escape');
+  await expect(win.getByRole('menu')).toHaveCount(0);
+  const people = await membersList(win); // a second Escape may close the floating members panel
+  await people.getByRole('button', { name: /Борис Петров/ }).click({ button: 'right' });
+  await win.getByTestId('member-report').click();
+  const report = win.getByTestId('report-dialog');
+  await expect(report).toBeVisible();
+  await report.getByTestId(`report-reason-${ReportReason.HARASSMENT}`).check();
+  await report.getByTestId('report-comment').fill('Грубит в общем канале');
+  await checkpoint(shot, 'report-dialog');
+  await win.getByTestId('report-send').click();
+  await expect(report).toHaveCount(0);
+  // «Заблокировать» → the confirmation; then Борис's messages in «общий» collapse.
+  await (await membersList(win)).getByRole('button', { name: /Борис Петров/ }).click({ button: 'right' });
+  await win.getByTestId('member-block').click();
+  await expect(win.getByRole('alertdialog').or(win.getByRole('dialog'))).toContainText('Заблокировать пользователя Борис');
+  await checkpoint(shot, 'block-confirm');
+  await win.getByRole('button', { name: 'Заблокировать', exact: true }).click();
+  await expect(win.getByTestId('message-hidden').first()).toBeVisible();
+  await win.locator('[data-virtuoso-scroller]').first().evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+  await checkpoint(shot, 'message-hidden');
+  // Settings → «Заблокированные»: Борис with «Разблокировать».
+  await openAppSettings(win)();
+  await win.getByRole('dialog').getByRole('tab', { name: 'Заблокированные' }).click();
+  await expect(win.getByTestId('blocked-row')).toHaveCount(1);
+  await checkpoint(shot, 'settings-blocked');
 });
 
 /**
@@ -1447,6 +1483,21 @@ test('inbox-popover', async ({ open, win, mock, shot }) => {
   await expect(pop.getByText(/разработка · /).first()).toBeVisible();
   await settle(win);
   await checkpoint(shot, 'inbox-popover');
+});
+
+// Bug #146: a room with an unread @mention looks different from plain unread (the count badge), and the
+// title-bar inbox badge adds the unread task notice (CAL-3) to the chat mention.
+test('inbox-badge-rooms', async ({ open, win, mock, shot }) => {
+  await open();
+  await mainWindow(win, mock);
+  const task = mock.boards.taskByKey('CAL-3');
+  if (!task) throw new Error('CAL-3 is not seeded');
+  mock.injectMessage({ roomId: IDS.rooms.call, authorId: IDS.users.vera, content: 'Обычное непрочитанное' });
+  mock.injectMessage({ roomId: IDS.rooms.dev, authorId: IDS.users.vera, content: `@${IDS.users.anna} посмотришь макет?` });
+  mock.injectMessage({ roomId: task.task.roomId, authorId: IDS.users.vera, content: `@${IDS.users.anna} проверишь на Mac?` });
+  await expect(win.getByTestId('inbox-badge')).toBeVisible();
+  await win.mouse.move(0, 0);
+  await checkpoint(shot, 'inbox-badge-rooms');
 });
 
 test('shell-shortcuts', async ({ open, win, mock, shot }) => {
@@ -1979,6 +2030,16 @@ test('admin-workspaces', async ({ open, win, mock, shot }) => {
   await expect(admin.getByTestId('admin-detail')).toBeVisible();
   await expect(admin.getByTestId('admin-log')).toBeAttached();
   await checkpoint(shot, 'admin-workspaces');
+  // «Загрузка файлов» (ADR-0155): the server defaults as placeholders; an edit shows «Сохранить».
+  const perHour = admin.getByTestId('admin-upload-perHour');
+  await expect(perHour).toHaveAttribute('placeholder', '500');
+  await perHour.fill('2000');
+  await admin.getByRole('heading', { name: 'Загрузка файлов', exact: true }).evaluate((el) => el.scrollIntoView({ block: 'center' }));
+  await expect(admin.getByTestId('admin-upload-save')).toBeVisible();
+  await checkpoint(shot, 'admin-uploads');
+  await admin.getByTestId('admin-upload-save').click();
+  await expect(admin.getByTestId('admin-upload-save')).toBeHidden();
+  await expect(perHour).toHaveValue('2000');
 });
 
 /** The plan form on «Индивидуальный» (Custom): the limits, the term, the note. */
@@ -2040,6 +2101,36 @@ test('settings-bans', async ({ open, win, mock, shot }) => {
   await win.getByRole('dialog').getByRole('tab', { name: 'Забаненные' }).click();
   await expect(win.getByTestId('ws-ban-row')).toHaveCount(1);
   await checkpoint(shot, 'settings-bans');
+  // «Жалобы» (ADR-0154): an open report about a message and a resolved one about a person.
+  const boris = mock.state.users.get(IDS.users.boris);
+  if (!boris) throw new Error('no user');
+  mock.state.reports.set(IDS.workspaces.main, [
+    create(UserReportSchema, {
+      id: '00000000-0000-7000-8fff-000000000002',
+      workspaceId: IDS.workspaces.main,
+      reporter: vera.user,
+      target: boris.user,
+      messageId: '00000000-0000-7000-8fff-0000000000aa',
+      roomId: IDS.rooms.general,
+      messageText: 'Кто опять сломал сборку? Руки бы оторвать.',
+      reason: ReportReason.HARASSMENT,
+      comment: 'Уже второй раз за неделю',
+      createdAt: ts('2026-01-14T11:20:00Z'),
+    }),
+    create(UserReportSchema, {
+      id: '00000000-0000-7000-8fff-000000000001',
+      workspaceId: IDS.workspaces.main,
+      reporter: boris.user,
+      target: vera.user,
+      reason: ReportReason.SPAM,
+      createdAt: ts('2026-01-12T09:00:00Z'),
+      resolvedAt: ts('2026-01-12T10:00:00Z'),
+      resolvedBy: IDS.users.anna,
+    }),
+  ]);
+  await win.getByRole('dialog').getByRole('tab', { name: 'Жалобы' }).click();
+  await expect(win.getByTestId('ws-report-row')).toHaveCount(2);
+  await checkpoint(shot, 'settings-reports');
 });
 
 /** Вера left the main workspace (ADR-0097): she keeps her messages, tasks and comments, but is no member. */
@@ -2232,6 +2323,28 @@ test('settings-profile-password', async ({ open, win, mock, shot }) => {
   await win.getByRole('button', { name: 'Изменить пароль…' }).click();
   await expect(win.getByRole('dialog', { name: 'Смена пароля' })).toBeVisible();
   await checkpoint(shot, 'settings-profile-password');
+});
+
+test('settings-profile-delete', async ({ open, win, mock, shot }) => {
+  await open();
+  await mainWindow(win, mock);
+  // ADR-0153: Profile → «Удаление аккаунта» (the last card) → the dialog. Anna owns «Команда Calab»:
+  // first the blocker, then (the workspace handed to Вера) the password step.
+  await openSettingsTab(win, openAppSettings(win), appTab('profile'));
+  const entry = win.getByTestId('delete-account');
+  await entry.scrollIntoViewIfNeeded();
+  await checkpoint(shot, 'settings-profile-delete-entry');
+  await entry.click();
+  const dialog = win.getByRole('dialog', { name: 'Удалить аккаунт?' });
+  await expect(dialog.getByTestId('delete-account-blocked')).toContainText('Команда Calab');
+  await expect(dialog.getByRole('button', { name: 'Удалить навсегда' })).toBeDisabled();
+  await checkpoint(shot, 'settings-profile-delete-blocked');
+  const ws = mock.state.workspaces.get(IDS.workspaces.main);
+  if (!ws) throw new Error('no main workspace');
+  ws.ownerId = IDS.users.vera;
+  mock.dispatch({ event: { case: 'workspaceUpdate', value: { workspace: ws } } });
+  await expect(dialog.getByLabel('Текущий пароль')).toBeVisible();
+  await checkpoint(shot, 'settings-profile-delete');
 });
 
 /** The pop-up button itself (owner bug: chevron flush right): a long value ends with «…» before the ↕. */
@@ -4132,6 +4245,30 @@ test('calendar-day', async ({ open, win, mock, shot }) => {
   await win.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await comments.getByTestId('event-comment').last().hover();
   await checkpoint(shot, 'calendar-comments', { keepPointer: true });
+
+  // ADR-0157: a repeating meeting dragged asks «Только эту / Всю серию»; «Только эту» moves that
+  // occurrence alone (the series keeps its 10:00 on the other days).
+  const standup = win.getByTestId('event-block').filter({ hasText: 'Стендап' });
+  await standup.scrollIntoViewIfNeeded();
+  const box = await standup.boundingBox();
+  if (!box) throw new Error('no stand-up block');
+  const x = box.x + 40; // the block's left part: the meeting card floats over its right side
+  await win.mouse.move(x, box.y + 4);
+  await win.mouse.down();
+  const ghostAt = (): Promise<string> => win.evaluate(() => document.querySelector('[data-testid="drag-ghost"]')?.textContent ?? '');
+  for (let i = 1; i <= 60 && !(await ghostAt()).startsWith('12:00'); i++) await win.mouse.move(x, box.y + 4 + i * 4);
+  await expect(win.getByTestId('drag-ghost')).toContainText('12:00 – 12:15');
+  await win.mouse.up();
+  await expect(win.getByTestId('choice-this')).toBeVisible();
+  await checkpoint(shot, 'calendar-series-scope');
+  await win.getByTestId('choice-this').click();
+  await expect(win.getByTestId('choice-this')).toHaveCount(0);
+  await expect(win.getByTestId('event-block').filter({ hasText: 'Стендап' })).toContainText('12:00');
+  // The card closed: the moved occurrence at 12:00 next to «Обед с командой», nothing left at 10:00.
+  await win.getByTestId('event-panel').getByRole('button', { name: 'Закрыть встречу' }).click();
+  await expect(win.getByTestId('event-panel')).toHaveCount(0);
+  await win.mouse.move(1, 1);
+  await checkpoint(shot, 'calendar-series-moved');
 });
 
 /**
@@ -4454,7 +4591,14 @@ test('boards-smart-task', async ({ open, win, mock, shot }) => {
   await expect(dialog.getByTestId('smart-task-duplicate')).toHaveText('Открыть CAL-3');
   await expect(text).toHaveValue('Оплатить счёт поставщика — похоже, дубль\nСумма 120 000 ₽.');
   await checkpoint(shot, 'boards-smart-refused');
+  // Bug #152: no answer in time — the cause in words and the code / status / request id to quote.
+  await text.fill('Оплатить счёт поставщика — таймаут\nСумма 120 000 ₽.');
+  await win.getByTestId('smart-task-submit').click();
+  await expect(dialog.getByTestId('smart-task-error')).toContainText('Сервер не ответил вовремя');
+  await expect(dialog.getByTestId('smart-task-error-ref')).toHaveText('Для поддержки: UNAVAILABLE · 504 · 7f3c9a1e5b2d4c6f8a0b1c2d');
+  await checkpoint(shot, 'boards-smart-error');
   await text.fill('Оплатить счёт поставщика до пятницы\nСумма 120 000 ₽, реквизиты в письме бухгалтерии.');
+  await expect(dialog.getByTestId('smart-task-error')).toHaveCount(0);
   await expect(dialog.getByTestId('smart-task-refusal')).toHaveCount(0);
   await win.getByTestId('smart-task-submit').click();
   await expect(dialog).toHaveCount(0);
@@ -4564,6 +4708,8 @@ test('boards-task', async ({ open, win, mock, shot }) => {
   await win.keyboard.type('# Итоги звонка');
   await win.keyboard.press('Enter');
   await win.keyboard.type('Эхо пропало после правки 🎉 подробности на https://calab.io/docs ');
+  // Board #150: Enter twice leaves an empty line between paragraphs; it must survive «Готово» and keep its height.
+  await win.keyboard.press('Enter');
   await win.keyboard.press('Enter');
   await win.keyboard.type('Второй абзац с **жирным** словом.');
   await win.keyboard.press('Enter');
@@ -4594,6 +4740,7 @@ test('boards-task', async ({ open, win, mock, shot }) => {
     }
     return out;
   };
+  await expect(read.locator('p').nth(1)).toHaveText('');
   const readBoxes = await boxes(read);
   await win.mouse.move(0, 0);
   await checkpoint(shot, 'boards-task-desc-read');
@@ -4714,6 +4861,40 @@ test('boards-task-history', async ({ open, win, mock, shot }) => {
   await expect(section.getByTestId('history-diff')).toBeVisible();
   await section.evaluate((el) => el.scrollIntoView({ block: 'start' }));
   await checkpoint(shot, 'boards-task-history');
+  // ADR-0156: through MCP — «(через бота Погода · MCP)» after a person, «(через MCP)» after a bot's
+  // own change, in the history and on the comments (the panel reopened to reload both).
+  mock.seedBots(); // open() reset the mock: the bots again, now known to the app by their events
+  seedViaMcp(mock);
+  await win.keyboard.press('Escape');
+  await expect(panel).toHaveCount(0);
+  await win.getByTestId('task-card').filter({ hasText: 'CAL-3' }).getByTestId('card-title').click();
+  await section.getByRole('radio', { name: 'История' }).click();
+  await expect(section.locator('[data-via-mcp]')).toHaveCount(2);
+  await section.evaluate((el) => el.scrollIntoView({ block: 'start' }));
+  await checkpoint(shot, 'boards-task-via-mcp');
+  await section.getByRole('radio', { name: 'Комментарии' }).click();
+  const viaMcp = panel.locator('[data-message-id]').filter({ hasText: 'Взял в работу' });
+  await expect(panel.locator('[data-message-id] [data-via-mcp]')).toHaveCount(3);
+  await viaMcp.scrollIntoViewIfNeeded();
+  await checkpoint(shot, 'boards-task-comments-via-mcp');
+});
+
+/** Board #148: a picture and pipe tables in the task's comments (a wide table scrolls inside the bubble). */
+test('boards-task-comments-rich', async ({ open, win, mock, shot }) => {
+  await open();
+  seedRichComments(mock);
+  await mainWindow(win, mock);
+  await boardsMode(win, mock);
+  await win.getByTestId('task-card').filter({ hasText: 'CAL-3' }).getByTestId('card-title').click();
+  const panel = win.getByTestId('task-panel');
+  await expect(panel.locator('table')).toHaveCount(2);
+  const wide = panel.locator('.tableWrapper').last();
+  await wide.scrollIntoViewIfNeeded();
+  // The wide table scrolls itself; the page does not grow sideways.
+  expect(await wide.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+  expect(await panel.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  // axe off: light theme flags aria-labels of the panel's avatars / mention button (label-content-name-mismatch), none of this change; dark ran with it on.
+  await checkpoint(shot, 'boards-task-comments-rich', { axe: false });
 });
 
 /** The list grouped by status, two rows selected: the bulk actions bar. */

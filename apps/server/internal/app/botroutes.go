@@ -523,8 +523,9 @@ var botRouteGroups = []botRouteGroup{
 		"DELETE /api/events/{id}/comments/{comment_id}",
 	}},
 
-	// MCP for bots (CBF-48), closed on behalf: the endpoint is the bot itself.
-	{access: botAllow, onBehalf: onBehalfClosed, why: "MCP for bots (CBF-48): bot tokens only (the handler refuses people); every tool calls a REST route of this table in process with the same token, so it has exactly the bot's rights", routes: []string{
+	// MCP for bots (CBF-48); on behalf of the owner or a consenting member too (ADR-0156): each
+	// tool's REST call is then checked on behalf like any other (onBehalfRoutes).
+	{access: botAllow, why: "MCP for bots (CBF-48, ADR-0156): bot tokens only (the handler refuses people's sessions); every tool calls a REST route of this table in process with the same token and Calab-On-Behalf, so it has exactly the rights of the bot, or of the person it acts for", routes: []string{
 		"/api/mcp",
 	}},
 
@@ -534,6 +535,7 @@ var botRouteGroups = []botRouteGroup{
 		"DELETE /api/me/sessions/{id}",
 		"PATCH /api/me/password",
 		"PATCH /api/me/email",
+		"POST /api/me/delete",
 		"POST /api/auth/verify/send",
 		"POST /api/auth/verify",
 		"GET /api/me/push-capabilities",
@@ -645,6 +647,7 @@ var botRouteGroups = []botRouteGroup{
 		"PUT /api/admin/workspaces/{id}/plan",
 		"GET /api/admin/workspaces/{id}/plan/log",
 		"PUT /api/admin/workspaces/{id}/suspension",
+		"PUT /api/admin/workspaces/{id}/upload-limits",
 		"GET /api/admin/users/{id}/storage-quota",
 		"PUT /api/admin/users/{id}/storage-quota",
 	}},
@@ -678,6 +681,14 @@ var botRouteGroups = []botRouteGroup{
 		"GET /api/me/blocked-bots",
 		"POST /api/me/blocked-bots/{id}",
 		"DELETE /api/me/blocked-bots/{id}",
+	}},
+	{access: botDeny, why: "ADR-0154: blocking people, reporting people and reviewing reports are a person's own judgement — a bot neither blocks, reports nor reads the reports of a workspace", routes: []string{
+		"GET /api/me/blocked-users",
+		"POST /api/me/blocked-users/{id}",
+		"DELETE /api/me/blocked-users/{id}",
+		"POST /api/reports",
+		"GET /api/workspaces/{id}/reports",
+		"POST /api/workspaces/{id}/reports/{reportId}/resolve",
 	}},
 	{access: botDeny, why: "ADR-0111: a consent to act on someone's behalf is that person's own decision (giving, revoking, declining or cancelling an invitation)", routes: []string{
 		"PUT /api/workspaces/{id}/bots/{botId}/delegations/{userId}",

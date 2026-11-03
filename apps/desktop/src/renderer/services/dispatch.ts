@@ -29,9 +29,13 @@ import { streamCoversChat, useVoice } from '../stores/voice';
 import { useStreamFullscreen } from '../features/voice/fullscreen';
 import { rolesOf, useWorkspaces } from '../stores/workspaces';
 import { resyncLoadedRooms, resyncPins, retryFailedLoads } from './chat';
+import { resyncGateway } from './gateway';
 import { queryClient } from '../lib/queryClient';
 import './users';
 import { bansKey } from '../lib/moderation';
+import { isBlocked, useBlocks } from '../stores/blocks';
+import { loadBlockedUsers } from './blocks';
+import { onReportEvent } from './reports';
 import { applyDm, applyDmState, refreshDmPreview, refreshDms, refreshRoomPreview } from './dms';
 import { applyShelf, applyShelves, dropShelf } from './notes';
 import { useNotes } from '../stores/notes';
@@ -167,7 +171,12 @@ export function applyDispatch(ev: DispatchEvent): void {
   }
   switch (e.case) {
     case 'workspaceIdentityAccessUpdate': {
-      if (e.value.sessionId === useSession.getState().sessionId && e.value.access) applyIdentityAccess(e.value.access);
+      if (e.value.sessionId === useSession.getState().sessionId && e.value.access) {
+        applyIdentityAccess(e.value.access);
+        // A pending workspace (board #145) that turned out locked: the lock screen, not «connecting».
+        // An ALLOWED update is followed by its WORKSPACE_CREATE, which settles it.
+        if (accessLocked(e.value.access)) useWorkspaces.getState().settlePending(e.value.access.workspaceId);
+      }
       break;
     }
     case 'ready': {
@@ -183,6 +192,10 @@ export function applyDispatch(ev: DispatchEvent): void {
       const prevMentions = rooms.mentions;
       for (const access of r.identityAccess) applyIdentityAccess(access);
       ws.reset();
+      // Board #145: left out of this READY while their lease was pending — still mine, kept
+      // selected (under the name we knew) and shown as connecting until the server settles them.
+      ws.setPending(Object.fromEntries(r.pendingWorkspaceIds.map((id) => [id, ws.byId[id]?.ws.name ?? ''])));
+      holdPending(r.pendingWorkspaceIds.length > 0);
       rooms.reset();
       useSounds.getState().reset();
       useWebApps.getState().reset();
@@ -232,6 +245,7 @@ export function applyDispatch(ev: DispatchEvent): void {
         Object.fromEntries(Object.entries(m).filter(([id]) => id in alive && !listed.has(id)));
       useRooms.setState((st) => ({ unread: { ...carry(prevUnread), ...st.unread }, mentions: { ...carry(prevMentions), ...st.mentions } }));
       void loadMentions(); // the inbox list: mentions missed while disconnected
+      void loadBlockedUsers(); // ADR-0154: blocks made on another device while away
       const msgs = useMessages.getState();
       // The history of an archived temporary room (ADR-0044) is read outside the live store: it
       // stays open and is resynced like any loaded window (#48).
@@ -488,6 +502,14 @@ export function applyDispatch(ev: DispatchEvent): void {
       if (useWorkspaces.getState().users[e.value.userId]?.isBot) useBots.getState().dropCommands();
       useWorkspaces.getState().removeMember(e.value.workspaceId, e.value.userId, e.value.former);
       void queryClient.invalidateQueries({ queryKey: ['former-members', e.value.workspaceId] });
+      return;
+    // Report and block users (ADR-0154).
+    case 'userBlocksUpdate':
+      useBlocks.getState().setOne(e.value.userId, e.value.blocked);
+      return;
+    case 'workspaceReportCreate':
+    case 'workspaceReportUpdate':
+      if (e.value.report) onReportEvent(e.value.report, e.case === 'workspaceReportCreate');
       return;
     case 'workspaceBanAdd':
     case 'workspaceBanRemove': {
@@ -756,6 +778,8 @@ function onMessage(m: Message, workspaceId: string): void {
     rooms.setRead(m.roomId, m.id);
     return;
   }
+  // ADR-0154: a person I blocked makes no badge, sound or notification (the row is collapsed).
+  if (isBlocked(m.authorId)) return;
   // The open room counts as on screen only when its feed is: the stream stage / stream full
   // screen covering it hides new messages — they stay unread (issue #35).
   const covered = streamCoversChat(useVoice.getState(), m.roomId, useStreamFullscreen.getState().on);
@@ -779,14 +803,34 @@ function applySnapshotExtras(snap: WorkspaceSnapshot): void {
   if (snap.workspace) useRooms.getState().setCategories(snap.workspace.id, snap.categories);
 }
 
+/**
+ * The server settles a pending workspace within a few identity passes (5 s each): WORKSPACE_CREATE,
+ * a lock or WORKSPACE_DELETE. Past this (a session moved to another server instance forgets what it
+ * left out), ask for a fresh READY rather than give the workspace up: dropping it would show
+ * «create a workspace» while it is still mine (board #145). Still pending there → armed again.
+ */
+export const PENDING_WORKSPACE_MAX_MS = 60_000;
+let pendingTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Arms (or clears) the one-shot fresh READY for READY's pending workspaces. */
+function holdPending(on: boolean): void {
+  if (pendingTimer !== undefined) clearTimeout(pendingTimer);
+  pendingTimer = undefined;
+  if (!on) return;
+  pendingTimer = setTimeout(() => {
+    pendingTimer = undefined;
+    if (Object.keys(useWorkspaces.getState().pending).length > 0) resyncGateway('pending workspace not settled');
+  }, PENDING_WORKSPACE_MAX_MS);
+}
+
 /** Keeps a valid workspace selected after READY / membership changes. */
 export function ensureActiveWorkspace(): void {
   const ui = useUi.getState();
-  const { byId, order } = useWorkspaces.getState();
+  const { byId, order, pending } = useWorkspaces.getState();
   if (
     (ui.activeWorkspaceId && useIdentity.getState().access[ui.activeWorkspaceId]) ||
     ui.activeWorkspaceId === HOME ||
-    (ui.activeWorkspaceId && byId[ui.activeWorkspaceId])
+    (ui.activeWorkspaceId && (byId[ui.activeWorkspaceId] || pending[ui.activeWorkspaceId]))
   )
     return;
   ui.setWorkspace(order[0] ?? null);

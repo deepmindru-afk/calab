@@ -14,6 +14,7 @@ import (
 	"github.com/redis/rueidis"
 
 	v1 "github.com/calaba/calaba/server/gen/calaba/v1"
+	"github.com/calaba/calaba/server/internal/account"
 	"github.com/calaba/calaba/server/internal/achievements"
 	"github.com/calaba/calaba/server/internal/ai"
 	"github.com/calaba/calaba/server/internal/aifiles"
@@ -57,6 +58,7 @@ import (
 	"github.com/calaba/calaba/server/internal/push"
 	"github.com/calaba/calaba/server/internal/recording"
 	"github.com/calaba/calaba/server/internal/redisx"
+	"github.com/calaba/calaba/server/internal/reports"
 	"github.com/calaba/calaba/server/internal/rooms"
 	"github.com/calaba/calaba/server/internal/rtc"
 	"github.com/calaba/calaba/server/internal/search"
@@ -382,7 +384,10 @@ func New(d Deps) *App {
 	accountLimiter := redisx.NewRateLimiter(d.Redis, "rl:login-acct:", d.Config.LoginAccountBurst, float64(d.Config.LoginAccountBurst)/15) // N per 15 min
 	msgLimiter := redisx.NewRateLimiter(d.Redis, "rl:msg:", 5, 60)                                                                         // 5 per 5 s per room and user
 	filesSvc := files.NewService(d.DB, d.Blob, pub, d.Config.MaxFileSizeMB<<20, d.Config.StorageMaxTotalBytes)
-	filesSvc.SetLimiter(redisx.NewRateLimiter(d.Redis, "rl:upload:", 30, 2)) // 30 at once, 120 per hour
+	// UPLOAD_RATE_BURST at once, refilled at UPLOAD_RATE_PER_HOUR; a superadmin overrides both
+	// per workspace (ADR-0155).
+	filesSvc.SetLimiter(redisx.NewRateLimiter(d.Redis, "rl:upload:", d.Config.UploadRateBurst, float64(d.Config.UploadRatePerHour)/60),
+		d.Config.UploadRateBurst, d.Config.UploadRatePerHour)
 	filesSvc.SetPlans(planSvc)
 	filesSvc.SetPersonalQuota(d.Config.DefaultPersonalQuotaBytes)
 	filesSvc.SetConverter(files.NewConverter(context.Background(), d.Config.FFmpegPath, d.Config.FFprobePath))
@@ -438,6 +443,7 @@ func New(d Deps) *App {
 	ah.Public(mux)
 	ah.Private(mux, private)
 	pushSvc.Routes(mux, private)
+	account.New(d.DB, authSvc, ah, pub, planSvc).Routes(mux, private) // ADR-0153
 	userHandlers := users.NewHandlers(d.DB, pub, hub)
 	// ADR-0090: the bots' cache of users with a task notice relay reloads on PATCH /api/me.
 	userHandlers.TaskRelaysChanged = botSvc.InvalidateTaskRelays
@@ -491,6 +497,8 @@ func New(d Deps) *App {
 	dmHandlers := dms.NewHandlers(d.DB, pub, redisx.NewRateLimiter(d.Redis, "rl:dm-create:", 10, 0.5)) // 10 at once, 30 per hour
 	dmHandlers.EmailGate = authSvc.EmailGate()
 	dmHandlers.Routes(mux, private)
+	dmHandlers.BlockRoutes(mux, private)                // ADR-0154
+	reports.NewHandlers(d.DB, pub).Routes(mux, private) // ADR-0154
 	notes.NewHandlers(d.DB, pub, d.Config.DefaultPersonalQuotaBytes).Routes(mux, private)
 	filesSvc.Routes(mux, private)
 	diskSvc := disk.New(d.DB, pub, filesSvc, planSvc)
@@ -544,6 +552,7 @@ func New(d Deps) *App {
 	guestSvc.Present = hub.Present // the guest-membership sweep skips connected users (ADR-0098)
 	guestSvc.Routes(mux, private)
 	admin := plans.NewAdmin(d.DB, planSvc, pub, redisx.NewRateLimiter(d.Redis, "rl:admin:", 60, 60)) // 60 per minute
+	admin.UploadDefaults = plans.UploadDefaults{Burst: d.Config.UploadRateBurst, PerHour: d.Config.UploadRatePerHour, MaxFileMB: int(d.Config.MaxFileSizeMB)}
 	admin.StorageQuota = func(ctx context.Context, q *sqlc.Queries, userID uuid.UUID) (*v1.UserStorageQuota, error) {
 		qt, err := notes.PersonalQuota(ctx, q, userID, d.Config.DefaultPersonalQuotaBytes)
 		return qt.Proto(), err

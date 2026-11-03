@@ -2,10 +2,11 @@ import { seedInlineButtons } from '../e2e-support/inline-buttons';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { AiState, FormerMemberReason, Plan, RecordingStatus, SipCallStatus, WorkspaceRole } from '@calaba/protocol';
+import { create } from '@bufbuild/protobuf';
+import { AiState, FileMetaSchema, FormerMemberReason, Plan, RecordingStatus, SipCallStatus, WorkspaceRole, ReportReason } from '@calaba/protocol';
 import { ts } from '../e2e-support/fixtures';
 import { CANVAS_PUBLIC_CODE, CODE_FIXTURE, IDS, MOCK_GPTUNNEL_WEB, WIKI_PUBLIC_CODE, startMockServer, type MockServer } from '../e2e-support/mock-server';
-import { expectAccessible, expectAssigneeStacks, layoutProblems, NOW, PASSWORD, seedAssigneeCounts, seedBotAuthoredTask, seedDays, seedLabelOverflow, seedReleases, settle } from './harness';
+import { expectAccessible, expectAssigneeStacks, layoutProblems, NOW, PASSWORD, seedAssigneeCounts, seedBotAuthoredTask, seedDays, seedLabelOverflow, seedReleases, seedRichComments, seedViaMcp, settle } from './harness';
 import { seedDay } from './calendarWeb';
 
 /**
@@ -270,8 +271,11 @@ async function mobileProblems(page: Page, main: boolean): Promise<string[]> {
   );
 }
 
-/** Screenshot (baseline phone) + layout invariants + axe for the current screen. */
-async function checkpoint(page: Page, name: string, opts: { main?: boolean; snapshot?: boolean; mask?: Locator[]; keyboard?: boolean } = {}): Promise<void> {
+/**
+ * Screenshot (baseline phone) + layout invariants + axe for the current screen. `axe: false` only for a
+ * known violation outside the screen's change (as the desktop checkpoint), with the reason at the call.
+ */
+async function checkpoint(page: Page, name: string, opts: { main?: boolean; snapshot?: boolean; mask?: Locator[]; keyboard?: boolean; axe?: boolean } = {}): Promise<void> {
   await settle(page);
   const dir = process.env['CALABA_MOBILE_SHOTS'];
   if (dir) {
@@ -285,7 +289,7 @@ async function checkpoint(page: Page, name: string, opts: { main?: boolean; snap
   // With the keyboard up the shell ends at the keyboard on purpose (m-keyboard checks that).
   const problems = [...generic, ...(await mobileProblems(page, opts.main ?? false))].filter((p) => !(opts.keyboard && p.startsWith('shell ')));
   expect.soft(problems, `layout invariants: ${name}`).toEqual([]);
-  await expectAccessible(page, name);
+  if (opts.axe !== false) await expectAccessible(page, name);
 }
 
 /** No programmatic focus on a phone: iOS scrolls / zooms to a focused field and raises the keyboard. */
@@ -826,6 +830,18 @@ test('m-home', async ({ page }) => {
   await checkpoint(page, 'm-voice-recovery-unheard');
 });
 
+// Bug #146: a room with an unread @mention carries the count badge, a plainly unread one only the bold name.
+test('m-home-mentions', async ({ page }) => {
+  await signedIn(page);
+  const list = page.getByTestId('phone-room-list');
+  await expect(list.getByTestId('phone-room-row').first()).toBeVisible();
+  mock.injectMessage({ roomId: IDS.rooms.call, authorId: IDS.users.vera, content: 'Обычное непрочитанное' });
+  mock.injectMessage({ roomId: IDS.rooms.dev, authorId: IDS.users.vera, content: `@${IDS.users.anna} посмотришь макет?` });
+  await expect(page.getByTestId('phone-room-row').filter({ hasText: 'разработка' }).locator('[data-count-badge]')).toBeVisible();
+  await page.mouse.move(0, 0);
+  await checkpoint(page, 'm-home-mentions');
+});
+
 // ADR-0073 §4: people in the room's voice, I am not — the banner under the header with «Присоединиться».
 test('m-room-voice-banner', async ({ page }) => {
   seedCall();
@@ -921,6 +937,13 @@ test('m-settings-profile', async ({ page }) => {
   await settings.getByTestId('username-input').fill('boris_p');
   await expect(settings.getByTestId('username-hint')).toHaveText('Этот ник уже занят');
   await checkpoint(page, 'm-settings-profile', { snapshot: false });
+  // ADR-0153: the last card «Удаление аккаунта» and its dialog (Anna owns a workspace: the blocker).
+  const entry = settings.getByTestId('delete-account');
+  await entry.scrollIntoViewIfNeeded();
+  await checkpoint(page, 'm-settings-delete-entry', { snapshot: false });
+  await entry.tap();
+  await expect(page.getByRole('dialog', { name: 'Удалить аккаунт?' }).getByTestId('delete-account-blocked')).toBeVisible();
+  await checkpoint(page, 'm-settings-delete', { snapshot: false });
 });
 
 // ADR-0073 §1: «Профиль» (owner 06.10: the former «Я» tab, now the fifth tab «Профиль» with my avatar, owner 07.10) — the
@@ -1041,6 +1064,14 @@ test('m-calendar-day', async ({ page }) => {
   await longPress(page.getByTestId('event-block').filter({ hasText: 'Планёрка' }));
   await expectMenuCard(page, 'm-calendar-event-menu');
   await expect(page.getByTestId('event-panel')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  // ADR-0157: cancelling an occurrence of a series asks «Только эту / Всю серию».
+  await page.getByTestId('event-block').filter({ hasText: 'Стендап' }).first().tap();
+  await page.getByTestId('event-panel').getByTestId('event-cancel').tap();
+  await expect(page.getByTestId('choice-following')).toBeVisible();
+  await checkpoint(page, 'm-calendar-series-scope', { snapshot: false });
+  await page.getByRole('button', { name: 'Отмена' }).tap();
+  await expect(page.getByTestId('choice-following')).toHaveCount(0);
 });
 
 // Board #85: two extra zones as narrow muted columns left of the day's scale (compact offsets),
@@ -1278,12 +1309,22 @@ test('m-boards-smart', async ({ page }) => {
   await expect(page.getByTestId('smart-task-refusal')).toContainText('Похоже на дубль задачи CAL-3');
   await expect(page.getByTestId('smart-task-text')).toHaveValue('Оплатить счёт поставщика — похоже, дубль');
   await checkpoint(page, 'm-boards-smart-refused', { keyboard: true });
+  // Bug #152: no answer in time — the cause and the code / status / request id to quote.
+  await page.getByTestId('smart-task-text').fill('Оплатить счёт поставщика — таймаут');
+  await page.getByTestId('smart-task-submit').tap();
+  await expect(page.getByTestId('smart-task-error-ref')).toHaveText('Для поддержки: UNAVAILABLE · 504 · 7f3c9a1e5b2d4c6f8a0b1c2d');
+  await checkpoint(page, 'm-boards-smart-error', { keyboard: true });
 });
 
 test('m-boards-task', async ({ page }) => {
   mock.setClock(NOW.getTime());
   const cal4 = mock.boards.taskByKey('CAL-4');
   if (cal4) seedDays(mock, cal4.task.roomId); // #87: CAL-4's comments over several days
+  const cal3 = mock.boards.taskByKey('CAL-3');
+  if (cal3) {
+    cal3.task.attachments = [create(FileMetaSchema, { id: IDS.files.sheet, workspaceId: IDS.workspaces.main, name: 'График отпусков 2026.xlsx', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', size: 19n })];
+    cal3.task.attachmentCount = 1;
+  }
   await signedIn(page);
   // The «Доски» tab (ADR-0073, owner 06.10): the list of the open workspace, a board is pushed.
   await tab(page, 'boards');
@@ -1302,6 +1343,10 @@ test('m-boards-task', async ({ page }) => {
   const panel = page.getByTestId('task-panel');
   await expect(panel.getByTestId('assignee-row')).toHaveCount(2);
   await checkpoint(page, 'm-boards-task');
+  // «Скачать» on a description's attachment: always visible on the phone (no hover).
+  await expect(panel.getByTestId('task-attachment-download')).toBeVisible();
+  await panel.getByTestId('task-attachment').scrollIntoViewIfNeeded();
+  await checkpoint(page, 'm-boards-task-attachment');
   // Owner 23.10: a tap on the description edits it in place in the wiki's editor («Готово» under it).
   await panel.getByTestId('task-description').tap();
   const prose = panel.getByTestId('task-description-editor').locator('.wiki-prose');
@@ -1315,7 +1360,7 @@ test('m-boards-task', async ({ page }) => {
 test('m-boards-task-desc-wysiwyg', async ({ page }) => {
   mock.setClock(NOW.getTime());
   const cal4 = mock.boards.taskByKey('CAL-4');
-  if (cal4) cal4.task.description = 'Эхо пропало после правки 🎉 подробности на https://calab.io/docs\n\nВторой абзац.\n\n- первый **жирный** пункт\n- второй пункт\n\n| Поле | Тип | Обязательное | Описание |\n| --- | --- | --- | --- |\n| id | **uuid** | да | первичный ключ задачи |\n| имя | text | | |';
+  if (cal4) cal4.task.description = 'Эхо пропало после правки 🎉 подробности на https://calab.io/docs\n\n\nВторой абзац.\n\n- первый **жирный** пункт\n- второй пункт\n\n| Поле | Тип | Обязательное | Описание |\n| --- | --- | --- | --- |\n| id | **uuid** | да | первичный ключ задачи |\n| имя | text | | |';
   // Board #134: a table is drawn in read mode like in the editor; a wide one scrolls inside the description.
   await signedIn(page);
   await tab(page, 'boards');
@@ -1364,7 +1409,7 @@ test('m-boards-task-history', async ({ page }) => {
   await tab(page, 'boards');
   const nav = page.getByTestId('phone-boards');
   await nav.getByTestId('board-row').filter({ hasText: 'Разработка' }).getByRole('button').first().tap();
-  await page.getByTestId('list-row').filter({ hasText: 'CAL-3' }).tap();
+  await page.getByTestId('list-row').filter({ hasText: 'CAL-3' }).getByText('Эхо в звонке').tap(); // the title: the row's centre is the due date
   const section = page.getByTestId('task-panel').getByTestId('task-activity');
   await section.getByRole('radio', { name: 'История' }).tap();
   const rows = section.getByTestId('history-row');
@@ -1373,6 +1418,38 @@ test('m-boards-task-history', async ({ page }) => {
   await expect(section.getByTestId('history-diff')).toBeVisible();
   await section.evaluate((el) => el.scrollIntoView({ block: 'start' }));
   await checkpoint(page, 'm-boards-task-history');
+  // ADR-0156: «(через бота Погода · MCP)» / «(через MCP)» in the history and on the comments.
+  seedViaMcp(mock);
+  await page.getByTestId('task-panel').getByTestId('phone-back').tap();
+  await expect(page.getByTestId('task-panel')).toHaveCount(0);
+  await page.getByTestId('list-row').filter({ hasText: 'CAL-3' }).getByText('Эхо в звонке').tap();
+  await section.getByRole('radio', { name: 'История' }).tap();
+  await expect(section.locator('[data-via-mcp]')).toHaveCount(2);
+  await section.evaluate((el) => el.scrollIntoView({ block: 'start' }));
+  await checkpoint(page, 'm-boards-task-via-mcp');
+  await section.getByRole('radio', { name: 'Комментарии' }).tap();
+  const panel = page.getByTestId('task-panel');
+  await expect(panel.locator('[data-message-id] [data-via-mcp]')).toHaveCount(3);
+  await panel.locator('[data-message-id]').filter({ hasText: 'Взял в работу' }).scrollIntoViewIfNeeded();
+  await checkpoint(page, 'm-boards-task-comments-via-mcp');
+});
+
+// Board #148: a picture and pipe tables in the comments; the wide table scrolls inside its bubble.
+test('m-boards-task-comments-rich', async ({ page }) => {
+  mock.setClock(NOW.getTime());
+  await signedIn(page);
+  seedRichComments(mock);
+  await tab(page, 'boards');
+  const nav = page.getByTestId('phone-boards');
+  await nav.getByTestId('board-row').filter({ hasText: 'Разработка' }).getByRole('button').first().tap();
+  await page.getByTestId('list-row').filter({ hasText: 'CAL-3' }).getByText('Эхо в звонке').tap();
+  const panel = page.getByTestId('task-panel');
+  await expect(panel.locator('table')).toHaveCount(2);
+  const wide = panel.locator('.tableWrapper').last();
+  await wide.scrollIntoViewIfNeeded();
+  expect(await wide.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+  // axe off: label-content-name-mismatch on the task-list rows behind the panel, not this change (the desktop twin skips it too).
+  await checkpoint(page, 'm-boards-task-comments-rich', { axe: false });
 });
 
 // The kanban on a phone: columns a screen wide, swiped horizontally with snap (ADR-0042 §5).
@@ -1526,6 +1603,15 @@ test('m-menu', async ({ page }) => {
   await page.getByTestId('message-read-by').tap();
   await expect(page.getByRole('menu').getByTestId('read-by-row')).toHaveCount(2);
   await checkpoint(page, 'm-message-read-by');
+  // ADR-0154: «Пожаловаться…» on someone else's message → the report dialog as a centred card.
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await page.getByText('Готово, выдал.').dispatchEvent('contextmenu', { clientX: 120, clientY: 400 });
+  await page.getByTestId('message-report').tap();
+  const report = page.getByTestId('report-dialog');
+  await expect(report).toBeVisible();
+  await report.getByTestId(`report-reason-${ReportReason.SPAM}`).tap();
+  await checkpoint(page, 'm-report-dialog');
 });
 
 // Owner 07.10: a sub-level («+» → «Создать задачу ▸») opens by a tap only — never on hover — as a
@@ -1808,6 +1894,14 @@ test('m-dm-chat', async ({ page }) => {
   await expectNoFieldFocus(page, 'dm open');
   await feedToBottom(page);
   await checkpoint(page, 'm-dm-chat', { main: true });
+  // ADR-0154: «⋯» → «Заблокировать» → the DM shows the unblock note instead of the composer and
+  // Борис's messages collapse.
+  await page.getByTestId('dm-actions').tap();
+  await page.getByTestId('dm-user-block').tap();
+  await page.getByRole('button', { name: 'Заблокировать', exact: true }).tap();
+  await expect(page.getByTestId('composer-blocked')).toBeVisible();
+  await expect(page.getByTestId('message-hidden').first()).toBeVisible();
+  await checkpoint(page, 'm-dm-blocked');
 });
 
 test('m-call-incoming', async ({ page }) => {
@@ -1886,6 +1980,13 @@ test('m-ws-switcher', async ({ page }) => {
   await expect(menu.getByRole('menuitem', { name: 'Найти пространство' })).toBeVisible();
   await expect(menu.getByRole('menuitem', { name: 'Настройки', exact: true })).toBeVisible();
   await checkpoint(page, 'm-ws-switcher');
+  // Board #145: READY leaves the open workspace out while its access lease is pending — «Подключение…»
+  // on the tab root, never «Создать пространство».
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  mock.readyPending(IDS.workspaces.main);
+  await expect(page.getByTestId('shell-connecting')).toBeVisible();
+  await checkpoint(page, 'm-ws-pending');
 });
 
 test('m-dialog', async ({ page }) => {

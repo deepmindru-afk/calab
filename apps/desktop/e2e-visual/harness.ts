@@ -446,6 +446,44 @@ export function seedBotAuthoredTask(mock: MockServer): void {
 }
 
 /**
+ * ADR-0156: CAL-3 worked on through MCP — in the history the description edit by Анна through
+ * «Погода» and the title by «Деплой» itself; three comments: Борис through «Погода», «Деплой»
+ * itself, mine through «Погода» (the bots must be seeded: mock.seedBots()).
+ */
+export function seedViaMcp(mock: MockServer): void {
+  const t = mock.boards.taskByKey('CAL-3');
+  if (!t) throw new Error('no CAL-3');
+  const acts = mock.boards.activity.filter((a) => a.taskId === t.task.id);
+  const desc = acts.find((a) => a.kind === 'description');
+  const title = acts.find((a) => a.kind === 'title');
+  if (!desc || !title) throw new Error('no CAL-3 history');
+  desc.viaBotId = IDS.bots.weather;
+  desc.via = 'mcp';
+  title.actorId = IDS.bots.deploy;
+  title.via = 'mcp';
+  const say = (authorId: string, content: string, viaBotId: string): void => {
+    mock.injectMessage({ roomId: t.task.roomId, authorId, content, viaBotId, via: 'mcp' });
+  };
+  say(IDS.users.boris, 'Взял в работу — разберу логи эха до вечера.', IDS.bots.weather);
+  say(IDS.bots.deploy, 'Ветка fix/echo-cancel привязана, сборка 3.2.2 собрана.', '');
+  say(IDS.users.anna, 'Поставила срок на пятницу.', IDS.bots.weather);
+}
+
+/**
+ * Board #148: CAL-3's comments with a picture and pipe tables (a narrow one, a wide one that must scroll
+ * sideways inside the bubble). Returns the wide table's author text marker for the spec to find it.
+ */
+export function seedRichComments(mock: MockServer): void {
+  const t = mock.boards.taskByKey('CAL-3');
+  if (!t) throw new Error('no CAL-3');
+  const room = t.task.roomId;
+  mock.injectMessage({ roomId: room, authorId: IDS.users.vera, content: 'Скриншот ошибки', attachments: [IDS.files.portrait] });
+  mock.injectMessage({ roomId: room, authorId: IDS.users.anna, content: 'Итоги замеров:\n\n| Сборка | CPU, % | Эхо |\n| --- | --- | --- |\n| 3.2.1 | 4.8 | да |\n| 3.2.2 | 2.1 | нет |' });
+  const wide = ['Окружение', 'Версия клиента', 'Версия ОС', 'Процессор', 'Память, ГБ', 'Сеть', 'Комментарий'];
+  mock.injectMessage({ roomId: room, authorId: IDS.users.boris, content: `Широкая таблица:\n\n| ${wide.join(' | ')} |\n| ${wide.map(() => '---').join(' | ')} |\n| ${wide.map((w) => `${w} — значение`).join(' | ')} |` });
+}
+
+/**
  * Board #117: every visible control of a toolbar (buttons, fields, segmented controls) is one
  * height - `--control-h-bar` - within 0.5 px, and sits centred on the toolbar's midline.
  */

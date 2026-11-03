@@ -477,6 +477,8 @@ func (h *Handlers) create(w http.ResponseWriter, r *http.Request) error {
 		if err := h.botSend(r.Context(), uid(r), acc); err != nil {
 			return err
 		}
+	} else if err := h.personSend(r.Context(), uid(r), acc); err != nil {
+		return err
 	}
 	via := auth.ViaBot(r.Context()) // ADR-0106: the owner's message, on the bot's message limit
 	if err := h.botOnBehalf(r.Context(), via); err != nil {
@@ -534,7 +536,7 @@ func (h *Handlers) create(w http.ResponseWriter, r *http.Request) error {
 		var err error
 		params := sqlc.InsertMessageParams{
 			RoomID: roomID, AuthorID: uid(r), Content: content, ReplyToID: replyTo, Nonce: nonce, InlineKeyboard: keyboard,
-			ViaBotID: via,
+			ViaBotID: via, Via: auth.Channel(r.Context()), // ADR-0156: «via MCP»
 		}
 		if sticker != nil {
 			params.StickerID = &sticker.Sticker.ID
@@ -643,6 +645,9 @@ func (h *Handlers) update(w http.ResponseWriter, r *http.Request) error {
 	}
 	if m.ForwardSentAt != nil {
 		return errNotEditable
+	}
+	if err := h.personSend(r.Context(), uid(r), acc); err != nil { // ADR-0154: no edits in a blocked DM
+		return err
 	}
 	var req v1.UpdateMessageRequest
 	if err := httpx.Decode(w, r, &req); err != nil {

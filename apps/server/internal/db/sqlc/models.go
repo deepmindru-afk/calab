@@ -957,6 +957,8 @@ type Event struct {
 	CancelledAt     *time.Time
 	TempRoom        bool
 	TempRoomRetryAt *time.Time
+	SeriesID        *uuid.UUID
+	RecurrenceAt    *time.Time
 }
 
 type EventAttendee struct {
@@ -1156,6 +1158,7 @@ type Message struct {
 	InlineKeyboard   []byte
 	KeyboardRevision int64
 	ViaBotID         *uuid.UUID
+	Via              *string
 }
 
 type MessageAttachment struct {
@@ -1870,6 +1873,7 @@ type TaskActivity struct {
 	CreatedAt time.Time
 	RuleID    *uuid.UUID
 	ViaBotID  *uuid.UUID
+	Via       *string
 }
 
 type TaskApprover struct {
@@ -2056,6 +2060,7 @@ type User struct {
 	TaskNotifyOff                  []string
 	TaskNotifyBots                 []uuid.UUID
 	CalendarZones                  []byte
+	DeletedAt                      *time.Time
 }
 
 type UserAttribution struct {
@@ -2070,11 +2075,32 @@ type UserAttribution struct {
 	CreatedAt   time.Time
 }
 
+type UserBlock struct {
+	UserID        uuid.UUID
+	BlockedUserID uuid.UUID
+	CreatedAt     time.Time
+}
+
 type UserNote struct {
 	AuthorID  uuid.UUID
 	SubjectID uuid.UUID
 	Text      string
 	UpdatedAt time.Time
+}
+
+type UserReport struct {
+	ID           uuid.UUID
+	WorkspaceID  uuid.UUID
+	ReporterID   *uuid.UUID
+	TargetUserID *uuid.UUID
+	MessageID    *uuid.UUID
+	RoomID       *uuid.UUID
+	MessageText  string
+	Reason       int16
+	Comment      string
+	CreatedAt    time.Time
+	ResolvedAt   *time.Time
+	ResolvedBy   *uuid.UUID
 }
 
 type UserStickerPack struct {
@@ -2218,6 +2244,9 @@ type Workspace struct {
 	OwnerSeesPrivate         bool
 	CanvasTrashDays          *int32
 	DefaultJoinLeaveSoundMax int32
+	UploadBurst              *int32
+	UploadPerHour            *int32
+	MaxFileMb                *int32
 }
 
 type WorkspaceAdminLog struct {
