@@ -737,6 +737,30 @@ test('dm-list', async ({ open, win, shot }) => {
   await expect(win.getByTestId('dm-pick')).toBeVisible();
   await settle(win);
   await checkpoint(shot, 'dm-list');
+
+  // CBF-159: the message search above the list. «ер» — Вера by name («Чаты») and the messages with it in «Сообщения»; a click opens the chat on the message, the results stay.
+  const field = win.getByTestId('dm-search');
+  await field.fill('ер');
+  const hits = win.getByTestId('dm-search-hits');
+  await expect(win.getByTestId('dm-search-chats').getByRole('button', { name: /Вера/ })).toBeVisible();
+  await expect(hits.getByTestId('dm-hit').first()).toBeVisible();
+  await expect(win.getByTestId('dm-list')).toBeHidden();
+  await settle(win);
+  await checkpoint(shot, 'dm-search');
+  await hits.getByRole('button', { name: /Супер/ }).click();
+  await expect(win.getByTestId('dm-search-results')).toBeVisible();
+  await expect(win.getByText('Макеты рейла готовы')).toBeVisible();
+  await field.fill('ре');
+  await expect(hits.getByTestId('dm-hit').first()).toBeVisible();
+  await settle(win);
+  await checkpoint(shot, 'dm-search-hits');
+  await field.fill('qzxw');
+  await expect(win.getByTestId('dm-search-empty')).toBeVisible();
+  await checkpoint(shot, 'dm-search-empty');
+  // Esc clears the query: the list is back.
+  await field.press('Escape');
+  await expect(field).toHaveValue('');
+  await expect(win.getByTestId('dm-list')).toBeVisible();
 });
 
 // Count badges (owner 07.10): 1 and 2 digits are perfect circles, 99+ is a pill; the rail tile and the DM rows.
@@ -1237,6 +1261,18 @@ test('quick-switcher', async ({ open, win, mock, shot }) => {
   await expect(win.getByTestId('task-search-row')).toHaveCount(2);
   await win.mouse.move(0, 0);
   await checkpoint(shot, 'quick-switcher-tasks');
+  // CBF-157: «×» empties the text only — focus stays, the «Доска» chip and the list stay, the dialog stays.
+  await expect(win.getByTestId('search-clear')).toBeVisible();
+  await checkpoint(shot, 'quick-switcher-tasks-clear', { axe: false });
+  await win.getByTestId('search-clear').click();
+  await expect(win.getByRole('combobox')).toHaveValue('');
+  await expect(win.getByRole('combobox')).toBeFocused();
+  await expect(win.getByTestId('search-clear')).toHaveCount(0);
+  await expect(win.getByTestId('filter-chip')).toHaveCount(1);
+  await expect(win.getByTestId('quick-switcher')).toBeVisible();
+  await win.mouse.move(0, 0);
+  await checkpoint(shot, 'quick-switcher-tasks-cleared');
+  await win.keyboard.type('доск');
   // A typed key comes first as «Открыть CAL-3».
   const field = win.getByRole('combobox');
   await field.press(`${MOD}+a`);
@@ -1294,6 +1330,21 @@ test('chat-context-menu', async ({ open, win, mock, shot }) => {
   await win.getByTestId('message-read-by').click();
   await expect(win.getByRole('menu').getByTestId('read-by-row')).toHaveCount(2);
   await checkpoint(shot, 'chat-read-by-menu');
+  // ADR-0162: «Изменить» on a message of my own bot («Погода»), not on someone else's («Деплой»).
+  await win.keyboard.press('Escape');
+  await expect(win.getByRole('menu')).toHaveCount(0);
+  mock.seedBots();
+  mock.injectMessage({ roomId: IDS.rooms.general, authorId: IDS.bots.deploy, content: 'Выкатил ветку на стенд.' });
+  mock.injectMessage({ roomId: IDS.rooms.general, authorId: IDS.bots.weather, content: 'Завтра +3, без осадков.' });
+  await win.getByTestId('message-bubble').filter({ hasText: 'Выкатил ветку' }).getByText('Выкатил ветку').click({ button: 'right' });
+  await expect(win.getByRole('menu')).toBeVisible();
+  await expect(win.getByTestId('message-edit')).toHaveCount(0);
+  await win.keyboard.press('Escape');
+  await win.getByTestId('message-bubble').filter({ hasText: 'Завтра +3' }).getByText('Завтра +3').click({ button: 'right' });
+  await expect(win.getByTestId('message-edit')).toBeVisible();
+  await checkpoint(shot, 'chat-context-menu-bot');
+  await win.getByTestId('message-edit').click();
+  await expect(win.getByTestId('composer')).toContainText('Завтра +3');
 });
 
 test('chat-emoji-picker', async ({ open, win, mock, shot }) => {
@@ -1498,6 +1549,14 @@ test('inbox-popover', async ({ open, win, mock, shot }) => {
   await expect(pop.getByText(/разработка · /).first()).toBeVisible();
   await settle(win);
   await checkpoint(shot, 'inbox-popover');
+  // CBF-155: the ✕ in a card's corner removes it; the popover stays open, the rest stay.
+  const card = pop.getByRole('listitem').filter({ hasText: 'CAL-3 · Эхо в звонке при включённых колонках' }).first();
+  const rows = await pop.getByRole('listitem').count();
+  await card.getByRole('button', { name: 'Убрать из списка' }).click();
+  await expect(pop.getByRole('listitem')).toHaveCount(rows - 1);
+  await expect(pop).toBeVisible();
+  await settle(win);
+  await checkpoint(shot, 'inbox-popover-dismissed');
 });
 
 // Bug #146: a room with an unread @mention looks different from plain unread (the count badge), and the
@@ -4388,6 +4447,11 @@ test('settings-calendar', async ({ open, win, mock, shot }) => {
   await openSettingsTab(win, openAppSettings(win), appTab('calendar'));
   await expect(win.getByTestId('caldav-connect')).toBeVisible();
   await checkpoint(shot, 'settings-calendar');
+  // CBF-165: «Первый день недели» — Monday by default, Sunday on choice (the work days follow).
+  await expect(win.getByRole('radio', { name: 'Понедельник' })).toBeChecked();
+  await win.getByRole('radio', { name: 'Воскресенье' }).click();
+  await expect(win.getByTestId('wh-days').getByRole('button').first()).toHaveText(/вс/i);
+  await checkpoint(shot, 'settings-calendar-sunday');
 });
 
 /**
