@@ -8,6 +8,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AppWindow, Ban, Bell, CalendarDays, CircleUser, Headphones, Info, Keyboard, Mail, Mic, MonitorSmartphone, SlidersHorizontal, Trash2, Wifi } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import type { AppInfo, AppSettings, PermissionStatus } from '../../../shared/ipc';
+import { monoTrayIconSupported } from '../../../shared/trayIconFile';
 import type { UpdateChannel } from '../../../shared/updateFeed';
 import { Avatar } from '../../components/Avatar';
 import { AvatarButtons } from '../../components/AvatarPicker';
@@ -533,10 +534,12 @@ function MusicianRow({ outputs }: { outputs: MediaDeviceInfo[] }): ReactNode {
   const outputId = usePrefs((s) => s.outputDeviceId);
   const setPrefs = usePrefs((s) => s.setPrefs);
   const allowed = useMusicianAllowed();
+  // A native-audio join on iPhone (ADR-0149): off, with the reason in place of the hint.
+  const audioOnly = useVoice((s) => s.audioOnly);
   const warning = on ? musicianWarning(outputLabel(outputs, outputId)) : null;
   const row = (
-    <Row label={t('music.mode')} hint={t('music.hint')}>
-      <Toggle label={t('music.mode')} checked={on && allowed} disabled={!allowed} onChange={(v) => setPrefs({ musicianMode: v })} />
+    <Row label={t('music.mode')} hint={audioOnly ? t('music.audioOnly') : t('music.hint')}>
+      <Toggle label={t('music.mode')} checked={on && allowed && !audioOnly} disabled={!allowed || audioOnly} onChange={(v) => setPrefs({ musicianMode: v })} />
     </Row>
   );
   // Free (ADR-0052): the switch stays in place under the plan lock (docs/08 «Функции не по тарифу»).
@@ -1046,6 +1049,16 @@ function DesktopAppCards({
                 { value: 'quit', label: t('app.onCloseQuit') },
               ]}
               onChange={(v) => void save({ closeToTray: v === 'tray' }).catch((e: unknown) => toast.fail(e, t('err.ctx.save')))}
+            />
+          </Row>
+        ) : null}
+        {/* Windows only: macOS already draws a template icon, Linux trays vary too much (CBF-171). */}
+        {info && monoTrayIconSupported(info.platform) ? (
+          <Row label={t('app.monoTray')} hint={t('app.monoTrayHint')}>
+            <Toggle
+              label={t('app.monoTray')}
+              checked={settings?.monoTrayIcon ?? false}
+              onChange={(v) => void save({ monoTrayIcon: v }).catch((e: unknown) => toast.fail(e, t('err.ctx.save')))}
             />
           </Row>
         ) : null}

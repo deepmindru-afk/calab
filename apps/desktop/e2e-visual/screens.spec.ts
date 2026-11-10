@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { create } from '@bufbuild/protobuf';
 import { AiState, FormerMemberReason, PERMISSION_BITS, PermissionTargetType, Plan, RecordingStatus, ReportReason, RoomPermissionOverrideSchema, UserReportSchema, UserSchema, WorkspaceBanSchema, WorkspacePlanSchema, WorkspaceRole, WorkspaceSuspensionSchema } from '@calaba/protocol';
 import type { Locator, Page } from '@playwright/test';
-import { FREE_PLAN_LIMITS, defaultSettings, mockPdf, ts } from '../e2e-support/fixtures';
+import { FREE_PLAN_LIMITS, UNFURLS, defaultSettings, mockPdf, ts } from '../e2e-support/fixtures';
 import { CODE_FIXTURE, IDS, MOCK_GPTUNNEL_CODE, MOCK_GPTUNNEL_WEB, PASSWORD, RECORDING_FIXTURE, slowWebpAnimation, type MockServer } from '../e2e-support/mock-server';
 import { encodePng } from '../e2e-support/png';
 import { expect, test } from './app';
@@ -192,6 +192,7 @@ const KEY = new Set([
   'boards-task-comments-rich',
   'boards-task-history',
   'boards-list',
+  'boards-sidebar',
   'boards-labels-overflow',
   'boards-filter',
   'boards-settings',
@@ -1517,6 +1518,24 @@ test('chat-link-preview', async ({ open, win, mock, shot }) => {
   }).toPass({ timeout: 10_000 });
   await expect(hidePreview).toBeFocused();
   await checkpoint(shot, 'chat-link-preview');
+
+  // GitHub #313: a run of links (cards, one with a picture, and «preview not found» ones), the room
+  // opened afresh: the feed settles at its end with every row shown, never an empty hidden list.
+  const urls = Object.keys(UNFURLS);
+  let last = '';
+  for (let i = 0; i < 12; i++) {
+    const url = i % 3 === 2 ? `https://calaba.test/missing/${i}` : (urls[i % urls.length] ?? '');
+    last = mock.injectMessage({ roomId: IDS.rooms.general, authorId: IDS.users.boris, content: `Сводка ${i + 1}: ${url}` }).id;
+  }
+  await win.locator('aside').getByRole('button', { name: /разработка/ }).first().click();
+  await expect(win.getByRole('heading', { name: 'разработка' })).toBeVisible();
+  await win.locator('aside').getByRole('button', { name: /общий/ }).first().click();
+  await expect(win.getByRole('heading', { name: 'общий' })).toBeVisible();
+  const list = win.locator('[data-testid="virtuoso-item-list"]').first();
+  await expect.poll(() => list.evaluate((el) => getComputedStyle(el).visibility), { message: 'the feed stays hidden', timeout: 5000 }).toBe('visible');
+  await expect(win.locator(`[data-message-id="${last}"]`)).toBeVisible();
+  await win.waitForFunction(() => [...document.querySelectorAll('[data-virtuoso-scroller] img')].every((i) => (i as HTMLImageElement).complete));
+  await checkpoint(shot, 'chat-link-preview-run');
 });
 
 test('chat-mention-popover', async ({ open, win, mock, shot }) => {
@@ -1792,11 +1811,25 @@ async function seedTempRooms(win: Page, mock: MockServer): Promise<number> {
 /** The «Временные» group under the categories: Timer rows, the remaining time, orange under 10 minutes. */
 test('sidebar-temp-room', async ({ open, win, mock, shot }) => {
   await open();
+  // One closed room before the sidebar mounts: «Архив» ends the group with a grey total (CBF-170), not a badge.
+  const archivedAt = Date.now();
+  mock.setClock(archivedAt - 2 * 3_600_000);
+  mock.addTempRoom({ workspaceId: IDS.workspaces.main, name: 'Созвон с подрядчиком', expiresAtMs: archivedAt - 3_600_000, createdBy: IDS.users.vera });
+  mock.setClock(archivedAt - 3_600_000);
+  mock.expireTempRooms();
   await mainWindow(win, mock);
   await seedTempRooms(win, mock);
   const group = win.getByTestId('temp-group');
   await expect(group.getByRole('button', { name: 'Свернуть «Временные»' })).toBeVisible();
   await expect(group.locator('[data-testid="temp-icon"][data-expiring]')).toHaveCount(1);
+  await expect(group.getByTestId('temp-archive-button')).toBeVisible();
+  // CBF-170: the room's mention badge and the archive total are centred on the column's «+» axis (within 1 px).
+  const centre = async (l: Locator): Promise<number> => {
+    const b = await l.boundingBox();
+    return b ? b.x + b.width / 2 : NaN;
+  };
+  const plus = await centre(win.getByTestId('sidebar-create'));
+  expect(Math.abs((await centre(win.locator('[data-room-slot] [data-count-badge]').first())) - plus)).toBeLessThan(1);
   await checkpoint(shot, 'sidebar-temp-room');
 });
 /** «+» → «Временная комната» as it opens (all members): name, lifetime presets, visibility, switches. */
@@ -3667,6 +3700,13 @@ test('voice-reconnecting', async ({ open, win, mock, shot }) => {
   await win.evaluate(() => (window as unknown as { __calabaVoicePhase?: (p: string) => void }).__calabaVoicePhase?.('reconnecting'));
   await expect(win.getByTestId('voice-reconnecting')).toBeVisible();
   await checkpoint(shot, 'voice-reconnecting');
+  // A database stall (ADR-0166): the API answers 503, the screen stays, the quiet banner on top.
+  await win.evaluate(() => (window as unknown as { __calabaServerDegraded?: (on: boolean) => void }).__calabaServerDegraded?.(true));
+  await expect(win.getByTestId('reconnect-banner')).toHaveText('Нет связи с сервером — восстанавливаем…');
+  await expect(win.getByTestId('voice-reconnecting')).toContainText('Переподключаемся к комнате');
+  await checkpoint(shot, 'voice-reconnecting-server');
+  await win.evaluate(() => (window as unknown as { __calabaServerDegraded?: (on: boolean) => void }).__calabaServerDegraded?.(false));
+  await expect(win.getByTestId('reconnect-banner')).toHaveCount(0);
   // Back from the background: the mic is being restored (the panel header) and the remote audio
   // waits for a tap («Вы не слышите собеседников»).
   await win.evaluate(() => {
@@ -4606,6 +4646,13 @@ test('boards-kanban', async ({ open, win, mock, shot }) => {
   await expectAssigneeStacks(win);
   await checkpoint(shot, 'boards-kanban-assignees', { axe: false });
 
+  // CBF-167: I am an approver of CAL-6 and have voted «за» (1/2): the tag is outlined green, no fill, no ✓.
+  const reviewTag = win.getByTestId('task-card').filter({ hasText: 'Ревью: права досок' }).getByTestId('approval-badge');
+  await reviewTag.scrollIntoViewIfNeeded();
+  await expect(reviewTag).toHaveAttribute('data-mine', 'approved');
+  await expect(reviewTag).toHaveText('1/2');
+  await checkpoint(shot, 'boards-approval-tag-mine', { axe: false });
+
   // Status picker on a task waiting for approval: the statuses it may not reach carry a second
   // line («нужно согласование»); one-line and two-line rows keep the same padding and rhythm.
   await win.getByTestId('task-card').filter({ hasText: 'Ревью: права досок' }).getByTestId('card-status').click();
@@ -5009,6 +5056,18 @@ test('boards-list', async ({ open, win, mock, shot }) => {
   seedReleases(mock); // board task #101: not on the rows — the grouping and the task panel at the end
   await mainWindow(win, mock);
   await boardsMode(win, mock);
+  // CBF-170: the sidebar's totals are grey text on the «+» axis, «Мои задачи» / unseen counters stay badges; hover swaps the count for «⋯».
+  await checkpoint(shot, 'boards-sidebar');
+  // Counters and the hovered row's «⋯» sit on the «+» axis (centres within 1 px).
+  const axis = async (l: Locator): Promise<number> => {
+    const b = await l.boundingBox();
+    return b ? b.x + b.width / 2 : NaN;
+  };
+  const plus = await axis(win.getByTestId('section-create-board'));
+  expect(Math.abs((await axis(win.getByTestId('my-tasks').locator('[data-count-badge]'))) - plus)).toBeLessThan(1);
+  const firstBoard = win.getByTestId('boards-list').getByTestId('board-row').first();
+  await firstBoard.hover();
+  expect(Math.abs((await axis(firstBoard.locator('[data-row-menu]'))) - plus)).toBeLessThan(1);
   await win.getByTestId('view-list').click();
   const rows = win.getByTestId('list-row');
   await rows.filter({ hasText: 'CAL-2' }).getByTestId('row-select').click();
@@ -5018,13 +5077,14 @@ test('boards-list', async ({ open, win, mock, shot }) => {
   // «Архив задач» (owner 18.10): archive the two selected tasks, open the board's archive, then a task in it.
   await win.getByTestId('bulk-bar').getByRole('button', { name: 'Архивировать' }).click();
   await expect(rows.filter({ hasText: 'CAL-2' })).toHaveCount(0);
+  // The «в архиве» toasts (with «Отменить») stay and cover the header's «⋯» at 960: close them.
+  await expect(win.getByTestId('toast').first()).toBeVisible();
+  while (await win.getByTestId('toast').count()) await win.getByTestId('toast').first().getByRole('button', { name: 'Закрыть' }).click();
   await win.getByTestId('board-more').click();
   await win.getByTestId('board-archive-open').click();
   const archived = win.getByTestId('archive-row');
   await expect(archived).toHaveCount(2);
   await expect(win.getByTestId('archive-title')).toHaveText('Архив · 2');
-  // The «в архиве» toasts (with «Отменить») stay: close them.
-  while (await win.getByTestId('toast').count()) await win.getByTestId('toast').first().getByRole('button', { name: 'Закрыть' }).click();
   await archived.first().hover();
   await checkpoint(shot, 'boards-archive');
   await archived.filter({ hasText: 'CAL-2' }).click();
@@ -5040,6 +5100,9 @@ test('boards-list', async ({ open, win, mock, shot }) => {
   await expect(win.getByTestId('archive-empty')).toBeVisible();
   await win.getByTestId('archive-back').click();
   await expect(rows.filter({ hasText: 'CAL-2' })).toHaveCount(1);
+  // The «вернулась на доску» toasts cover the toolbar at 960: close them.
+  await expect(win.getByTestId('toast').first()).toBeVisible();
+  while (await win.getByTestId('toast').count()) await win.getByTestId('toast').first().getByRole('button', { name: 'Закрыть' }).click();
   // Board task #101: grouped by release — the newest first, «Без релиза» last; then a task's «Релиз».
   await win.getByTestId('display-menu').click();
   await win.getByTestId('group-by').selectOption('release');

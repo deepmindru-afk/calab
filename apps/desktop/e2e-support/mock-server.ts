@@ -121,6 +121,8 @@ import {
   PublicCanvasSchema,
   CreateDiskFolderRequestSchema,
   CreateDiskLinkRequestSchema,
+  UnlockDiskLinkRequestSchema,
+  UpdateDiskLinkRequestSchema,
   DISK_BITS,
   OfficeConfigResponseSchema,
   OfficeCapabilitiesResponseSchema,
@@ -151,6 +153,8 @@ import {
   EmptyWikiTrashResponseSchema,
   ListWikiPagesResponseSchema,
   PublicWikiPageSchema,
+  PublicDiskFileSchema,
+  PublicDiskFolderSchema,
   UpdateWikiPageRequestSchema,
   UpdateWikiPermissionsRequestSchema,
   WIKI_BITS,
@@ -399,6 +403,7 @@ import {
   UpdateRoomInviteResponseSchema,
   RoomAdmissionStatus,
   JoinVoiceResponseSchema,
+  VoiceCompanionResponseSchema,
   SipInboundAcceptResponseSchema,
   TransferSipCallRequestSchema,
   JoinWorkspaceResponseSchema,
@@ -791,6 +796,10 @@ export interface MockServer {
   addSound(workspaceId: string, name: string, emoji: string): string;
   /** ADR-0036: `userId` pressed `soundId` (`builtin:<id>` or a workspace sound) in `roomId` → SOUND_PLAY to the room's call. */
   playSound(roomId: string, userId: string, soundId: string): void;
+  /** The LiveKit URL the join responses carry (ADR-0149 mock host: native room audio accepts only `wss://`). */
+  setLivekitUrl(url: string): void;
+  /** `POST /api/rooms/:id/voice/companion` (ADR-0149 §3): `token` = the video-only token (default), `refused` = 403 (the companion gives up). */
+  setCompanion(mode: 'token' | 'refused'): void;
   /** ADR-0025: connects the workspace to GPTunneL as if an admin paired it (`null` = disconnect). */
   setGptunnel(workspaceId: string, pairedBy: string | null): void;
   /**
@@ -1055,6 +1064,8 @@ export async function startMockServer(opts: MockServerOptions = {}): Promise<Moc
     addBackground: (w, name, colors) => impl.addBackground(w, name, colors),
     addSound: (w, name, emoji) => impl.addSound(w, name, emoji),
     playSound: (roomId, u, soundId) => impl.playSound(roomId, u, soundId),
+    setLivekitUrl: (url) => impl.setLivekitUrl(url),
+    setCompanion: (mode) => impl.setCompanion(mode),
     stopCamera: (u, r) => impl.stopCamera(u, r),
     setEmailState: (u, st) => impl.setEmailState(u, st),
     setRecording: (roomId, rec) => impl.setRecording(roomId, rec),
@@ -1614,6 +1625,7 @@ class MockImpl {
     this.canvas = this.newCanvas();
     this.seedCanvas();
     this.voiceSessions.clear();
+    this.companionMode = 'token';
     this.calls.clear();
     this.userCall.clear();
     this.callSeq = 0;
@@ -2596,6 +2608,16 @@ class MockImpl {
     this.state.sounds.set(sound.id, sound);
     this.toWorkspace(workspaceId, { event: { case: 'soundCreate', value: { sound } } });
     return sound.id;
+  }
+
+  setLivekitUrl(url: string): void {
+    this.lk.url = url;
+  }
+
+  private companionMode: 'token' | 'refused' = 'token';
+
+  setCompanion(mode: 'token' | 'refused'): void {
+    this.companionMode = mode;
   }
 
   playSound(roomId: string, userId: string, soundId: string): void {
@@ -5698,6 +5720,18 @@ class MockImpl {
         canVideo: has(perms, VIDEO) && (room.media ?? DEFAULT_MEDIA).cameraLimit > 0,
         pending,
       });
+    });
+
+    // The web companion of a native-audio join (ADR-0149 §3): a subscribe-only token for `<user>:<session>:web`, only with this device's seat (409 without).
+    this.route('POST', '/api/rooms/:id/voice/companion', async (c) => {
+      const { user, sessionId } = this.auth(c);
+      const me = user.user.id;
+      const room = this.roomFor(c.params[0] ?? '', me);
+      if (this.companionMode === 'refused') throw forbidden('companion refused');
+      if (s().voiceStates.get(me)?.roomId !== room.id || this.voiceSessions.get(me) !== sessionId) throw conflict('no seat in this room');
+      const at = new AccessToken(this.lk.key, this.lk.secret, { identity: `${me}:${sessionId}:web`, name: user.user.displayName, ttl: '10m' });
+      at.addGrant({ roomJoin: true, room: `${livekitRoomPrefix()}${room.id}`, canPublish: false, canSubscribe: true, canPublishData: true });
+      sendMsg(c.res, 200, VoiceCompanionResponseSchema, { url: this.lk.url, token: await at.toJwt() });
     });
 
     // Leave (docs/05): this device's state in the room goes at once, pending or connected.
@@ -9159,6 +9193,84 @@ class MockImpl {
         mode: edit ? OfficeMode.EDIT : OfficeMode.VIEW, key, format, itemId: it?.id ?? '', fileId: it?.file?.id ?? fileId,
       });
     });
+    // Public Disk links (ADR-0094 §3, ADR-0165): anonymous, the server's contract (internal/disk/public*.go).
+    // A protected link (ADR-0167) answers 403 LINK_PASSWORD_REQUIRED on every route but the meta
+    // (`open` = false) and the unlock until the cookie of POST …/unlock comes along.
+    const pubDisk = (h: (c: Ctx) => void, open = true): ((c: Ctx) => void) => (c) => {
+      try {
+        if (open && !d().linkUnlocked(p0(c), cookies(c.req)['calab_dl'])) throw new HttpError(403, ErrorCode.LINK_PASSWORD_REQUIRED, 'the link needs its password');
+        h(c);
+      } catch (e) {
+        if (e instanceof DiskError) throw new HttpError(e.status, e.code, e.message, e.field);
+        throw e;
+      }
+    };
+    const pubFile = (it: DiskItem) => {
+      const f = it.file;
+      return { id: it.id, name: it.name, kind: it.kind, size: f?.size ?? 0n, mime: f?.mime ?? '', width: f?.width ?? 0, height: f?.height ?? 0, hasThumbnail: !!f?.thumbnailUrl, updatedAt: it.updatedAt, office: this.officeEnabled && !!officeOf(it.name) };
+    };
+    const pubBytes = (c: Ctx, it: DiskItem, thumb: boolean): void => {
+      const f = this.state.files.get(it.file?.id ?? '');
+      const bytes = thumb ? f?.thumbnail?.bytes : f?.bytes;
+      if (!f || !bytes) throw notFound();
+      const viewOnly = d().publicLink(p0(c)).link.viewOnly;
+      // «Без скачивания»: only what the page views in the browser, inline (internal/disk viewable).
+      if (!thumb && viewOnly && !/^(image|video|audio|text)\/|^application\/(pdf|json|xml)$/.test(f.meta.mime) && !/\.(md|markdown|csv|tsv|txt|log|json|ya?ml)$/i.test(it.name))
+        throw new HttpError(403, ErrorCode.FORBIDDEN, 'the link is view-only');
+      send(c.res, 200, bytes, thumb ? (f.thumbnail?.mime ?? 'image/png') : f.meta.mime, {
+        'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow', ...(viewOnly && !thumb ? { 'Content-Disposition': 'inline' } : {}),
+      });
+    };
+    this.route('POST', '/api/public/disk/:code/unlock', pubDisk((c) => {
+      const b = parseBody(c, UnlockDiskLinkRequestSchema);
+      const v = d().unlockLink(p0(c), b.password);
+      if (v) c.res.setHeader('Set-Cookie', `calab_dl=${v}; Path=/api/public/disk/${p0(c)}; HttpOnly; SameSite=Lax; Max-Age=43200`);
+      noContent(c.res);
+    }, false));
+    this.route('GET', '/api/public/disk/:code', pubDisk((c) => {
+      if (!d().linkUnlocked(p0(c), cookies(c.req)['calab_dl'])) {
+        sendMsg(c.res, 200, PublicDiskFileSchema, { locked: true });
+        return;
+      }
+      const { link, item } = d().publicLink(p0(c));
+      const base = { name: item.name, id: item.id, kind: item.kind, viewOnly: link.viewOnly, ...(link.expiresAt ? { expiresAt: link.expiresAt } : {}) };
+      const f = pubFile(item);
+      sendMsg(c.res, 200, PublicDiskFileSchema, item.kind === DiskItemKind.FOLDER ? base : { ...base, size: f.size, mime: f.mime, width: f.width, height: f.height, hasThumbnail: f.hasThumbnail, office: f.office });
+    }, false));
+    this.route('GET', '/api/public/disk/:code/content', pubDisk((c) => pubBytes(c, d().publicFileItem(p0(c), ''), false)));
+    this.route('GET', '/api/public/disk/:code/thumbnail', pubDisk((c) => pubBytes(c, d().publicFileItem(p0(c), ''), true)));
+    this.route('GET', '/api/public/disk/:code/items', pubDisk((c) => {
+      const f = d().publicFolder(p0(c), q(c, 'parent'));
+      const { link } = d().publicLink(p0(c));
+      sendMsg(c.res, 200, PublicDiskFolderSchema, { id: f.id, name: f.name, path: f.path, items: f.items.map(pubFile), viewOnly: link.viewOnly, ...(link.expiresAt ? { expiresAt: link.expiresAt } : {}) });
+    }));
+    this.route('GET', '/api/public/disk/:code/items/:id/content', pubDisk((c) => pubBytes(c, d().publicFileItem(p0(c), c.params[1] ?? ''), false)));
+    this.route('GET', '/api/public/disk/:code/items/:id/thumbnail', pubDisk((c) => pubBytes(c, d().publicFileItem(p0(c), c.params[1] ?? ''), true)));
+    this.route('GET', '/api/public/disk/:code/archive', pubDisk((c) => {
+      d().publicFolder(p0(c), q(c, 'parent'));
+      if (d().publicLink(p0(c)).link.viewOnly) throw new HttpError(403, ErrorCode.FORBIDDEN, 'the link is view-only');
+      if (q(c, 'check') === '1') {
+        c.res.writeHead(204);
+        c.res.end();
+        return;
+      }
+      send(c.res, 200, Buffer.from('PK\x05\x06'.padEnd(22, '\0')), 'application/zip', { 'Content-Disposition': 'attachment; filename="archive.zip"' });
+    }));
+    this.route('GET', '/api/public/disk/:code/office', pubDisk((c) => {
+      officeOn();
+      const it = d().publicFileItem(p0(c), q(c, 'item'));
+      const format = officeOf(it.name);
+      if (!format) throw new HttpError(415, ErrorCode.VALIDATION, 'this file type does not open in the editor');
+      const key = `calab-mock-a-${it.file?.id ?? ''}`;
+      const config = {
+        type: q(c, 'phone') === '1' ? 'mobile' : 'desktop',
+        documentType: format.documentType,
+        document: { fileType: format.extension, key, title: it.name, url: `${origin(c)}/__office/file`, permissions: { edit: false } },
+        editorConfig: { mode: 'view', lang: q(c, 'lang') || 'ru', user: { id: 'anon', name: 'Гость' }, customization: { uiTheme: q(c, 'theme') === 'light' ? 'default-light' : 'default-dark', compactHeader: true }, calabStub: { fault: this.officeFault } },
+        token: 'mock',
+      };
+      sendMsg(c.res, 200, OfficeConfigResponseSchema, { docsUrl: origin(c), hostUrl: `${origin(c)}/web-apps/apps/calab/calab-editor.html`, configJson: JSON.stringify(config), mode: OfficeMode.VIEW, key, format, fileId: it.file?.id ?? '' });
+    }));
     // A copy of `meta` under a new name, stored and filed by `me` in folder `parentId` of `ws` (rights, quota, free name, journal).
     const fileCopy = (ws: string, me: string, parentId: string, meta: FileMeta, name: string, mime = meta.mime): DiskItem => {
       const bytes = this.state.files.get(meta.id)?.bytes ?? Buffer.from('PK mock office file');
@@ -9260,7 +9372,11 @@ class MockImpl {
     });
     this.diskRoute('POST', '/api/disk/items/:id/link', (c, me) => {
       const b = parseBody(c, CreateDiskLinkRequestSchema);
-      sendMsg(c.res, 200, DiskLinkResponseSchema, d().createLink(p0(c), me, b.expiresAt));
+      sendMsg(c.res, 200, DiskLinkResponseSchema, d().createLink(p0(c), me, b.expiresAt, { password: b.password, viewOnly: b.viewOnly }));
+    });
+    this.diskRoute('PATCH', '/api/disk/items/:id/link', (c, me) => {
+      const b = parseBody(c, UpdateDiskLinkRequestSchema);
+      sendMsg(c.res, 200, DiskLinkResponseSchema, d().updateLink(p0(c), me, { password: b.password, viewOnly: b.viewOnly }));
     });
     this.diskRoute('DELETE', '/api/disk/items/:id/link', (c, me) => {
       d().deleteLink(p0(c), me);

@@ -113,6 +113,132 @@ async function signedInRoom(page: Page, prefs: Record<string, unknown> = {}): Pr
 }
 
 /**
+ * The iOS shell with native room audio, mocked (ADR-0149 §2): `window.CalabHostActivity` as the
+ * shell injects it, with `roomAudioVersion: 1`, answering the handshake and every room audio
+ * operation with a connected state like CalabRoomAudio.swift. The page then joins a workspace voice
+ * room through it, with no LiveKit connection of its own. Installed on one page before it loads.
+ */
+async function nativeRoomHost(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const document = 'visual-native-room';
+    const emit = (name: string, detail: object): void => void window.dispatchEvent(new CustomEvent(name, { detail }));
+    let connectionId = '';
+    let muted = false;
+    const media = (): object => ({
+      connectionId, phase: 'connected', microphoneReady: true, muted, ...(muted ? { muteOrigin: 'web' } : {}),
+      canSpeak: true, speaking: false, speakers: [], route: 'speaker', phoneCall: false,
+    });
+    const host = {
+      version: 1, host: 0, document, roomAudioVersion: 1,
+      rotateDocument: () => undefined,
+      send: (raw: string): void => {
+        const m = JSON.parse(raw) as { type: string; operation?: string; request?: number; connectionId?: string; controls?: { muted: boolean } };
+        queueMicrotask(() => {
+          if (m.type === 'hello') {
+            emit('calab-host-activity-ready', { v: 1, host: 0, document, capability: 'sessionActivity' });
+            return;
+          }
+          if (m.type !== 'roomAudio' || m.request === undefined) return;
+          if (m.operation === 'connect') connectionId = m.connectionId ?? '';
+          if (m.controls) muted = m.controls.muted;
+          const state = m.operation === 'disconnect' || m.operation === 'cue' ? { supported: true } : { supported: true, media: media() };
+          emit('calab-host-room-audio', { v: 1, host: 0, document, request: m.request, state });
+        });
+      },
+    };
+    Object.assign(window, { CalabHostActivity: host });
+  });
+}
+
+/**
+ * The native room audio join on the phone host (ADR-0149 §3, R4 and R6): two states of the camera and
+ * screen video, then the strip, the camera with its reason, the soundboard with the workspace-clips
+ * note; then the same join at the 960 px layout of an iPad (the island: the camera tile, the musician item).
+ * No LiveKit on the machine (the dev server is not part of this suite): the page hands the room's audio
+ * to the mocked host, and the video-only companion connection (services/voiceCompanion.ts) asks the
+ * mock for its token, then reaches for an address that never answers. So «companion working» is the
+ * state while it connects and has no video yet (no banner, no tile); «companion gave up» is the mock
+ * refusing the token (403): the banner. Leaves with the call hung up and the mock reset, so the screen's
+ * own steps run on a clean state.
+ */
+async function nativeRoomAudioSteps(phone: Page): Promise<void> {
+  mock.addSound(IDS.workspaces.main, 'Фанфары', '🎺');
+  // Native room audio takes wss:// only (hostRoomAudio.ts ROOM_URL); the mock's dev LiveKit is ws://.
+  mock.setLivekitUrl('wss://rtc.example.test:7880');
+  try {
+    await nativeRoomHost(phone);
+    await signedIn(phone);
+    await openRoom(phone, /^Созвон/);
+    const strip = phone.getByTestId('mobile-voice-strip');
+    const banner = phone.getByTestId('video-audio-only');
+    const join = async (): Promise<void> => {
+      // With someone already in the voice the header's icon gives way to the banner's «Присоединиться».
+      await phone.getByTestId('room-header-join').or(phone.getByTestId('room-voice-join')).tap();
+      await expect(strip.getByTestId('mobile-voice-status')).toHaveText('Голос подключён');
+    };
+    // Вера has a picture, not an initial: the header's people stack (aria-label «В голосе: …») has no
+    // visible text for axe's label-content-name rule to compare, which two initials would trip.
+    const vera = (): void =>
+      mock.setVoiceState({ userId: IDS.users.vera, roomId: IDS.rooms.call, muted: true, camera: true, streaming: true, joinedAtMs: NOW.getTime() - 25 * 60_000 });
+    // R6, the companion working: with a camera and a screen on in the room it asks for its token and
+    // connects. Nothing to show yet (no LiveKit here), and no banner: the page does not say «can't».
+    await join();
+    const asked = phone.waitForResponse((r) => r.url().includes('/voice/companion'));
+    vera();
+    expect((await asked).status()).toBe(200);
+    await expect(banner).toHaveCount(0);
+    await checkpoint(phone, 'm-voice-native-companion', { main: true });
+    await strip.getByRole('button', { name: 'Отключиться' }).tap();
+    await expect(strip).toHaveCount(0);
+    // R6, the companion gave up: the server refuses its token (403, no retry), the banner says why.
+    mock.setCompanion('refused');
+    await join();
+    vera();
+    await expect(banner).toHaveText('Камеры и экраны сейчас не удаётся показать');
+    await checkpoint(phone, 'm-voice-native', { main: true });
+    // The strip keeps the camera, disabled, with the reason as its label.
+    await expect(strip.getByRole('button', { name: 'На iPhone камера пока недоступна' })).toBeDisabled();
+    // Sounds: the built-in clips only; the workspace's own are named as not playing yet.
+    await strip.getByTestId('mobile-voice-more').tap();
+    await phone.getByTestId('mobile-voice-sounds').tap();
+    const board = phone.getByTestId('soundboard');
+    await expect(board.getByRole('region', { name: 'Стандартные' }).getByTestId('sound-tile')).toHaveCount(6);
+    await expect(board.getByRole('region', { name: 'Звуки пространства' })).toHaveCount(0);
+    await expect(board.getByTestId('soundboard-audio-only')).toHaveText('Звуки пространства на iPhone пока не играют');
+    await checkpoint(phone, 'm-voice-native-soundboard');
+    await phone.keyboard.press('Escape');
+    await expect(board).toHaveCount(0);
+    // The same join at 960 px (an iPad, the desktop layout): the island's «Ещё» keeps «Режим музыканта», a tap says why.
+    const size = phone.viewportSize();
+    await phone.setViewportSize({ width: 960, height: 600 });
+    await phone.getByRole('button', { name: 'Ещё' }).click();
+    await expect(phone.getByTestId('musician-audio-only')).toHaveAttribute('title', 'На iPhone режим музыканта пока недоступен');
+    await expect(phone.getByRole('button', { name: 'На iPhone камера пока недоступна' })).toBeDisabled();
+    await settle(phone);
+    await expect.soft(phone, 'screenshot: m-voice-native-island').toHaveScreenshot('m-voice-native-island.png');
+    expect.soft((await layoutProblems(phone)).map((p) => `${p.kind}: ${p.detail}`), 'layout: m-voice-native-island').toEqual([]);
+    // No axe here: the desktop layout's workspace title, «Упоминания» and the history's inline link trip rules
+    // outside this change (the island and the banner are covered by the phone steps above).
+    // A tap says why, as a toast.
+    await phone.getByTestId('musician-audio-only').click();
+    const toast = phone.getByText('На iPhone режим музыканта пока недоступен', { exact: true });
+    await expect(toast).toBeVisible();
+    await phone.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await phone.mouse.move(0, 0);
+    await settle(phone);
+    await expect.soft(phone, 'screenshot: m-voice-native-island-toast').toHaveScreenshot('m-voice-native-island-toast.png');
+    expect.soft((await layoutProblems(phone)).map((p) => `${p.kind}: ${p.detail}`), 'layout: m-voice-native-island-toast').toEqual([]);
+    if (size) await phone.setViewportSize(size);
+    await strip.getByRole('button', { name: 'Отключиться' }).tap();
+    await expect(strip).toHaveCount(0);
+  } finally {
+    mock.setLivekitUrl('ws://127.0.0.1:7880');
+    mock.reset('data');
+    await phone.context().clearCookies();
+  }
+}
+
+/**
  * Pins the feed to its bottom (the room can open at the first unread — docs/09 #39 — and a single
  * scrollTo can be overridden by Virtuoso settling right after; matches `feedAtBottom` in
  * screens.spec.ts).
@@ -828,6 +954,13 @@ test('m-home', async ({ page }) => {
   await expect(strip.getByTestId('mobile-voice-status')).toHaveText('Вас не слышно');
   await expect(page.getByTestId('toast')).toHaveCount(1); // no mic toast
   await checkpoint(page, 'm-voice-recovery-unheard');
+  // A database stall (ADR-0166): back into the room on its own, the quiet server banner on top.
+  await seat('reconnecting');
+  await page.evaluate(() => (window as unknown as { __calabaServerDegraded?: (on: boolean) => void }).__calabaServerDegraded?.(true));
+  await expect(page.getByTestId('reconnect-banner')).toHaveText('Нет связи с сервером — восстанавливаем…');
+  await expect(strip).toContainText('Переподключение…');
+  await checkpoint(page, 'm-voice-server-stall');
+  await page.evaluate(() => (window as unknown as { __calabaServerDegraded?: (on: boolean) => void }).__calabaServerDegraded?.(false));
 });
 
 // Bug #146: a room with an unread @mention carries the count badge, a plainly unread one only the bold name.
@@ -1746,6 +1879,13 @@ test('m-voice', async ({ page }) => {
 // Soundboard (ADR-0036): the strip's «Звуки» opens the island's panel as a centred card (voice
 // activation mode; in push-to-talk mode it is «Ещё → Звуки»).
 test('m-voice-soundboard', async ({ page }) => {
+  // The same join through the iOS shell's native room audio (ADR-0149), on its own page and a reset mock.
+  const native = await page.context().newPage();
+  try {
+    await nativeRoomAudioSteps(native);
+  } finally {
+    await native.close();
+  }
   mock.addSound(IDS.workspaces.main, 'Фанфары', '🎺');
   await signedIn(page);
   await openRoom(page, /^Созвон/);
@@ -3122,6 +3262,33 @@ test('m-wiki-public', async ({ page }) => {
   await checkpoint(page, 'm-wiki-public-toc', { snapshot: false });
   await toc.getByTestId('wiki-public-outline-row').filter({ hasText: 'Процессы' }).tap();
   await expect(page.getByTestId('wiki-public-title')).toHaveText('Процессы');
+});
+
+// /d/{code} at 390 px (ADR-0165): a folder link — rows with size · date under the name, «Скачать всё» under the title.
+test('m-disk-public', async ({ page }) => {
+  const it = [...mock.disk.items.values()].find((x) => x.name === 'Проекты' && !x.parentId);
+  const code = mock.disk.createLink(it?.id ?? '', IDS.users.anna).link.code;
+  await open(page, `/d/${code}`);
+  await expect(page.getByTestId('disk-public-name')).toHaveText('Проекты');
+  await page.getByTestId('disk-public-row-open').filter({ hasText: 'Q4' }).tap();
+  await expect(page.getByTestId('disk-public-row')).toHaveCount(4);
+  await expect(page.getByTestId('disk-public-download-all')).toBeVisible();
+  await checkpoint(page, 'm-disk-public');
+  // CBF-168 (ADR-0167): with a password and «Без скачивания» — the gate, then the folder view-only.
+  mock.disk.updateLink(it?.id ?? '', IDS.users.anna, { password: 'сезам-2026', viewOnly: true });
+  try {
+    await open(page, `/d/${code}`);
+    await expect(page.getByTestId('disk-public-locked')).toBeVisible();
+    await checkpoint(page, 'm-disk-public-locked');
+    await page.getByTestId('disk-public-password').fill('сезам-2026');
+    await page.getByTestId('disk-public-unlock').tap();
+    await page.getByTestId('disk-public-row-open').filter({ hasText: 'Q4' }).tap();
+    await expect(page.getByTestId('disk-public-row')).toHaveCount(4);
+    await expect(page.getByTestId('disk-public-download-all')).toHaveCount(0);
+    await checkpoint(page, 'm-disk-public-view-only');
+  } finally {
+    mock.disk.updateLink(it?.id ?? '', IDS.users.anna, { password: '', viewOnly: false });
+  }
 });
 
 // Toasts on the phone stay under the top bar (safe area), over the feed, never over the tab bar (owner, 29.10).

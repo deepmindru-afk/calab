@@ -173,7 +173,7 @@ export const zhCN: Dict = {
 
   // gateway
   'gateway.connecting': '连接中…',
-  'gateway.reconnecting': '与服务器的连接已断开——正在重新连接…',
+  'gateway.reconnecting': '无法连接服务器——正在恢复…',
 
   // shell
   'shell.pickRoom': '请在左侧选择一个房间',
@@ -587,6 +587,8 @@ export const zhCN: Dict = {
   'app.onCloseHint': '最小化后 Calab 仍保持语音连接并响应按键通话',
   'app.onCloseTray': '最小化到托盘',
   'app.onCloseQuit': '退出',
+  'app.monoTray': '托盘单色图标',
+  'app.monoTrayHint': '随 Windows 任务栏主题显示白色或黑色',
   'app.devStats': '音视频统计',
   'app.devStatsHint': '码率、编解码器与负载——见语音面板',
 
