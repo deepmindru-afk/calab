@@ -34,6 +34,8 @@ import { rolesOf, useMemberRoles, useWorkspaces } from '../../stores/workspaces'
 import { CommitInput } from '../settings/CommitInput';
 import { MAX_USES } from '../people/RoomLinkTab';
 import { ROLE_LABEL } from '../shell/MembersPanel';
+import { matchMember } from '../people/memberPickItems';
+import { parseQuery } from '../../lib/memberSearch';
 import { canEditMemberBirthday, canRemoveMember, canRenameMember } from '../people/members';
 import { MemberBirthdayDialog } from '../people/MemberBirthdayDialog';
 import { MemberBirthdaysTable } from './MemberBirthdaysTable';
@@ -47,7 +49,7 @@ import { joinLeaveSoundMax } from '../../lib/media/joinLeaveSound';
 import { reportPlanError, workspacePlan } from '../../services/plan';
 import { fromTimeFormatPref, toTimeFormatPref } from '../../services/timeFormat';
 import { RoomGuestInviteCard } from '../people/RoomGuestInviteCard';
-import { EmailInviteCard, EmailInvitesList } from './EmailInvite';
+import { EmailInviteCard, EmailInvitesList, InviteRoles, useInviteRoleChoices, useInviteRoleNames } from './EmailInvite';
 import { BansTab } from './BansTab';
 import { ReportsTab } from './ReportsTab';
 import { FormerTab } from './FormerTab';
@@ -435,10 +437,11 @@ function MembersTab({ workspaceId }: { workspaceId: string }): ReactNode {
   if (view === 'birthdays' && manageBirthdays) return <MemberBirthdaysTable workspaceId={workspaceId} onBack={() => setView('list')} />;
   const owner = entry.role === WorkspaceRole.OWNER;
   const nameOf = (m: (typeof entry.members)[string]): string => m.nickname || m.user?.displayName || '';
-  const needle = q.trim().toLowerCase();
+  // The one people matcher (CBF-175): names, username, email, phone, extension; «ё» = «е», many words.
+  const query = parseQuery(q);
   const members = Object.values(entry.members)
     .filter((m) => filter === 'all' || m.role === FILTER_ROLE[filter])
-    .filter((m) => !needle || nameOf(m).toLowerCase().includes(needle) || (m.user?.displayName ?? '').toLowerCase().includes(needle))
+    .filter((m) => !query.words.length || matchMember(m, query) !== null)
     .sort((a, b) => a.role - b.role || nameOf(a).localeCompare(nameOf(b), getLocale()));
 
   const setRole = async (userId: string, role: WorkspaceRole): Promise<void> => {
@@ -491,6 +494,8 @@ function MembersTab({ workspaceId }: { workspaceId: string }): ReactNode {
             const u = m.user;
             if (!u) return null;
             const name = nameOf(m);
+            // Found by email / phone / extension: that contact replaces the «в команде с» line (CBF-175).
+            const found = query.words.length ? (matchMember(m, query)?.hint ?? '') : '';
             // Only the owner grants/revokes ADMIN; OWNER is never granted here.
             // MANAGE_WORKSPACE, not the owner, admins only by the owner, below my top role (the server's outranks).
             const editable = canRemoveMember(myRoles, rolesOf(entry, u.id), m, u.id === me);
@@ -501,7 +506,7 @@ function MembersTab({ workspaceId }: { workspaceId: string }): ReactNode {
                 <Avatar userId={u.id} name={name} fileId={u.avatarFileId || undefined} size={32} presence />
                 <div className="min-w-0 flex-1">
                   <NickInline workspaceId={workspaceId} member={m} canEdit={canNick} />
-                  <div className="truncate text-caption text-faint">{t('ws.joinedSince', { date: m.joinedAt ? fmt.shortDate(timestampDate(m.joinedAt)) : '—' })}</div>
+                  <div className="truncate text-caption text-faint">{found || t('ws.joinedSince', { date: m.joinedAt ? fmt.shortDate(timestampDate(m.joinedAt)) : '—' })}</div>
                 </div>
                 {canBirthday ? (
                   <IconButton label={t('birthday.editFor', { name })} className="text-muted hover:text-fg" onClick={() => setBirthdayOf(u.id)}>
@@ -554,10 +559,12 @@ function InvitesTab({ workspaceId, roomId }: { workspaceId: string; roomId: stri
   const q = useQuery({ queryKey: ['invites', workspaceId], queryFn: () => api.workspaces.invites(workspaceId) });
   const [maxUses, setMaxUses] = useState(0);
   const [expires, setExpires] = useState(7 * 86400);
+  const [roleIds, setRoleIds] = useState<string[]>([]);
+  const roleChoices = useInviteRoleChoices(workspaceId);
   // The plan's members limit (owner 28.09: free = 50): no new links or invitations at the cap.
   const cap = useMembersCap(workspaceId);
   const create = useMutation({
-    mutationFn: () => api.workspaces.createInvite(workspaceId, { maxUses, expiresInSeconds: expires }),
+    mutationFn: () => api.workspaces.createInvite(workspaceId, { maxUses, expiresInSeconds: expires, roleIds }),
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ['invites', workspaceId] });
       if (r.invite) void navigator.clipboard.writeText(inviteLink(r.invite)).then(() => toast.success(t('invite.copied')));
@@ -604,6 +611,12 @@ function InvitesTab({ workspaceId, roomId }: { workspaceId: string; roomId: stri
             ))}
           </Select>
         </Row>
+        {/* CBF-174: custom roles given on joining by the link — only those I may give. */}
+        {roleChoices.length > 0 ? (
+          <Row label={t('invite.roles')} hint={t('invite.rolesHint')}>
+            <InviteRoles choices={roleChoices} value={roleIds} onChange={setRoleIds} className="max-w-72 justify-end" />
+          </Row>
+        ) : null}
       </Card>
       <div className="-mt-3 flex justify-end">
         <Button busy={create.isPending} disabled={cap.full} onClick={() => create.mutate()}>
@@ -619,9 +632,7 @@ function InvitesTab({ workspaceId, roomId }: { workspaceId: string; roomId: stri
               <code className="selectable min-w-0 flex-1 truncate font-mono text-caption" title={inviteLink(i)}>
                 {inviteLink(i)}
               </code>
-              <span className="shrink-0 text-caption text-faint">
-                {i.uses}/{i.maxUses || '∞'} · {i.expiresAt ? fmt.stamp(timestampDate(i.expiresAt)) : t('invite.never')}
-              </span>
+              <InviteLinkMeta workspaceId={workspaceId} invite={i} />
               <IconButton label={t('invite.copy')} onClick={() => void navigator.clipboard.writeText(inviteLink(i)).then(() => toast.success(t('invite.copied')))}>
                 <Copy className="size-4" />
               </IconButton>
@@ -633,6 +644,17 @@ function InvitesTab({ workspaceId, roomId }: { workspaceId: string; roomId: stri
         </Card>
       ) : null}
     </>
+  );
+}
+
+/** «uses/max · Роли: … · expiry» of an active link. */
+function InviteLinkMeta({ workspaceId, invite: i }: { workspaceId: string; invite: Invite }): ReactNode {
+  const roles = useInviteRoleNames(workspaceId, i.roleIds);
+  const text = [`${i.uses}/${i.maxUses || '∞'}`, roles, i.expiresAt ? fmt.stamp(timestampDate(i.expiresAt)) : t('invite.never')].filter(Boolean).join(' · ');
+  return (
+    <span className="min-w-0 max-w-[50%] shrink truncate text-caption text-faint" title={text}>
+      {text}
+    </span>
   );
 }
 

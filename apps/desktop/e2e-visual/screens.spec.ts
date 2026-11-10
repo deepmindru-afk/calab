@@ -41,6 +41,7 @@ const KEY = new Set([
   'auth-forgot',
   'verify-banner',
   'invite-email',
+  'invite-email-roles',
   'room-invite',
   'room-invite-voice',
   'onboarding-mic',
@@ -518,6 +519,18 @@ test('invite-email', async ({ open, win, mock, shot }) => {
   await expect(win.getByTestId('invite-email-found')).toContainText('Егор Лебедев');
   await expect(win.getByRole('button', { name: 'Добавить', exact: true })).toBeVisible();
   await checkpoint(shot, 'invite-email');
+
+  // CBF-174: custom roles in the invitation — the email card and the new link, one chip each.
+  const roles = win.getByTestId('invite-email-roles');
+  await roles.getByRole('button', { name: 'Добавить роль' }).click();
+  await win.getByTestId('invite-role-picker').getByRole('option', { name: /Дизайн/ }).click();
+  await expect(roles.getByTestId('role-chip')).toHaveText('Дизайн');
+  const linkRoles = win.getByRole('dialog').locator('div[data-settings-row]').filter({ hasText: 'Выдаются при входе' });
+  await linkRoles.getByRole('button', { name: 'Добавить роль' }).click();
+  await win.getByTestId('invite-role-picker').getByRole('option', { name: /Модератор/ }).click();
+  await expect(linkRoles.getByTestId('role-chip')).toHaveText('Модератор');
+  await linkRoles.scrollIntoViewIfNeeded();
+  await checkpoint(shot, 'invite-email-roles');
 });
 
 /** «Пригласить» from a room (docs/09 #55): the room's guest link first, the workspace invites below. */
@@ -2038,6 +2051,16 @@ test('settings-role-edit', async ({ open, win, mock, shot }) => {
   await expect(dialog.getByTestId('role-perm-MANAGE_ROLES')).not.toBeChecked();
   await expect(dialog.getByTestId('role-member')).toHaveCount(2);
   await checkpoint(shot, 'settings-role-edit');
+  // CBF-175: the member picker finds people by phone / email, the matched contact is the row's secondary line.
+  await dialog.getByTestId('role-add-member').click();
+  const picker = win.getByTestId('role-member-picker');
+  await picker.getByRole('combobox').fill('+7 912 555');
+  await expect(picker.getByRole('option').filter({ hasText: 'Борис' })).toContainText('+7 912 555-02-02');
+  await checkpoint(shot, 'settings-role-edit-search-phone');
+  await picker.getByRole('combobox').fill('борис calaba');
+  await expect(picker.getByRole('option').filter({ hasText: 'Борис' })).toContainText('boris@calaba.test');
+  await checkpoint(shot, 'settings-role-edit-search-email');
+  await win.keyboard.press('Escape');
   // ADR-0087: the «Биллинг» group closes the matrix — the owner's toggles with «что даёт».
   const billing = dialog.getByTestId('role-billing-group');
   await billing.evaluate((el) => el.scrollIntoView({ block: 'center' }));

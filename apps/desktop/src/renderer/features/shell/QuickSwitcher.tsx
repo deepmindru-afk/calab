@@ -9,6 +9,8 @@ import { getLocale, t } from '../../i18n';
 import { api } from '../../lib/api/endpoints';
 import { fmt, toDate } from '../../lib/format';
 import { translitIncludes } from '../../lib/mentions';
+import { parseQuery } from '../../lib/memberSearch';
+import { matchMember } from '../people/memberPickItems';
 import { voice } from '../../services/voice';
 import { can, isOwnerRoles, roomPerms } from '../../lib/permissions';
 import { joinOutcome } from '../../lib/voiceEntry';
@@ -164,10 +166,19 @@ export function QuickSwitcher({ onClose, initialQuery = '' }: { onClose: () => v
   const memberItems = useMemo(() => {
     if (!needle || author || !activeWs) return [];
     const ms = Object.values(workspaces[activeWs]?.members ?? {});
-    return ms
-      .filter((m) => [m.nickname, m.user?.displayName ?? ''].some((n) => foldSearch(n).includes(needle)) || translitIncludes([m.nickname, m.user?.displayName ?? ''], needle))
-      .slice(0, MAX_MEMBERS);
-  }, [needle, author, activeWs, workspaces]);
+    const pq = parseQuery(text);
+    // The shared people matcher (names, username, email, phone, extension; CBF-175) + transliteration.
+    // Best rank first before the cut: a contact hit («calab» in every email) must not push out a name hit.
+    const ranked: Array<{ m: (typeof ms)[number]; rank: number; i: number }> = [];
+    ms.forEach((m, i) => {
+      const rank = matchMember(m, pq)?.rank ?? (translitIncludes([m.nickname, m.user?.displayName ?? ''], needle) ? 5 : -1);
+      if (rank >= 0) ranked.push({ m, rank, i });
+    });
+    return ranked
+      .sort((a, b) => a.rank - b.rank || a.i - b.i)
+      .slice(0, MAX_MEMBERS)
+      .map((r) => r.m);
+  }, [needle, text, author, activeWs, workspaces]);
 
   // Unified search (ADR-0062): one debounced request, the previous one aborted, answers cached.
   const summary = useSearchSummary(text, scope, !author && !tasksMode);
@@ -757,7 +768,7 @@ function RowBody({ it, q, workspaceName, activeWs, rooms }: { it: Item; q: strin
           </span>
           <RoleMark role={it.member.role} custom={look} tone="role" />
         </span>
-        <span className={sub}>{t('search.memberHint')}</span>
+        <span className={sub}>{matchMember(it.member, parseQuery(q))?.hint || t('search.memberHint')}</span>
       </>
     );
   }
