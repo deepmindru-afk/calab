@@ -6,7 +6,7 @@ import { create } from '@bufbuild/protobuf';
 import { AiState, FileMetaSchema, FormerMemberReason, Plan, RecordingStatus, SipCallStatus, WorkspaceRole, ReportReason } from '@calaba/protocol';
 import { ts } from '../e2e-support/fixtures';
 import { CANVAS_PUBLIC_CODE, CODE_FIXTURE, IDS, MOCK_GPTUNNEL_WEB, WIKI_PUBLIC_CODE, startMockServer, type MockServer } from '../e2e-support/mock-server';
-import { expectAccessible, expectAssigneeStacks, layoutProblems, NOW, PASSWORD, seedAssigneeCounts, seedBotAuthoredTask, seedDays, seedLabelOverflow, seedReleases, seedRichComments, seedViaMcp, settle } from './harness';
+import { expectAccessible, expectAssigneeStacks, layoutProblems, NOW, PASSWORD, seedAssigneeCounts, seedBotAuthoredTask, seedDays, seedLabelOverflow, seedRecentNotices, seedReleases, seedRichComments, seedViaMcp, settle } from './harness';
 import { seedDay } from './calendarWeb';
 
 /**
@@ -1077,6 +1077,13 @@ test('m-settings-profile', async ({ page }) => {
   await entry.tap();
   await expect(page.getByRole('dialog', { name: 'Удалить аккаунт?' }).getByTestId('delete-account-blocked')).toBeVisible();
   await checkpoint(page, 'm-settings-delete', { snapshot: false });
+  // CBF-183: «MCP» — the server address and per-client commands (copy fields fit 390 px).
+  await page.goto(`${mock.url}/settings/mcp?visual-test`); // the address the server sends a browser opening /mcp to
+  await insets(page);
+  await expect(page.getByTestId('mcp-url')).toHaveValue(/\/mcp$/);
+  await checkpoint(page, 'm-settings-mcp', { snapshot: false });
+  await page.getByTestId('mcp-cursor').scrollIntoViewIfNeeded();
+  await checkpoint(page, 'm-settings-mcp-clients', { snapshot: false });
 });
 
 // ADR-0073 §1: «Профиль» (owner 06.10: the former «Я» tab, now the fifth tab «Профиль» with my avatar, owner 07.10) — the
@@ -1306,6 +1313,7 @@ test('m-calendar-public', async ({ page }) => {
 // a centred option card, not scrolling segments.
 test('m-my-tasks', async ({ page }) => {
   mock.setClock(NOW.getTime());
+  seedRecentNotices(mock);
   await signedIn(page);
   await tab(page, 'boards');
   await page.getByTestId('my-tasks').tap();
@@ -1315,8 +1323,13 @@ test('m-my-tasks', async ({ page }) => {
   await expect(bar.getByRole('radio')).toHaveCount(0);
   await checkpoint(page, 'm-my-tasks');
   await bar.getByTestId('my-tasks-scope').tap();
-  await expect(page.getByRole('menuitemradio')).toHaveCount(6);
+  await expect(page.getByRole('menuitemradio')).toHaveCount(7);
   await checkpoint(page, 'm-my-tasks-picker');
+  // CBF-179: «Недавние» — the unread CAL-3 with its dot, the read CAL-4 and MKT-2 without.
+  await page.getByRole('menuitemradio', { name: 'Недавние' }).tap();
+  await expect(page.getByTestId('recent-view').getByTestId('unread-row')).toHaveCount(3);
+  await checkpoint(page, 'm-my-recent');
+  await bar.getByTestId('my-tasks-scope').tap();
   await page.getByTestId('my-tasks-scope-assigned').tap();
   await expect(page.getByRole('menuitemradio')).toHaveCount(0);
   await expect(bar.getByTestId('my-tasks-scope')).toContainText('Назначены');

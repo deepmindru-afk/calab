@@ -288,6 +288,7 @@ var identityRoutes = map[string]identityScope{
 	"GET /api/workspaces/{id}/sounds":                                     scopeWorkspace,
 	"GET /api/workspaces/{id}/sticker-packs":                              scopeWorkspace,
 	"GET /api/workspaces/{id}/tasks/search":                               scopeWorkspace,
+	"GET /api/workspaces/{id}/recent-tasks":                               scopeWorkspace,
 	"GET /gateway":                                                        scopePublic,
 	"GET /healthz":                                                        scopePublic,
 	"GET /metrics":                                                        scopePublic,
@@ -309,6 +310,7 @@ var identityRoutes = map[string]identityScope{
 	"PATCH /api/me/password":                                              scopeGlobal,
 	"POST /api/me/delete":                                                 scopeGlobal, // ADR-0153: local-account session, password in the body
 	"PATCH /api/me/status":                                                scopeGlobal,
+	"PUT /api/me/voice-mute":                                              scopeGlobal, // ADR-0168
 	"PATCH /api/messages/{id}":                                            scopeMessage,
 	"PATCH /api/notes/{id}":                                               scopeGlobal,
 	"PATCH /api/rooms/{id}":                                               scopeRoom,
@@ -705,11 +707,14 @@ var identityRoutes = map[string]identityScope{
 	// MCP for bots (CBF-48): the endpoint itself reads and writes nothing; every tool's REST
 	// call goes through this gate again with its own route and scope.
 	"/api/mcp": scopePublic,
+	"/mcp":     scopePublic, // the same endpoint at the short address (CBF-183)
 	// MCP without a bot (ADR-0158): the OAuth server of the endpoint. Metadata, registration and
 	// token are public (no ambient credential); the consent routes authenticate the person's app
 	// session themselves (local authority, the browser that started the request).
 	"GET /.well-known/oauth-protected-resource":             scopePublic,
 	"GET /.well-known/oauth-protected-resource/api/mcp":     scopePublic,
+	"GET /.well-known/oauth-protected-resource/mcp":         scopePublic,
+	"OPTIONS /.well-known/oauth-protected-resource/mcp":     scopePublic,
 	"GET /.well-known/oauth-authorization-server":           scopePublic,
 	"OPTIONS /.well-known/oauth-protected-resource":         scopePublic,
 	"OPTIONS /.well-known/oauth-protected-resource/api/mcp": scopePublic,

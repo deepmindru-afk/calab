@@ -288,7 +288,7 @@ func New(d Deps) *App {
 	// Voice: the rtc service reacts to permission/membership/session events it publishes
 	// through SyncPublisher; everything else publishes through the same decorated publisher.
 	var rtcSvc *rtc.Service
-	pushSvc := push.New(d.DB, d.Push)
+	pushSvc := push.New(d.DB, d.Redis, d.Push)
 	pushSvc.Avatars = push.NewAvatars(d.Blob)
 	base = push.Publisher{Publisher: base, S: pushSvc}
 	pub := base
@@ -708,6 +708,8 @@ func New(d Deps) *App {
 	authSvc.MCPInnerRoutes = mcp.InnerRoutes()
 	mcpOAuth.Routes(mux)
 	mux.Handle(mcp.Path, mcpOAuth.Challenge(private(mcpHandler)))
+	// CBF-183: the short address https://<app>/mcp — the same endpoint, its own OAuth resource.
+	mux.Handle(mcp.ShortPath, mcp.Browsers(mcpOAuth.Challenge(private(mcpHandler))))
 	mux.Handle("/api/", httpx.HandlerFunc(func(http.ResponseWriter, *http.Request) error {
 		return httpx.NotFound("route")
 	}))
