@@ -23,47 +23,46 @@ x-logging: &logging
 # Explicit project name: volumes/containers are calaba_*, and --remove-orphans never touches other compose projects on a shared host.
 name: calaba
 
-'''
-services:
-  caddy:
-    #build: ./caddy
-    build: 
-      context: ./caddy
-      dockerfile: Caddyfile.behind-proxy
-    #network_mode: host
-    expose:
-      - 80
-    restart: unless-stopped
-    #<<: *hardening
-    #cap_add: [NET_BIND_SERVICE]    # 80/443 as root without other capabilities
-    tmpfs: [/tmp]
-    #deploy:
-    #  resources:
-    #    limits: { memory: 512m }
-    command: caddy run --config /etc/caddy/Caddyfile
-    env_file:
-      .env
-    environment:
-      # docs/10-branding.md: rtc./turn.<DOMAIN>; the app on APP_HOST (default DOMAIN); optional landing
-      - DOMAIN=${DOMAIN}
-      - APP_HOST=${APP_HOST:-}
-      - LANDING_HOST=${LANDING_HOST:-}
-      - DOMAIN_ALT=${DOMAIN_ALT:-}          # extra app host (alias), optional
-      - DOMAIN_LEGACY=${DOMAIN_LEGACY:-}    # extra app host (transitional), optional
-      - DOMAIN_ALIASES=${DOMAIN_ALIASES:-}  # extra zones: rtc./turn.<zone> served too (docs/06 «Домены»)
-      - LANDING_HOST_ALIASES=${LANDING_HOST_ALIASES:-}    # 301 → LANDING_HOST
-      - RELEASES_HOST_ALIASES=${RELEASES_HOST_ALIASES:-}  # the same feed (old builds have it baked in)
-      # desktop release feed: unset → releases.<DOMAIN>; set to empty → none (/download/ served locally)
-      - RELEASES_HOST=${RELEASES_HOST-releases.${DOMAIN}}
-      - S3_PUBLIC_URL=${S3_PUBLIC_URL:-}   # public base URL of the release bucket; empty → /srv/releases
-    volumes:
-      - caddy_data:/data
-      - caddy_config:/config
-      - ../../web:/srv/web:ro              # <repo root on host>/web = web client static (sync.sh: apps/desktop/dist-web or placeholder)
-      - ../../releases:/srv/releases:ro    # <repo root on host>/releases = /download/* (sync.sh: apps/desktop/dist-release)
-      - ../../landing:/srv/landing:ro      # <repo root on host>/landing = LANDING_HOST static (sync.sh: apps/landing/out)
-    #logging: *logging
-'''
+#services:
+  #caddy:
+  #  #build: ./caddy
+  # build: 
+  #   context: ./caddy
+  #    dockerfile: Caddyfile.behind-proxy
+  #  #network_mode: host
+  #  expose:
+  #    - 80
+  #  restart: unless-stopped
+  #  #<<: *hardening
+  #  #cap_add: [NET_BIND_SERVICE]    # 80/443 as root without other capabilities
+  #  tmpfs: [/tmp]
+  #  #deploy:
+  #  #  resources:
+  #  #    limits: { memory: 512m }
+  #  command: caddy run --config /etc/caddy/Caddyfile
+  #  env_file:
+  #    .env
+  #  environment:
+  #    # docs/10-branding.md: rtc./turn.<DOMAIN>; the app on APP_HOST (default DOMAIN); optional landing
+  #    - DOMAIN=${DOMAIN}
+  #    - APP_HOST=${APP_HOST:-}
+  #    - LANDING_HOST=${LANDING_HOST:-}
+  #    - DOMAIN_ALT=${DOMAIN_ALT:-}          # extra app host (alias), optional
+  #    - DOMAIN_LEGACY=${DOMAIN_LEGACY:-}    # extra app host (transitional), optional
+  #    - DOMAIN_ALIASES=${DOMAIN_ALIASES:-}  # extra zones: rtc./turn.<zone> served too (docs/06 «Домены»)
+  #    - LANDING_HOST_ALIASES=${LANDING_HOST_ALIASES:-}    # 301 → LANDING_HOST
+  #    - RELEASES_HOST_ALIASES=${RELEASES_HOST_ALIASES:-}  # the same feed (old builds have it baked in)
+  #    # desktop release feed: unset → releases.<DOMAIN>; set to empty → none (/download/ served locally)
+  #    - RELEASES_HOST=${RELEASES_HOST-releases.${DOMAIN}}
+  #    - S3_PUBLIC_URL=${S3_PUBLIC_URL:-}   # public base URL of the release bucket; empty → /srv/releases
+  #  volumes:
+  #    - caddy_data:/data
+  #    - caddy_config:/config
+  #    - ../../web:/srv/web:ro              # <repo root on host>/web = web client static (sync.sh: apps/desktop/dist-web or placeholder)
+  #    - ../../releases:/srv/releases:ro    # <repo root on host>/releases = /download/* (sync.sh: apps/desktop/dist-release)
+  #    - ../../landing:/srv/landing:ro      # <repo root on host>/landing = LANDING_HOST static (sync.sh: apps/landing/out)
+  #  #logging: *logging
+
   #livekit:
   #  image: livekit/livekit-server:v1.13@sha256:6fd3b7088874c4d119160dd688798dfec852bc014786d392caad15f6f63912a3
   #  network_mode: host
@@ -397,8 +396,8 @@ services:
     #logging: *logging
 
 volumes:
-  caddy_data:
-  caddy_config:
+  #caddy_data:
+  #caddy_config:
   pg_data:
   valkey_data:
   files_data:   # uploaded files (API fs driver); back up offsite, see docs/06
