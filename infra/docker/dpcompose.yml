@@ -26,8 +26,8 @@ name: calaba
 services:
   caddy:
     build: ./caddy
+      context: ./caddy
       dockerfile: Caddyfile.behind-proxy
-    #  context: ./caddy
     #network_mode: host
     expose:
       - 80
