@@ -23,7 +23,7 @@ x-logging: &logging
 # Explicit project name: volumes/containers are calaba_*, and --remove-orphans never touches other compose projects on a shared host.
 #name: calaba
 
-#services:
+services:
   #caddy:
   #  #build: ./caddy
   # build: 
