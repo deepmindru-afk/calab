@@ -89,7 +89,7 @@ import {
   type Task,
   type TaskActivity,
   type TaskFilter,
-  type TaskRelationKind,
+  TaskRelationKind,
 } from '@calaba/protocol';
 import { BoardError, BoardsMock, CREATE_TASKS as CREATE_TASKS_BIT, MANAGE_BOARD } from './mock-boards';
 import { DiskError, DiskMock } from './mock-disk';
@@ -622,6 +622,7 @@ import {
 } from './mock-pbx';
 import { advanceCall, listJournal, mayReadCall, missedCount, seedJournal, type JournalRow } from './mock-journal';
 import { checkContact, exportCsv, importCsv, listContacts, makeContact, numberOwner } from './mock-contacts';
+import { asEnum } from '../src/renderer/lib/enums';
 import { normalizeContactNumber } from '../src/renderer/lib/phoneNumber';
 import { MOCK_SIP_RATE_NUMBER, MOCK_SIP_REFUSED_HOST, MOCK_SIP_UNREACHABLE_HOST, defaultSipSettings, isLiveSipStatus, normalizeCallee, numberAllowed, sipSettingsError } from './mock-sip';
 import {
@@ -1209,6 +1210,9 @@ const MOCK_MAX_FILE_MB = 1024;
 const MOCK_MAX_FILE_CAP_MB = 4096;
 /** A Disk upload whose name starts with this answers 429 (Retry-After 600 s). */
 export const MOCK_UPLOAD_RATE_LIMITED = 'rate-limited';
+/** A chat attachment named «proxy-413…» gets the HTML 413 of nginx in front of the API (CBF-191). */
+export const MOCK_UPLOAD_PROXY_413 = 'proxy-413';
+const NGINX_413 = '<html><head><title>413 Request Entity Too Large</title></head><body><center><h1>413 Request Entity Too Large</h1></center><hr><center>nginx</center></body></html>';
 
 /** 429 with Retry-After (seconds), like the server's limits. */
 const tooMany = (what: string, seconds: number): HttpError =>
@@ -2102,6 +2106,7 @@ class MockImpl {
           sessionId: conn.gatewaySessionId,
           me: this.me(u),
           planContact: MOCK_PLAN_CONTACT,
+          maxFileMb: MOCK_MAX_FILE_MB,
           workspaces: wsIds.map((w) => this.withAdmissions(this.snapshot(w, u.user.id), u.user.id)),
           pendingAdmissions: this.ownAdmissions(u.user.id),
           // Every visible room (server contract): never read → empty marker.
@@ -5035,6 +5040,10 @@ class MockImpl {
       const me = this.uid(c);
       const { ws } = this.workspaceFor(c.params[0] ?? '', me);
       const f = await parseMultipartFile(c);
+      if (f.name.startsWith(MOCK_UPLOAD_PROXY_413)) {
+        send(c.res, 413, NGINX_413, 'text/html');
+        return;
+      }
       if (f.bytes.length > 50 * 1024 * 1024) throw new HttpError(413, ErrorCode.FILE_TOO_LARGE, 'file too large');
       // Quota = min(workspace quota, plan storage_mb) (ADR-0024).
       const planBytes = this.planLimits(ws.id).storageMb * 1024n * 1024n;
@@ -5766,7 +5775,7 @@ class MockImpl {
       const b = parseBody(c, RequestCameraRequestSchema);
       const pl = this.planLimits(room.workspaceId);
       const minNz = (x: number, y: number): number => (x && y ? Math.min(x, y) : x || y);
-      sendMsg(c.res, 200, RequestCameraResponseSchema, { preset: minNz(b.preset, pl.cameraMaxPreset), fps: minNz(b.fps, pl.cameraMaxFps) });
+      sendMsg(c.res, 200, RequestCameraResponseSchema, { preset: asEnum(ScreenSharePreset, minNz(b.preset, pl.cameraMaxPreset)), fps: minNz(b.fps, pl.cameraMaxFps) });
     });
     this.route('POST', '/api/rooms/:id/camera/stop', (c) => {
       const me = this.uid(c);
@@ -5783,7 +5792,7 @@ class MockImpl {
         const b = parseBody(c, RequestStreamRequestSchema);
         const preset = b.preset === ScreenSharePreset.UNSPECIFIED ? ScreenSharePreset.H1080 : Math.min(b.preset, ScreenSharePreset.H1080);
         const own = Object.entries(SCREEN_SHARE_PRESETS).find(([k]) => Number(k) === preset)?.[1].fps ?? 0;
-        sendMsg(c.res, 200, RequestStreamResponseSchema, { preset, fps: b.fps > 0 ? Math.min(b.fps, own) : own });
+        sendMsg(c.res, 200, RequestStreamResponseSchema, { preset: asEnum(ScreenSharePreset, preset), fps: b.fps > 0 ? Math.min(b.fps, own) : own });
         return;
       }
       this.requireRoomPerm(room, me, STREAM);
@@ -5795,7 +5804,7 @@ class MockImpl {
       const own = Object.entries(SCREEN_SHARE_PRESETS).find(([k]) => Number(k) === preset)?.[1].fps ?? 0;
       const planFps = this.planLimits(room.workspaceId).streamMaxFps;
       const fps = [b.fps, planFps].filter((x) => x > 0).reduce((a, x) => Math.min(a, x), own);
-      sendMsg(c.res, 200, RequestStreamResponseSchema, { preset, fps });
+      sendMsg(c.res, 200, RequestStreamResponseSchema, { preset: asEnum(ScreenSharePreset, preset), fps });
     });
 
     this.route('PATCH', '/api/voice/self', (c) => {
@@ -8929,7 +8938,7 @@ class MockImpl {
       sendMsg(c.res, 200, TaskResponseSchema, taskRes(b().setRelation(c.params[0] ?? '', me, r.relatedId, r.kind, true).task.id, me, true));
     });
     this.boardRoute('DELETE', '/api/tasks/:id/relations', (c, me) => {
-      const kind: TaskRelationKind = Number(q(c, 'kind'));
+      const kind = asEnum(TaskRelationKind, Number(q(c, 'kind')));
       sendMsg(c.res, 200, TaskResponseSchema, taskRes(b().setRelation(c.params[0] ?? '', me, q(c, 'related_id'), kind, false).task.id, me, true));
     });
     // ADR-0076: watchers.

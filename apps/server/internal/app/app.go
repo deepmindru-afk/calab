@@ -404,6 +404,7 @@ func New(d Deps) *App {
 		Plans:              planSvc,
 		PlanContact:        d.Config.PlanContact(),
 		BillingSelfServe:   d.Config.Billing.Enabled && d.Config.Billing.SelfServe,
+		MaxFileMB:          uint32(d.Config.MaxFileSizeMB), //nolint:gosec // config validates 1..MaxFileSizeCapMB
 		// One grace for every undecided identity check: calls (rtc) and gateway leases (ADR-0166).
 		IdentityTransientGrace: d.Config.IdentityTransientGrace,
 	}, d.DB, d.Redis, authSvc, pub)
@@ -699,6 +700,11 @@ func New(d Deps) *App {
 	// MCP for bots (CBF-48): its tools call the routes above through the full chain (h) with
 	// the bot's own token, so a tool has exactly the bot's rights.
 	mcpHandler := mcp.New(buildinfo.Version)
+	// CBF-185/187: signed download and upload URLs of the tools (ADR-0158 addendum «files»): the
+	// token in the path is the credential; the handlers replay the app's REST call as the caller.
+	mcpHandler.URLKey, mcpHandler.Redis, mcpHandler.Origins = mcp.DeriveURLKey([]byte(d.Config.JWTSecret)), d.Redis, d.Config.AllowedOrigins()
+	mux.Handle(mcp.FileRoute, http.HandlerFunc(mcpHandler.ServeFile))
+	mux.Handle(mcp.UploadRoute, http.HandlerFunc(mcpHandler.ServeUpload))
 	// ADR-0158: a person connects an MCP client through OAuth; a 401 of the endpoint points the
 	// client to the metadata.
 	mcpOAuth := mcpauth.New(mcpauth.Config{DB: d.DB, Auth: authSvc, Origins: d.Config.AllowedOrigins(), RedirectURIs: d.Config.MCPOAuthRedirectURIs,

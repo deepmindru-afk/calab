@@ -4,6 +4,7 @@ import { cx } from '../../components/ui';
 import { t } from '../../i18n';
 import { can, restrictedPerms, roomPerms } from '../../lib/permissions';
 import { openRoom, type OutgoingFile } from '../../services/chat';
+import { fittingFiles } from '../../services/uploadLimit';
 import { subscribeRooms } from '../../services/gateway';
 import { useRooms } from '../../stores/rooms';
 import { useSession } from '../../stores/session';
@@ -84,9 +85,10 @@ export function ChatPane({ workspaceId, roomId }: { workspaceId: string; roomId:
   const addFiles = useCallback(
     (list: File[]) => {
       if (!canAttach) return;
-      setFiles((cur) => [...cur, ...list.map(toOutgoing)].slice(0, 20));
+      const fit = fittingFiles(workspaceId, list);
+      if (fit.length > 0) setFiles((cur) => [...cur, ...fit.map(toOutgoing)].slice(0, 20));
     },
-    [canAttach],
+    [canAttach, workspaceId],
   );
   const [dragging, dropHandlers] = useFileDrop(canAttach, addFiles);
   // ADR-0154: a DM with a person I blocked shows why I cannot write instead of the composer.
