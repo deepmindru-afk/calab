@@ -26,8 +26,8 @@ name: calaba
 services:
   caddy:
     build: ./caddy
+      dockerfile: Caddyfile.behind-proxy
     #  context: ./caddy
-    #  dockerfile: Caddyfile.behind-proxy
     #network_mode: host
     expose:
       - 80
@@ -38,7 +38,7 @@ services:
     #deploy:
     #  resources:
     #    limits: { memory: 512m }
-    command: caddy run --config /etc/caddy/Caddyfile.behind-proxy
+    command: caddy run --config /etc/caddy/Caddyfile
     env_file:
       .env
     environment:
