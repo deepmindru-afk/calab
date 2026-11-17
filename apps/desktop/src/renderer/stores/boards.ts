@@ -73,6 +73,8 @@ interface BoardsState extends BoardsData {
   renameRecent: (taskId: string, ref: RecentRef) => void;
   /** The task is gone for me: out of every list. */
   dropRecent: (taskId: string) => void;
+  /** The board is gone for me (archived, closed, access lost): its tasks leave every list. */
+  dropRecentBoard: (boardId: string) => void;
   reset: () => void;
   setLoad: (boardId: string, s: LoadState) => void;
   upsertBoard: (b: Board, event?: boolean) => void;
@@ -108,18 +110,8 @@ export const useBoards = create<BoardsState>()((set) => ({
       if (!was || (was.key === ref.key && was.title === ref.title && was.boardId === ref.boardId)) return {};
       return { recentRefs: { ...d.recentRefs, [taskId]: ref } };
     }),
-  dropRecent: (taskId) =>
-    set((d) => {
-      let changed = false;
-      const recent: Record<string, readonly string[]> = {};
-      for (const [ws, ids] of Object.entries(d.recent)) {
-        if (ids.includes(taskId)) {
-          changed = true;
-          recent[ws] = ids.filter((id) => id !== taskId);
-        } else recent[ws] = ids;
-      }
-      return changed ? { recent } : {};
-    }),
+  dropRecent: (taskId) => set((d) => dropRecent(d, (id) => id === taskId)),
+  dropRecentBoard: (boardId) => set((d) => dropRecent(d, (id) => (d.tasks[id]?.boardId ?? d.recentRefs[id]?.boardId) === boardId)),
   reset: () => set({ ...EMPTY_DATA, load: {}, notices: {}, recent: {}, recentRefs: {} }),
   setLoad: (boardId, s) => set((d) => (d.load[boardId] === s ? {} : { load: { ...d.load, [boardId]: s } })),
   upsertBoard: (b, event) => set((d) => upsertBoard(d, b, event)),
@@ -261,6 +253,19 @@ export function setRecent(d: RecentData, workspaceId: string, entries: readonly 
   // A notice that arrived while the request was in flight keeps its task on top.
   const live = (d.recent[workspaceId] ?? []).filter((id) => !ids.includes(id) && (d.notices[id]?.at ?? 0) >= since);
   return { recent: { ...d.recent, [workspaceId]: [...live, ...ids].slice(0, RECENT_LIMIT) }, recentRefs, notices };
+}
+
+/** The tasks `gone` matches leave every workspace's «Недавние»; the same object when none was listed. */
+function dropRecent(d: Pick<BoardsState, 'recent'>, gone: (taskId: string) => boolean): Partial<Pick<BoardsState, 'recent'>> {
+  let changed = false;
+  const recent: Record<string, readonly string[]> = {};
+  for (const [ws, ids] of Object.entries(d.recent)) {
+    if (ids.some(gone)) {
+      changed = true;
+      recent[ws] = ids.filter((id) => !gone(id));
+    } else recent[ws] = ids;
+  }
+  return changed ? { recent } : {};
 }
 
 /** A live notice of a task: on top of a loaded list, once. A list not loaded yet stays so (the load brings it). */
