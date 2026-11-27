@@ -4883,6 +4883,21 @@ test('boards-task', async ({ open, win, mock, shot }) => {
   await expect(panel.locator('[data-message-id]')).toHaveCount(2);
   await checkpoint(shot, 'boards-task');
 
+  // CBF-207: the header «⋯» (and the «Перенести» submenu) opens above the task view / phone panel, whole.
+  await panel.getByTestId('panel-more').click();
+  const more = win.getByRole('menu');
+  await expect(more).toBeVisible();
+  await expect(more.getByTestId('panel-archive')).toBeVisible();
+  await checkpoint(shot, 'boards-task-more', { axe: false });
+  // The seed has a second board («Маркетинг») the owner manages, so «Перенести в…» is there; the
+  // pointer stays on it (keepPointer) or settle's mouse move would close the submenu before the shot.
+  await more.getByRole('menuitem').filter({ hasText: 'Перенести' }).hover();
+  await expect(win.getByRole('menu')).toHaveCount(2);
+  await expect(win.getByRole('menuitem').filter({ hasText: 'Маркетинг' })).toBeVisible();
+  await checkpoint(shot, 'boards-task-more-move', { axe: false, keepPointer: true });
+  await win.keyboard.press('Escape');
+  await expect(win.getByRole('menu')).toHaveCount(0);
+
   // ADR-0103 (owner 15.10: a click on a task attachment did nothing): attach a PDF, click its
   // chip — the PDF viewer, not a dead link; Esc brings the task back.
   const upload = win.waitForResponse((r) => r.request().method() === 'PATCH' && /\/api\/tasks\/[^/]+$/.test(r.url()));

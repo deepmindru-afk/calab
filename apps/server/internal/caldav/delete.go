@@ -26,10 +26,17 @@ import (
 const (
 	ReasonEventChanged     = "EVENT_CHANGED"
 	ReasonCalendarReadOnly = "CALENDAR_READ_ONLY"
+	// ReasonCalendarAuth: the provider refused the saved credentials on a write. Never the
+	// field "password": that field's text is the connect form's (CBF-206).
+	ReasonCalendarAuth = "CALENDAR_AUTH"
 )
 
 func errChanged() error {
 	return httpx.Conflict("the event changed in the calendar: reload").WithDetails(ReasonEventChanged, 0, 0)
+}
+
+func errCalendarAuth() error {
+	return httpx.Validation("calendar", "the calendar did not accept the saved username and password: connect it again").WithDetails(ReasonCalendarAuth, 0, 0)
 }
 
 // deleteExternal: DELETE /api/me/external-events {uid, href, start, scope}.
@@ -59,7 +66,7 @@ func (s *Service) deleteExternal(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 	}
-	_, row, cr, err := s.myExternal(ctx, me, req.GetUid(), req.GetHref(), req.GetStart().AsTime())
+	acc, row, cr, err := s.myExternal(ctx, me, req.GetUid(), req.GetHref(), req.GetStart().AsTime())
 	if err != nil {
 		return err
 	}
@@ -73,7 +80,7 @@ func (s *Service) deleteExternal(w http.ResponseWriter, r *http.Request) error {
 		err = s.dav.DeleteIf(ctx, row.Href, cr, row.Etag)
 	}
 	if err != nil {
-		return s.writeError(ctx, me, err)
+		return s.writeError(ctx, me, s.refused(ctx, acc, cr, err))
 	}
 	err = db.GuardExec(ctx, s.db, func(guarded *sqlc.Queries) error {
 		if series {
@@ -137,9 +144,29 @@ func (s *Service) myExternal(ctx context.Context, me uuid.UUID, uid, href string
 	}
 	cr, err := s.open(acc)
 	if err != nil {
-		return acc, none, creds{}, httpx.Validation("password", "the stored password does not open: connect the calendar again")
+		return acc, none, creds{}, errCalendarAuth()
 	}
 	return acc, row, cr, nil
+}
+
+// propfindProbe asks for nothing but the collection's type: a cheap request that needs the credentials.
+const propfindProbe = `<?xml version="1.0" encoding="utf-8"?>
+<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>`
+
+// refused tells a refused password from an object that is gone: some providers answer 401, not
+// 404, to a request for an href they no longer have, and an event moved in the provider can get a
+// new href (CBF-206: deleting a rescheduled meeting showed a password error). A 401 of a write is
+// checked against the calendar itself with the same credentials: if they open it, the event
+// changed (ErrChanged: imported again, the client reloads); else the password is refused.
+func (s *Service) refused(ctx context.Context, acc sqlc.CaldavAccount, cr creds, err error) error {
+	if !errors.Is(err, ErrAuth) || acc.CalendarHref == nil {
+		return err
+	}
+	if _, _, e := s.dav.do(ctx, "PROPFIND", *acc.CalendarHref, cr, "0", "application/xml; charset=utf-8", []byte(propfindProbe)); e == nil {
+		slog.InfoContext(ctx, "caldav: 401 on an object of an open calendar: the event changed", "user_id", acc.UserID)
+		return ErrChanged
+	}
+	return err
 }
 
 // writeError maps a failure of the provider on a delete or an answer; a changed event is imported
@@ -158,7 +185,7 @@ func (s *Service) writeError(ctx context.Context, user uuid.UUID, err error) err
 	case errors.Is(err, ErrReadOnly):
 		return httpx.Validation("href", "the calendar is read-only").WithDetails(ReasonCalendarReadOnly, 0, 0)
 	case errors.Is(err, ErrAuth):
-		return httpx.Validation("password", "the server did not accept the username and password")
+		return errCalendarAuth()
 	case errors.As(err, &se), errors.As(err, &ue), errors.Is(err, ErrURL), errors.Is(err, ErrRedirect), errors.Is(err, ErrTooLarge), errors.Is(err, context.DeadlineExceeded):
 		slog.InfoContext(ctx, "caldav: write failed", "user_id", user, "err", err)
 		return httpx.Unavailable(err)
